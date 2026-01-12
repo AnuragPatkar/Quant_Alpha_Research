@@ -24,3 +24,8 @@ pydantic==2.0.0
 
 # Testing
 pytest==7.4.0
+
+streamlit 
+plotly 
+rich 
+openpyxl
