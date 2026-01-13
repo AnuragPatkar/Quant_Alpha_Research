@@ -1,7 +1,8 @@
 """
 Walk-Forward Validation
 =======================
-Time-series cross-validation without look-ahead bias.
+Time-series cross-validation to test the model properly.
+Makes sure we don't accidentally use future data (no look-ahead bias).
 """
 
 import pandas as pd
@@ -22,14 +23,15 @@ class WalkForwardValidator:
     """
     Walk-Forward Cross-Validation.
     
-    Features:
-    - Respects time ordering (no future leakage!)
-    - Configurable train/test windows
-    - Embargo period between train/test
+    This is the proper way to validate time-series models:
+    - Train on past data only
+    - Test on future data
+    - Roll forward through time
+    - Add embargo period to prevent leakage
     """
     
     def __init__(self):
-        """Initialize validator."""
+        """Initialize validator with settings from config."""
         self.config = settings.validation
         self.fold_results = []
         self.all_predictions = []
@@ -61,10 +63,10 @@ class WalkForwardValidator:
         self.fold_results = []
         self.all_predictions = []
         
-        # Get unique dates
+        # Get all unique dates sorted
         dates = sorted(df['date'].unique())
         
-        # Calculate window sizes (approximate trading days)
+        # Convert months to approximate trading days (21 days per month)
         train_days = self.config.train_months * 21
         test_days = self.config.test_months * 21
         
@@ -74,6 +76,7 @@ class WalkForwardValidator:
         
         print(f"\n   Running validation folds...")
         
+        # Walk forward through time
         while idx + train_days + test_days < len(dates):
             fold += 1
             

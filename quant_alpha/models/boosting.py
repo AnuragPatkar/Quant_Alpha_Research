@@ -53,9 +53,9 @@ class LightGBMModel:
         self.feature_names = feature_names
         self.params = params or settings.model.lgb_params.copy()
         
-        # Ensure early stopping is enabled
-        if 'early_stopping_rounds' not in self.params:
-            self.params['early_stopping_rounds'] = 50
+        # Remove early_stopping_rounds if present (use callbacks instead)
+        # This is needed for newer versions of LightGBM
+        self.early_stopping_rounds = self.params.pop('early_stopping_rounds', None)
         
         self.model = None
         self.scaler = StandardScaler()
@@ -94,24 +94,42 @@ class LightGBMModel:
         
         # Prepare validation data if provided
         eval_set = None
+        callbacks = []
+        
         if X_val is not None and y_val is not None:
             X_val_features = X_val[self.feature_names]
             X_val_scaled = self.scaler.transform(X_val_features)
             eval_set = [(X_val_scaled, y_val)]
+            
+            # Add early stopping callback if validation set provided
+            if self.early_stopping_rounds:
+                callbacks.append(lgb.early_stopping(stopping_rounds=self.early_stopping_rounds, verbose=False))
+            
             if verbose:
                 print(f"   📊 Validation on {len(X_val):,} samples...")
+        
+        # Add log evaluation callback
+        if not verbose:
+            callbacks.append(lgb.log_evaluation(period=0))
         
         # Create and train model
         self.model = lgb.LGBMRegressor(**self.params)
         
         # Fit with or without validation
-        if eval_set:
+        if eval_set and callbacks:
             self.model.fit(
                 X_train_scaled, 
                 y_train,
                 eval_set=eval_set,
                 eval_names=['validation'],
-                callbacks=[lgb.log_evaluation(0)] if not verbose else None
+                callbacks=callbacks
+            )
+        elif eval_set:
+            self.model.fit(
+                X_train_scaled, 
+                y_train,
+                eval_set=eval_set,
+                eval_names=['validation']
             )
         else:
             self.model.fit(X_train_scaled, y_train)

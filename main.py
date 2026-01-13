@@ -141,7 +141,7 @@ def print_final_report(val_results: pd.DataFrame, backtest_result, importance: p
 
 
 def main():
-    """Run complete ML Alpha Model pipeline."""
+    """Main pipeline - runs everything from data loading to backtesting."""
     
     print("""
 ╔══════════════════════════════════════════════════════════════╗
@@ -158,7 +158,7 @@ def main():
     
     start_time = datetime.now()
     
-    # Print config
+    # Show current configuration
     settings.print_config()
     
     # =========================================================
@@ -170,17 +170,20 @@ def main():
     # =========================================================
     # STEP 2: Feature Engineering
     # =========================================================
+    # This creates all 27 alpha factors
     features_df, feature_names = compute_all_features(data)
     
     # =========================================================
     # STEP 3: Walk-Forward Validation
     # =========================================================
+    # Train model using time-series cross-validation
     validator = WalkForwardValidator()
     val_results, predictions, model = validator.validate(features_df, feature_names)
     
     # =========================================================
     # STEP 4: Feature Importance
     # =========================================================
+    # Let's see which features the model thinks are most important
     print("\n" + "="*60)
     print("📊 FEATURE IMPORTANCE")
     print("="*60)
@@ -190,13 +193,14 @@ def main():
     for i, row in importance.head(10).iterrows():
         print(f"      {i+1:2d}. {row['feature']:<25} {row['importance_pct']:>6.2f}%")
     
-    # Save model
+    # Save the trained model for later use
     settings.create_dirs()
     model.save(str(settings.models_dir / 'alpha_model.pkl'))
     
     # =========================================================
     # STEP 5: Backtesting
     # =========================================================
+    # Now test the strategy with realistic transaction costs
     backtester = Backtester()
     backtest_result = backtester.run(predictions)
     

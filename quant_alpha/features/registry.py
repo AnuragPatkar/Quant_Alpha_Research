@@ -85,20 +85,22 @@ class FactorRegistry:
         return result
     
     def _add_momentum_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add momentum features."""
+        """Calculate momentum-based features."""
         close = df['close']
         
-        # Return momentum at different horizons
+        # Calculate returns over different time periods
+        # Using standard windows: 1w, 2w, 1m, 3m, 6m
         for window in self.config.momentum_windows:
             col = f'mom_{window}d'
             df[col] = close.pct_change(window)
             self._add_feature(col)
         
-        # Rate of change
+        # Rate of change - alternative momentum measure
         df['roc_21d'] = (close - close.shift(21)) / (close.shift(21) + 1e-10)
         self._add_feature('roc_21d')
         
-        # EMA momentum (MACD-like)
+        # EMA-based momentum (similar to MACD concept)
+        # Using 12 and 26 day EMAs as standard
         ema_12 = close.ewm(span=12, adjust=False).mean()
         ema_26 = close.ewm(span=26, adjust=False).mean()
         df['ema_momentum'] = (ema_12 - ema_26) / (close + 1e-10)
@@ -107,7 +109,7 @@ class FactorRegistry:
         return df
     
     def _add_mean_reversion_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add mean reversion features."""
+        """Calculate mean reversion indicators."""
         close = df['close']
         
         # RSI

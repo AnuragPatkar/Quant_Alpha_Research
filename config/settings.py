@@ -1,8 +1,8 @@
 """
 Configuration Settings
 ======================
-Central configuration for ML Alpha Model.
-Supports S&P 500 universe with 5-year historical data.
+Central config file for the ML Alpha Model.
+Handles all settings for data, features, models, backtesting, etc.
 """
 
 from dataclasses import dataclass, field
@@ -11,9 +11,7 @@ from pathlib import Path
 import logging
 
 
-# ============================================
-# PROJECT ROOT
-# ============================================
+# Project root directory
 ROOT = Path(__file__).parent.parent
 
 
@@ -22,7 +20,7 @@ ROOT = Path(__file__).parent.parent
 # ============================================
 @dataclass
 class LogConfig:
-    """Logging settings."""
+    """Settings for logging."""
     
     level: str = "INFO"
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -30,7 +28,8 @@ class LogConfig:
     log_file: str = "quant_alpha.log"
     
     def setup_logging(self):
-        """Configure logging."""
+        """Set up logging configuration."""
+        # Make sure log directory exists
         self.log_dir.mkdir(parents=True, exist_ok=True)
         logging.basicConfig(
             level=getattr(logging, self.level),

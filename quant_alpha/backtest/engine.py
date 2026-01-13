@@ -1,7 +1,8 @@
 """
 Backtesting Engine
 ==================
-Portfolio simulation with realistic transaction costs.
+Simulates trading strategy with realistic costs.
+Tests how the model would have performed in real trading.
 """
 
 import pandas as pd
@@ -31,10 +32,11 @@ class Backtester:
     Portfolio backtester.
     
     Strategy: Long top N stocks based on predicted returns.
+    Includes realistic transaction costs.
     """
     
     def __init__(self):
-        """Initialize backtester."""
+        """Initialize backtester with settings."""
         self.config = settings.backtest
         self.top_n = self.config.top_n_long
         self.cost = self.config.total_cost_pct
@@ -65,6 +67,7 @@ class Backtester:
         returns_list = []
         positions_list = []
         
+        # Loop through each rebalance period
         for i in range(len(monthly_dates) - 1):
             rebal_date = monthly_dates[i]
             next_date = monthly_dates[i + 1]

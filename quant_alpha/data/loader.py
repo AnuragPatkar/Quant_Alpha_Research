@@ -47,13 +47,13 @@ class DataLoader:
         print("📊 LOADING DATA")
         print("="*60)
         
-        # Try pickle first, then CSV
+        # Try pickle first since it's faster, fall back to CSV if needed
         pkl_path = self.data_path
         csv_path = self.data_path.with_suffix('.csv')
         
         df = None
         
-        # Try pickle
+        # Attempt to load from pickle
         if pkl_path.exists():
             try:
                 print(f"   📁 Trying pickle: {pkl_path.name}")
@@ -63,24 +63,24 @@ class DataLoader:
                 print(f"   ⚠️ Pickle failed: {e}")
                 print(f"   📁 Trying CSV instead...")
         
-        # Try CSV if pickle failed
+        # If pickle didn't work, try CSV
         if df is None and csv_path.exists():
             try:
                 print(f"   📁 Loading CSV: {csv_path.name}")
                 df = pd.read_csv(csv_path)
                 print(f"   ✅ Loaded from CSV")
                 
-                # Save as new pickle for next time
+                # Save as pickle for next time (much faster)
                 try:
                     df.to_pickle(pkl_path)
                     print(f"   💾 Re-saved as pickle for faster loading")
                 except:
-                    pass
+                    pass  # Not critical if this fails
                     
             except Exception as e:
                 print(f"   ❌ CSV failed: {e}")
         
-        # Check if data loaded
+        # Make sure we actually loaded something
         if df is None:
             raise FileNotFoundError(
                 f"\n❌ Could not load data!\n"
@@ -90,10 +90,10 @@ class DataLoader:
                 f"   Run your data download script again."
             )
         
-        # Prepare data
+        # Clean up the data
         df = self._prepare(df)
         
-        # Print summary
+        # Show what we loaded
         self._print_summary(df)
         
         return df

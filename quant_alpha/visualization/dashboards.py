@@ -1047,5 +1047,42 @@ def main():
 # SCRIPT EXECUTION
 # =============================================================================
 
+# =============================================================================
+# Lightweight API Wrappers
+# =============================================================================
+
+class DashboardConfig(Config):
+    """Lightweight config class compatible with import expectations.
+
+    This re-exports the main `Config` used by the dashboard to keep a
+    stable public API when the dashboard is available.
+    """
+    pass
+
+
+class QuantDashboard:
+    """Minimal dashboard wrapper that provides a `run()` method.
+
+    The real Streamlit app remains in `main()`, but tests and external
+    callers can instantiate this class and call `.run()` to launch it.
+    """
+    def __init__(self, config: DashboardConfig = None, data=None):
+        self.config = config or DashboardConfig()
+        self.data = data
+
+    def run(self):
+        """Run the Streamlit dashboard (delegates to `main`)."""
+        main()
+
+
+def run_dashboard():
+    """Convenience function to run the dashboard programmatically."""
+    main()
+
+
+# =============================================================================
+# SCRIPT EXECUTION
+# =============================================================================
+
 if __name__ == "__main__":
     main()
