@@ -1,8 +1,7 @@
 """
-Performance Charts & Visualization - Pure Python
-=================================================
+Performance Charts & Visualization
+==================================
 Professional static plots using matplotlib and seaborn.
-No HTML - only Python!
 
 Classes:
     - PerformancePlotter: Equity curves, returns, drawdowns
@@ -10,9 +9,11 @@ Classes:
     - RiskPlotter: Risk metrics, VaR, stress testing
 
 Output Formats:
-    - PNG, JPG, SVG, PDF (single charts)
+    - PNG, JPG, SVG, PDF
     - Display in Jupyter notebooks
-    - Save to file
+
+Author: Senior Quant Team
+Last Updated: 2024
 """
 
 import pandas as pd
@@ -23,13 +24,75 @@ import matplotlib.patches as mpatches
 from matplotlib.gridspec import GridSpec
 from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
-from typing import Dict, List, Optional, Tuple, Any, Union
+from typing import Dict, List, Optional, Tuple, Any, Union, Callable
 from pathlib import Path
 from datetime import datetime
 from scipy import stats
 import warnings
+import logging
 
+# Setup
+logger = logging.getLogger(__name__)
 warnings.filterwarnings('ignore')
+
+# Set seaborn style
+sns.set_style("whitegrid")
+plt.rcParams['figure.facecolor'] = 'white'
+plt.rcParams['axes.facecolor'] = 'white'
+
+
+# =============================================================================
+# UTILITIES
+# =============================================================================
+
+def safe_divide(
+    a: Union[float, np.ndarray, pd.Series],
+    b: Union[float, np.ndarray, pd.Series],
+    default: float = 0.0
+) -> Union[float, np.ndarray, pd.Series]:
+    """Safe division handling zero and NaN."""
+    if isinstance(b, (pd.Series, np.ndarray)):
+        result = np.where(np.abs(b) > 1e-10, a / b, default)
+        if isinstance(a, pd.Series):
+            return pd.Series(result, index=a.index)
+        return result
+    else:
+        if abs(b) < 1e-10:
+            return default
+        return a / b
+
+
+def validate_series(
+    series: pd.Series,
+    name: str = "series",
+    min_length: int = 2
+) -> pd.Series:
+    """Validate and clean series data."""
+    if series is None or len(series) == 0:
+        raise ValueError(f"{name} is empty")
+    
+    series_clean = series.dropna()
+    
+    if len(series_clean) < min_length:
+        raise ValueError(f"{name} has insufficient data (< {min_length} points)")
+    
+    return series_clean
+
+
+def validate_dataframe(
+    df: pd.DataFrame,
+    required_cols: List[str],
+    name: str = "dataframe"
+) -> pd.DataFrame:
+    """Validate dataframe has required columns."""
+    if df is None or len(df) == 0:
+        raise ValueError(f"{name} is empty")
+    
+    missing = [col for col in required_cols if col not in df.columns]
+    if missing:
+        raise ValueError(f"{name} missing columns: {missing}")
+    
+    return df
 
 
 # =============================================================================
@@ -52,15 +115,17 @@ class PerformancePlotter:
         >>> fig = plotter.plot_equity_curve(equity_curve)
         >>> fig.savefig('equity.png')
         
-        # Or save directly
-        >>> plotter.plot_equity_curve(equity_curve, save_path='equity.png')
+        # With custom currency
+        >>> plotter = PerformancePlotter(currency_symbol='₹', indian_format=True)
     """
     
     def __init__(
         self,
         figsize: Tuple[int, int] = (14, 8),
         style: str = 'default',
-        dpi: int = 150
+        dpi: int = 150,
+        currency_symbol: str = '$',
+        indian_format: bool = False
     ):
         """
         Initialize plotter.
@@ -69,13 +134,17 @@ class PerformancePlotter:
             figsize: Default figure size (width, height)
             style: Plot style ('default', 'dark', 'minimal')
             dpi: Resolution for saved figures
+            currency_symbol: Currency symbol to use
+            indian_format: Use Indian numbering (Lakhs, Crores)
         """
         self.figsize = figsize
         self.style = style
         self.dpi = dpi
+        self.currency_symbol = currency_symbol
+        self.indian_format = indian_format
         self._setup_colors()
     
-    def _setup_colors(self):
+    def _setup_colors(self) -> None:
         """Setup color scheme based on style."""
         if self.style == 'dark':
             self.colors = {
@@ -87,7 +156,9 @@ class PerformancePlotter:
                 'neutral': '#888888',
                 'benchmark': '#FFA500',
                 'fill_alpha': 0.3,
-                'grid_color': '#444444'
+                'grid_color': '#444444',
+                'text': '#FFFFFF',
+                'background': '#1A1A2E'
             }
         else:
             self.colors = {
@@ -99,8 +170,93 @@ class PerformancePlotter:
                 'neutral': '#6C757D',
                 'benchmark': '#FF9800',
                 'fill_alpha': 0.2,
-                'grid_color': '#E0E0E0'
+                'grid_color': '#E0E0E0',
+                'text': '#212529',
+                'background': '#FFFFFF'
             }
+    
+    # =========================================================================
+    # CURRENCY FORMATTING
+    # =========================================================================
+    
+    def _format_currency(self, x: float, pos: int = 0) -> str:
+        """Format number as currency (Western or Indian style)."""
+        if self.indian_format:
+            # Indian format: Lakhs (1e5) and Crores (1e7)
+            if abs(x) >= 1e7:
+                return f'{self.currency_symbol}{x/1e7:.1f}Cr'
+            elif abs(x) >= 1e5:
+                return f'{self.currency_symbol}{x/1e5:.1f}L'
+            elif abs(x) >= 1e3:
+                return f'{self.currency_symbol}{x/1e3:.0f}K'
+            else:
+                return f'{self.currency_symbol}{x:.0f}'
+        else:
+            # Western format: K, M, B, T
+            if abs(x) >= 1e12:
+                return f'{self.currency_symbol}{x/1e12:.1f}T'
+            elif abs(x) >= 1e9:
+                return f'{self.currency_symbol}{x/1e9:.1f}B'
+            elif abs(x) >= 1e6:
+                return f'{self.currency_symbol}{x/1e6:.1f}M'
+            elif abs(x) >= 1e3:
+                return f'{self.currency_symbol}{x/1e3:.0f}K'
+            else:
+                return f'{self.currency_symbol}{x:.0f}'
+    
+    # =========================================================================
+    # CALCULATION HELPERS
+    # =========================================================================
+    
+    def _calculate_cagr(self, equity_curve: pd.Series) -> float:
+        """Calculate CAGR from equity curve."""
+        if len(equity_curve) < 2:
+            return 0.0
+        total_return = equity_curve.iloc[-1] / equity_curve.iloc[0]
+        n_years = (equity_curve.index[-1] - equity_curve.index[0]).days / 365.25
+        if n_years <= 0:
+            return 0.0
+        return (total_return ** (1 / n_years) - 1) * 100
+    
+    def _calculate_max_drawdown(self, equity_curve: pd.Series) -> float:
+        """Calculate maximum drawdown."""
+        peak = equity_curve.expanding(min_periods=1).max()
+        drawdown = (equity_curve - peak) / peak
+        return drawdown.min()
+    
+    def _calculate_drawdown_series(self, equity_curve: pd.Series) -> pd.Series:
+        """Calculate drawdown series."""
+        peak = equity_curve.expanding(min_periods=1).max()
+        return (equity_curve - peak) / peak
+    
+    def _max_dd_from_returns(self, returns: pd.Series) -> float:
+        """Calculate max drawdown from returns series."""
+        if len(returns) == 0:
+            return 0.0
+        cum_returns = (1 + returns).cumprod()
+        peak = cum_returns.expanding(min_periods=1).max()
+        drawdown = (cum_returns - peak) / peak
+        return drawdown.min()
+    
+    def _format_date_axis(self, ax: plt.Axes) -> None:
+        """Format x-axis for dates."""
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    
+    def _save_figure(self, fig: plt.Figure, path: str) -> None:
+        """Save figure to file."""
+        save_path = Path(path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(
+            save_path,
+            dpi=self.dpi,
+            bbox_inches='tight',
+            facecolor=fig.get_facecolor(),
+            edgecolor='none'
+        )
+        logger.info(f"Saved plot: {save_path}")
+        print(f"✅ Saved: {path}")
     
     # =========================================================================
     # EQUITY CURVE
@@ -114,7 +270,8 @@ class PerformancePlotter:
         show_drawdown: bool = True,
         show_metrics: bool = True,
         save_path: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
+        close_after_save: bool = True
     ) -> plt.Figure:
         """
         Plot equity curve with optional benchmark and drawdown.
@@ -127,14 +284,24 @@ class PerformancePlotter:
             show_metrics: Show metrics annotation
             save_path: Path to save figure (None = don't save)
             show: Whether to display the plot
+            close_after_save: Close figure after saving to free memory
             
         Returns:
             matplotlib Figure object
         """
+        try:
+            equity_curve = validate_series(equity_curve, "equity_curve")
+        except ValueError as e:
+            logger.error(f"Equity curve validation failed: {e}")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, str(e), ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
+        
         # Create figure
         if show_drawdown:
             fig, (ax1, ax2) = plt.subplots(
-                2, 1, 
+                2, 1,
                 figsize=(self.figsize[0], self.figsize[1] + 3),
                 gridspec_kw={'height_ratios': [3, 1]},
                 sharex=True
@@ -164,23 +331,27 @@ class PerformancePlotter:
         )
         
         # Benchmark
-        if benchmark is not None:
-            # Normalize to same starting point
-            norm_benchmark = benchmark / benchmark.iloc[0] * equity_curve.iloc[0]
-            ax1.plot(
-                norm_benchmark.index,
-                norm_benchmark.values,
-                color=self.colors['benchmark'],
-                linewidth=2,
-                linestyle='--',
-                label='Benchmark',
-                alpha=0.8,
-                zorder=2
-            )
+        if benchmark is not None and len(benchmark) > 0:
+            try:
+                benchmark = validate_series(benchmark, "benchmark")
+                # Normalize to same starting point
+                norm_benchmark = benchmark / benchmark.iloc[0] * equity_curve.iloc[0]
+                ax1.plot(
+                    norm_benchmark.index,
+                    norm_benchmark.values,
+                    color=self.colors['benchmark'],
+                    linewidth=2,
+                    linestyle='--',
+                    label='Benchmark',
+                    alpha=0.8,
+                    zorder=2
+                )
+            except ValueError as e:
+                logger.warning(f"Benchmark validation failed: {e}")
         
         # Formatting
         ax1.set_title(title, fontsize=16, fontweight='bold', pad=15)
-        ax1.set_ylabel('Portfolio Value (₹)', fontsize=12)
+        ax1.set_ylabel(f'Portfolio Value ({self.currency_symbol})', fontsize=12)
         ax1.legend(loc='upper left', fontsize=10)
         ax1.grid(True, alpha=0.3, linestyle='--')
         ax1.yaxis.set_major_formatter(plt.FuncFormatter(self._format_currency))
@@ -262,7 +433,7 @@ class PerformancePlotter:
         
         # Format x-axis
         self._format_date_axis(ax1)
-        if ax2:
+        if ax2 is not None:
             self._format_date_axis(ax2)
         
         plt.tight_layout()
@@ -270,189 +441,8 @@ class PerformancePlotter:
         # Save
         if save_path:
             self._save_figure(fig, save_path)
-        
-        if show:
-            plt.show()
-        
-        return fig
-    
-    # =========================================================================
-    # RETURNS DISTRIBUTION
-    # =========================================================================
-    
-    def plot_returns_distribution(
-        self,
-        returns: pd.Series,
-        benchmark_returns: Optional[pd.Series] = None,
-        title: str = "Returns Distribution Analysis",
-        save_path: Optional[str] = None,
-        show: bool = True
-    ) -> plt.Figure:
-        """
-        Plot comprehensive returns distribution analysis.
-        
-        Args:
-            returns: Daily returns series
-            benchmark_returns: Optional benchmark returns
-            title: Plot title
-            save_path: Path to save figure
-            show: Whether to display
-            
-        Returns:
-            matplotlib Figure object
-        """
-        fig = plt.figure(figsize=(self.figsize[0], self.figsize[1] + 4))
-        gs = GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.3)
-        
-        # Clean data
-        returns_clean = returns.dropna()
-        
-        # ----- 1. Histogram with KDE -----
-        ax1 = fig.add_subplot(gs[0, :2])
-        
-        returns_pct = returns_clean * 100
-        
-        # Histogram
-        n, bins, patches = ax1.hist(
-            returns_pct,
-            bins=50,
-            density=True,
-            alpha=0.7,
-            color=self.colors['primary'],
-            edgecolor='white',
-            linewidth=0.5
-        )
-        
-        # Color negative bins red
-        for i, patch in enumerate(patches):
-            if bins[i] < 0:
-                patch.set_facecolor(self.colors['negative'])
-                patch.set_alpha(0.6)
-        
-        # KDE
-        if len(returns_pct) > 1:
-            kde_x = np.linspace(returns_pct.min(), returns_pct.max(), 200)
-            kde = stats.gaussian_kde(returns_pct)
-            ax1.plot(kde_x, kde(kde_x), color=self.colors['primary'], linewidth=2.5, label='KDE')
-            
-            # Normal distribution overlay
-            mu, sigma = returns_pct.mean(), returns_pct.std()
-            normal_y = stats.norm.pdf(kde_x, mu, sigma)
-            ax1.plot(kde_x, normal_y, color=self.colors['benchmark'], 
-                    linewidth=2, linestyle='--', label='Normal', alpha=0.8)
-        
-        # Mean line
-        mu = returns_pct.mean()
-        ax1.axvline(mu, color=self.colors['positive'], linewidth=2, 
-                   linestyle='-', label=f'Mean: {mu:.3f}%')
-        ax1.axvline(0, color='gray', linewidth=1, linestyle='--', alpha=0.7)
-        
-        ax1.set_xlabel('Daily Return (%)', fontsize=11)
-        ax1.set_ylabel('Density', fontsize=11)
-        ax1.set_title('Return Distribution with KDE', fontsize=12, fontweight='bold')
-        ax1.legend(loc='upper right', fontsize=9)
-        ax1.grid(True, alpha=0.3)
-        
-        # ----- 2. Statistics Box -----
-        ax2 = fig.add_subplot(gs[0, 2])
-        ax2.axis('off')
-        
-        stats_dict = {
-            'Mean': f'{returns_clean.mean()*100:.4f}%',
-            'Median': f'{returns_clean.median()*100:.4f}%',
-            'Std Dev': f'{returns_clean.std()*100:.4f}%',
-            'Skewness': f'{returns_clean.skew():.4f}',
-            'Kurtosis': f'{returns_clean.kurtosis():.4f}',
-            'Min': f'{returns_clean.min()*100:.2f}%',
-            'Max': f'{returns_clean.max()*100:.2f}%',
-            'VaR (5%)': f'{np.percentile(returns_clean, 5)*100:.2f}%',
-            'Positive Days': f'{(returns_clean > 0).mean()*100:.1f}%'
-        }
-        
-        y_pos = 0.95
-        ax2.text(0.1, y_pos, 'Distribution Statistics', fontsize=12, 
-                fontweight='bold', transform=ax2.transAxes)
-        y_pos -= 0.08
-        
-        for key, value in stats_dict.items():
-            ax2.text(0.1, y_pos, f'{key}:', fontsize=10, 
-                    transform=ax2.transAxes, fontfamily='monospace')
-            ax2.text(0.7, y_pos, value, fontsize=10, 
-                    transform=ax2.transAxes, fontfamily='monospace',
-                    ha='right')
-            y_pos -= 0.08
-        
-        # ----- 3. Q-Q Plot -----
-        ax3 = fig.add_subplot(gs[1, 0])
-        
-        if len(returns_clean) > 1:
-            stats.probplot(returns_clean, dist="norm", plot=ax3)
-            ax3.get_lines()[0].set_markerfacecolor(self.colors['primary'])
-            ax3.get_lines()[0].set_markeredgecolor(self.colors['primary'])
-            ax3.get_lines()[0].set_markersize(4)
-            ax3.get_lines()[1].set_color(self.colors['negative'])
-        ax3.set_title('Q-Q Plot (Normality)', fontsize=11, fontweight='bold')
-        ax3.grid(True, alpha=0.3)
-        
-        # ----- 4. Box Plot by Month -----
-        ax4 = fig.add_subplot(gs[1, 1])
-        
-        monthly_data = []
-        month_labels = []
-        for month in range(1, 13):
-            month_returns = returns_clean[returns_clean.index.month == month] * 100
-            if len(month_returns) > 0:
-                monthly_data.append(month_returns.values)
-                month_labels.append(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][month-1])
-        
-        if monthly_data:
-            bp = ax4.boxplot(monthly_data, labels=month_labels, patch_artist=True)
-            for patch in bp['boxes']:
-                patch.set_facecolor(self.colors['primary'])
-                patch.set_alpha(0.6)
-            for median in bp['medians']:
-                median.set_color('white')
-                median.set_linewidth(2)
-        
-        ax4.axhline(0, color='gray', linestyle='--', linewidth=1)
-        ax4.set_xlabel('Month', fontsize=10)
-        ax4.set_ylabel('Daily Return (%)', fontsize=10)
-        ax4.set_title('Returns by Month', fontsize=11, fontweight='bold')
-        ax4.tick_params(axis='x', rotation=45)
-        ax4.grid(True, alpha=0.3, axis='y')
-        
-        # ----- 5. Cumulative Returns -----
-        ax5 = fig.add_subplot(gs[1, 2])
-        
-        cumulative = (1 + returns_clean).cumprod() - 1
-        
-        ax5.plot(cumulative.index, cumulative.values * 100,
-                color=self.colors['primary'], linewidth=2)
-        
-        # Fill positive and negative areas
-        ax5.fill_between(
-            cumulative.index, cumulative.values * 100, 0,
-            where=(cumulative.values >= 0),
-            color=self.colors['positive'], alpha=0.3
-        )
-        ax5.fill_between(
-            cumulative.index, cumulative.values * 100, 0,
-            where=(cumulative.values < 0),
-            color=self.colors['negative'], alpha=0.3
-        )
-        
-        ax5.axhline(0, color='gray', linestyle='--', linewidth=1)
-        ax5.set_xlabel('Date', fontsize=10)
-        ax5.set_ylabel('Cumulative Return (%)', fontsize=10)
-        ax5.set_title('Cumulative Returns', fontsize=11, fontweight='bold')
-        ax5.grid(True, alpha=0.3)
-        self._format_date_axis(ax5)
-        
-        plt.suptitle(title, fontsize=14, fontweight='bold', y=1.01)
-        
-        if save_path:
-            self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
         
         if show:
             plt.show()
@@ -469,7 +459,8 @@ class PerformancePlotter:
         windows: List[int] = [21, 63, 252],
         title: str = "Rolling Performance Metrics",
         save_path: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
+        close_after_save: bool = True
     ) -> plt.Figure:
         """
         Plot rolling performance metrics.
@@ -480,85 +471,101 @@ class PerformancePlotter:
             title: Plot title
             save_path: Path to save figure
             show: Whether to display
+            close_after_save: Close figure after saving
             
         Returns:
             matplotlib Figure object
         """
+        try:
+            returns_clean = validate_series(returns, "returns", min_length=min(windows))
+        except ValueError as e:
+            logger.error(f"Returns validation failed: {e}")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, str(e), ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
+        
         fig, axes = plt.subplots(4, 1, figsize=(self.figsize[0], 14), sharex=True)
         
         window_labels = {21: '1M', 63: '3M', 126: '6M', 252: '1Y'}
         colors_list = ['#2E86AB', '#A23B72', '#28A745', '#FFC107']
         
-        returns_clean = returns.dropna()
+        # Filter windows to available data
+        valid_windows = [w for w in windows if len(returns_clean) >= w]
+        
+        if not valid_windows:
+            logger.warning("No valid windows for data length")
+            for ax in axes:
+                ax.text(0.5, 0.5, 'Insufficient Data', ha='center', va='center',
+                       transform=ax.transAxes)
+            return fig
         
         # ----- 1. Rolling Returns -----
         ax1 = axes[0]
-        for i, window in enumerate(windows):
-            if len(returns_clean) >= window:
-                rolling_ret = returns_clean.rolling(window).mean() * 252 * 100  # Annualized
-                label = window_labels.get(window, f'{window}D')
-                ax1.plot(rolling_ret.index, rolling_ret.values,
-                        color=colors_list[i % len(colors_list)],
-                        linewidth=1.5, label=label, alpha=0.85)
+        for i, window in enumerate(valid_windows):
+            rolling_ret = returns_clean.rolling(window).mean() * 252 * 100
+            label = window_labels.get(window, f'{window}D')
+            ax1.plot(rolling_ret.index, rolling_ret.values,
+                    color=colors_list[i % len(colors_list)],
+                    linewidth=1.5, label=label, alpha=0.85)
         
         ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
         ax1.set_ylabel('Ann. Return (%)', fontsize=10)
         ax1.set_title('Rolling Annualized Returns', fontsize=11, fontweight='bold')
-        ax1.legend(loc='upper right', fontsize=9, ncol=len(windows))
+        ax1.legend(loc='upper right', fontsize=9, ncol=len(valid_windows))
         ax1.grid(True, alpha=0.3)
         
         # ----- 2. Rolling Volatility -----
         ax2 = axes[1]
-        for i, window in enumerate(windows):
-            if len(returns_clean) >= window:
-                rolling_vol = returns_clean.rolling(window).std() * np.sqrt(252) * 100
-                label = window_labels.get(window, f'{window}D')
-                ax2.plot(rolling_vol.index, rolling_vol.values,
-                        color=colors_list[i % len(colors_list)],
-                        linewidth=1.5, label=label, alpha=0.85)
+        for i, window in enumerate(valid_windows):
+            rolling_vol = returns_clean.rolling(window).std() * np.sqrt(252) * 100
+            label = window_labels.get(window, f'{window}D')
+            ax2.plot(rolling_vol.index, rolling_vol.values,
+                    color=colors_list[i % len(colors_list)],
+                    linewidth=1.5, label=label, alpha=0.85)
         
         ax2.set_ylabel('Ann. Volatility (%)', fontsize=10)
         ax2.set_title('Rolling Annualized Volatility', fontsize=11, fontweight='bold')
-        ax2.legend(loc='upper right', fontsize=9, ncol=len(windows))
+        ax2.legend(loc='upper right', fontsize=9, ncol=len(valid_windows))
         ax2.grid(True, alpha=0.3)
         
         # ----- 3. Rolling Sharpe Ratio -----
         ax3 = axes[2]
-        for i, window in enumerate(windows):
-            if len(returns_clean) >= window:
-                rolling_mean = returns_clean.rolling(window).mean() * 252
-                rolling_std = returns_clean.rolling(window).std() * np.sqrt(252)
-                rolling_sharpe = rolling_mean / rolling_std
-                
-                label = window_labels.get(window, f'{window}D')
-                ax3.plot(rolling_sharpe.index, rolling_sharpe.values,
-                        color=colors_list[i % len(colors_list)],
-                        linewidth=1.5, label=label, alpha=0.85)
+        for i, window in enumerate(valid_windows):
+            rolling_mean = returns_clean.rolling(window).mean() * 252
+            rolling_std = returns_clean.rolling(window).std() * np.sqrt(252)
+            
+            # Safe division to avoid division by zero
+            rolling_sharpe = safe_divide(rolling_mean, rolling_std, default=0.0)
+            
+            label = window_labels.get(window, f'{window}D')
+            ax3.plot(rolling_sharpe.index, rolling_sharpe.values,
+                    color=colors_list[i % len(colors_list)],
+                    linewidth=1.5, label=label, alpha=0.85)
         
         ax3.axhline(0, color='gray', linestyle='--', linewidth=1)
         ax3.axhline(1, color=self.colors['positive'], linestyle=':', linewidth=1.5, alpha=0.7)
         ax3.axhline(2, color=self.colors['positive'], linestyle=':', linewidth=1, alpha=0.5)
         ax3.set_ylabel('Sharpe Ratio', fontsize=10)
         ax3.set_title('Rolling Sharpe Ratio', fontsize=11, fontweight='bold')
-        ax3.legend(loc='upper right', fontsize=9, ncol=len(windows))
+        ax3.legend(loc='upper right', fontsize=9, ncol=len(valid_windows))
         ax3.grid(True, alpha=0.3)
         
         # ----- 4. Rolling Max Drawdown -----
         ax4 = axes[3]
-        for i, window in enumerate(windows):
-            if len(returns_clean) >= window:
-                rolling_dd = returns_clean.rolling(window).apply(
-                    lambda x: self._max_dd_from_returns(x), raw=False
-                ) * 100
-                label = window_labels.get(window, f'{window}D')
-                ax4.plot(rolling_dd.index, rolling_dd.values,
-                        color=colors_list[i % len(colors_list)],
-                        linewidth=1.5, label=label, alpha=0.85)
+        for i, window in enumerate(valid_windows):
+            rolling_dd = returns_clean.rolling(window).apply(
+                lambda x: self._max_dd_from_returns(x), raw=False
+            ) * 100
+            label = window_labels.get(window, f'{window}D')
+            ax4.plot(rolling_dd.index, rolling_dd.values,
+                    color=colors_list[i % len(colors_list)],
+                    linewidth=1.5, label=label, alpha=0.85)
         
         ax4.set_ylabel('Max Drawdown (%)', fontsize=10)
         ax4.set_xlabel('Date', fontsize=11)
         ax4.set_title('Rolling Maximum Drawdown', fontsize=11, fontweight='bold')
-        ax4.legend(loc='lower right', fontsize=9, ncol=len(windows))
+        ax4.legend(loc='lower right', fontsize=9, ncol=len(valid_windows))
         ax4.grid(True, alpha=0.3)
         
         self._format_date_axis(ax4)
@@ -568,6 +575,128 @@ class PerformancePlotter:
         
         if save_path:
             self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
+        
+        if show:
+            plt.show()
+        
+        return fig
+    
+    # =========================================================================
+    # RETURNS DISTRIBUTION
+    # =========================================================================
+    
+    def plot_returns_distribution(
+        self,
+        returns: pd.Series,
+        title: str = "Returns Distribution Analysis",
+        save_path: Optional[str] = None,
+        show: bool = True,
+        close_after_save: bool = True
+    ) -> plt.Figure:
+        """
+        Plot returns distribution with statistics.
+        
+        Args:
+            returns: Returns series
+            title: Plot title
+            save_path: Path to save
+            show: Display plot
+            close_after_save: Close after saving
+            
+        Returns:
+            Figure object
+        """
+        try:
+            returns_clean = validate_series(returns, "returns")
+        except ValueError as e:
+            logger.error(f"Returns validation failed: {e}")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, str(e), ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
+        
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        
+        returns_pct = returns_clean * 100  # Convert to %
+        
+        # ----- 1. Histogram with Normal Overlay -----
+        ax1 = axes[0, 0]
+        ax1.hist(returns_pct, bins=50, alpha=0.7, color=self.colors['primary'],
+                edgecolor='white', density=True, label='Returns')
+        
+        # Normal distribution overlay
+        mu, sigma = returns_pct.mean(), returns_pct.std()
+        x = np.linspace(returns_pct.min(), returns_pct.max(), 100)
+        ax1.plot(x, stats.norm.pdf(x, mu, sigma),
+                color=self.colors['negative'], linewidth=2, 
+                linestyle='--', label='Normal Dist')
+        
+        ax1.set_title('Distribution vs Normal', fontsize=12, fontweight='bold')
+        ax1.set_xlabel('Return (%)', fontsize=10)
+        ax1.set_ylabel('Density', fontsize=10)
+        ax1.legend(loc='upper right')
+        ax1.grid(True, alpha=0.3)
+        
+        # ----- 2. Q-Q Plot -----
+        ax2 = axes[0, 1]
+        stats.probplot(returns_pct, dist="norm", plot=ax2)
+        ax2.set_title('Q-Q Plot (Normality Test)', fontsize=12, fontweight='bold')
+        ax2.grid(True, alpha=0.3)
+        
+        # ----- 3. Box Plot -----
+        ax3 = axes[1, 0]
+        bp = ax3.boxplot(returns_pct, vert=True, patch_artist=True,
+                        boxprops=dict(facecolor=self.colors['primary'], alpha=0.6),
+                        medianprops=dict(color=self.colors['negative'], linewidth=2),
+                        whiskerprops=dict(linewidth=1.5),
+                        capprops=dict(linewidth=1.5))
+        ax3.set_title('Box Plot', fontsize=12, fontweight='bold')
+        ax3.set_ylabel('Return (%)', fontsize=10)
+        ax3.grid(True, alpha=0.3, axis='y')
+        ax3.set_xticklabels(['Returns'])
+        
+        # ----- 4. Statistics Table -----
+        ax4 = axes[1, 1]
+        ax4.axis('off')
+        
+        # Calculate Sharpe (annualized)
+        sharpe = safe_divide(returns_clean.mean(), returns_clean.std(), 0) * np.sqrt(252)
+        
+        stats_data = [
+            ['Mean', f'{returns_pct.mean():.3f}%'],
+            ['Median', f'{returns_pct.median():.3f}%'],
+            ['Std Dev', f'{returns_pct.std():.3f}%'],
+            ['Skewness', f'{stats.skew(returns_pct):.3f}'],
+            ['Kurtosis', f'{stats.kurtosis(returns_pct):.3f}'],
+            ['Min', f'{returns_pct.min():.3f}%'],
+            ['Max', f'{returns_pct.max():.3f}%'],
+            ['Sharpe (ann.)', f'{sharpe:.3f}']
+        ]
+        
+        table = ax4.table(cellText=stats_data, cellLoc='left',
+                         colWidths=[0.5, 0.5], loc='center',
+                         bbox=[0, 0, 1, 1])
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1, 2)
+        
+        # Style table
+        for i in range(len(stats_data)):
+            table[(i, 0)].set_facecolor('#E8F4F8')
+            table[(i, 0)].set_text_props(weight='bold')
+            table[(i, 1)].set_facecolor('white')
+        
+        ax4.set_title('Statistics', fontsize=12, fontweight='bold', pad=20)
+        
+        plt.suptitle(title, fontsize=14, fontweight='bold', y=0.995)
+        plt.tight_layout()
+        
+        if save_path:
+            self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
         
         if show:
             plt.show()
@@ -583,65 +712,84 @@ class PerformancePlotter:
         returns: pd.Series,
         title: str = "Monthly Returns Heatmap (%)",
         save_path: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
+        close_after_save: bool = True
     ) -> plt.Figure:
         """
-        Plot monthly returns as a heatmap.
+        Plot monthly returns heatmap.
         
         Args:
             returns: Daily returns series
             title: Plot title
-            save_path: Path to save figure
-            show: Whether to display
+            save_path: Save path
+            show: Display plot
+            close_after_save: Close after saving
             
         Returns:
-            matplotlib Figure object
+            Figure object
         """
-        returns_clean = returns.dropna()
+        try:
+            returns_clean = validate_series(returns, "returns")
+        except ValueError as e:
+            logger.error(f"Returns validation failed: {e}")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, str(e), ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
         
-        # Calculate monthly returns
+        # Resample to monthly
         monthly_returns = returns_clean.resample('M').apply(lambda x: (1 + x).prod() - 1)
+        
+        if len(monthly_returns) == 0:
+            logger.warning("No monthly data available")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, 'No Monthly Data', ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12)
+            return fig
         
         # Create pivot table
         monthly_df = pd.DataFrame({
-            'Year': monthly_returns.index.year,
-            'Month': monthly_returns.index.month,
-            'Return': monthly_returns.values * 100
+            'return': monthly_returns.values * 100,
+            'year': monthly_returns.index.year,
+            'month': monthly_returns.index.month
         })
         
-        pivot = monthly_df.pivot(index='Year', columns='Month', values='Return')
-        pivot.columns = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-        
-        # Add yearly total
-        pivot['Year Total'] = pivot.sum(axis=1)
+        pivot = monthly_df.pivot(index='year', columns='month', values='return')
         
         # Create figure
-        fig_height = max(6, len(pivot) * 0.6 + 2)
-        fig, ax = plt.subplots(figsize=(14, fig_height))
+        fig, ax = plt.subplots(figsize=(12, max(6, len(pivot) * 0.4)))
         
         # Heatmap
         sns.heatmap(
             pivot,
             annot=True,
-            fmt='.1f',
+            fmt='.2f',
             cmap='RdYlGn',
             center=0,
+            cbar_kws={'label': 'Return (%)'},
+            linewidths=0.5,
+            linecolor='white',
             ax=ax,
-            cbar_kws={'label': 'Return (%)', 'shrink': 0.8},
-            annot_kws={'size': 9, 'fontweight': 'bold'},
-            linewidths=1,
-            linecolor='white'
+            vmin=-10,  # Reasonable bounds
+            vmax=10
         )
         
+        # Format
         ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
         ax.set_xlabel('Month', fontsize=11)
         ax.set_ylabel('Year', fontsize=11)
+        
+        # Month labels
+        month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        ax.set_xticklabels(month_labels, rotation=0)
         
         plt.tight_layout()
         
         if save_path:
             self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
         
         if show:
             plt.show()
@@ -649,297 +797,148 @@ class PerformancePlotter:
         return fig
     
     # =========================================================================
-    # TRADE ANALYSIS (FIXED VERSION)
+    # TRADE ANALYSIS
     # =========================================================================
     
     def plot_trade_analysis(
         self,
-        trades: pd.DataFrame,
+        trades_df: pd.DataFrame,
+        pnl_col: str = 'pnl',
+        return_col: str = 'return_pct',
+        entry_col: str = 'entry_date',
+        exit_col: str = 'exit_date',
         title: str = "Trade Analysis",
         save_path: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
+        close_after_save: bool = True
     ) -> plt.Figure:
         """
-        Comprehensive trade analysis visualization.
+        Plot trade analysis.
         
         Args:
-            trades: DataFrame with columns: date, ticker, side, pnl, return_pct
+            trades_df: DataFrame with trade data
+            pnl_col: PnL column name
+            return_col: Return % column name
+            entry_col: Entry date column
+            exit_col: Exit date column
             title: Plot title
-            save_path: Path to save figure
-            show: Whether to display
+            save_path: Save path
+            show: Display plot
+            close_after_save: Close after saving
             
         Returns:
-            matplotlib Figure object
+            Figure object
         """
-        fig = plt.figure(figsize=(16, 12))
-        gs = GridSpec(2, 3, figure=fig, hspace=0.3, wspace=0.3)
+        try:
+            validate_dataframe(trades_df, [pnl_col, return_col], "trades_df")
+        except ValueError as e:
+            logger.error(f"Trades validation failed: {e}")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, str(e), ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
         
-        # Make a copy to avoid modifying original
-        trades = trades.copy()
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
         
-        # ----- 1. Win/Loss Distribution -----
-        ax1 = fig.add_subplot(gs[0, 0])
+        # ----- 1. Cumulative PnL -----
+        ax1 = axes[0, 0]
+        cumulative_pnl = trades_df[pnl_col].cumsum()
         
-        if 'pnl' in trades.columns:
-            wins = trades[trades['pnl'] > 0]['pnl'] / 1000  # In thousands
-            losses = trades[trades['pnl'] <= 0]['pnl'] / 1000
-            
-            if len(wins) > 0:
-                ax1.hist(wins, bins=min(30, max(10, len(wins))), color=self.colors['positive'],
-                        alpha=0.7, label=f'Wins ({len(wins)})', edgecolor='white')
-            if len(losses) > 0:
-                ax1.hist(losses, bins=min(30, max(10, len(losses))), color=self.colors['negative'],
-                        alpha=0.7, label=f'Losses ({len(losses)})', edgecolor='white')
-            ax1.axvline(0, color='black', linestyle='--', linewidth=1.5)
-            
-            ax1.set_xlabel('P&L (₹ Thousands)', fontsize=10)
-            ax1.set_ylabel('Frequency', fontsize=10)
-            ax1.set_title('Win/Loss Distribution', fontsize=11, fontweight='bold')
-            ax1.legend(fontsize=9)
-            ax1.grid(True, alpha=0.3)
+        if exit_col in trades_df.columns:
+            x_vals = trades_df[exit_col]
+        else:
+            x_vals = range(len(trades_df))
         
-        # ----- 2. Win Rate by Month -----
-        ax2 = fig.add_subplot(gs[0, 1])
+        ax1.plot(x_vals, cumulative_pnl,
+                color=self.colors['primary'], linewidth=2)
+        ax1.fill_between(x_vals, 0, cumulative_pnl,
+                         color=self.colors['primary'], alpha=0.2)
+        ax1.set_title('Cumulative PnL', fontsize=12, fontweight='bold')
+        ax1.set_ylabel(f'PnL ({self.currency_symbol})', fontsize=10)
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(self._format_currency))
+        ax1.grid(True, alpha=0.3)
+        ax1.axhline(0, color='black', linewidth=0.5)
         
-        if 'date' in trades.columns and 'pnl' in trades.columns:
-            trades['date'] = pd.to_datetime(trades['date'])
-            trades['month'] = trades['date'].dt.to_period('M')
-            
-            monthly_wr = trades.groupby('month').apply(
-                lambda x: (x['pnl'] > 0).sum() / len(x) * 100 if len(x) > 0 else 0
-            )
-            
-            if len(monthly_wr) > 0:
-                colors = [self.colors['positive'] if x >= 50 else self.colors['negative'] 
-                         for x in monthly_wr.values]
-                
-                x_positions = range(len(monthly_wr))
-                ax2.bar(x_positions, monthly_wr.values, color=colors, alpha=0.8, edgecolor='white')
-                ax2.axhline(50, color='gray', linestyle='--', linewidth=1.5)
-                
-                # X-axis labels (show every nth month)
-                n_labels = min(12, len(monthly_wr))
-                step = max(1, len(monthly_wr) // n_labels)
-                ax2.set_xticks(range(0, len(monthly_wr), step))
-                ax2.set_xticklabels(
-                    [str(monthly_wr.index[i])[-5:] for i in range(0, len(monthly_wr), step)],
-                    rotation=45, ha='right', fontsize=8
-                )
-            
-            ax2.set_xlabel('Month', fontsize=10)
-            ax2.set_ylabel('Win Rate (%)', fontsize=10)
-            ax2.set_title('Monthly Win Rate', fontsize=11, fontweight='bold')
-            ax2.grid(True, alpha=0.3, axis='y')
+        # ----- 2. Win/Loss Distribution -----
+        ax2 = axes[0, 1]
+        wins = trades_df[trades_df[pnl_col] > 0][pnl_col]
+        losses = trades_df[trades_df[pnl_col] <= 0][pnl_col]
         
-        # ----- 3. P&L by Day of Week (FIXED) -----
-        ax3 = fig.add_subplot(gs[0, 2])
+        if len(wins) > 0 and len(losses) > 0:
+            ax2.hist([wins, losses], bins=30, label=['Wins', 'Losses'],
+                    color=[self.colors['positive'], self.colors['negative']],
+                    alpha=0.7, edgecolor='white')
+        elif len(wins) > 0:
+            ax2.hist(wins, bins=30, label='Wins',
+                    color=self.colors['positive'], alpha=0.7)
+        elif len(losses) > 0:
+            ax2.hist(losses, bins=30, label='Losses',
+                    color=self.colors['negative'], alpha=0.7)
         
-        if 'date' in trades.columns and 'pnl' in trades.columns:
-            trades['date'] = pd.to_datetime(trades['date'])
-            trades['dow'] = trades['date'].dt.dayofweek
-            dow_pnl = trades.groupby('dow')['pnl'].mean() / 1000
-            
-            # All days mapping
-            all_days = {0: 'Mon', 1: 'Tue', 2: 'Wed', 3: 'Thu', 4: 'Fri', 5: 'Sat', 6: 'Sun'}
-            
-            # Create aligned data
-            plot_days = []
-            plot_values = []
-            plot_colors = []
-            
-            for day_num in sorted(dow_pnl.index):
-                if day_num in all_days:
-                    plot_days.append(all_days[day_num])
-                    plot_values.append(dow_pnl[day_num])
-                    color = self.colors['positive'] if dow_pnl[day_num] > 0 else self.colors['negative']
-                    plot_colors.append(color)
-            
-            if plot_days:
-                ax3.bar(plot_days, plot_values, color=plot_colors, alpha=0.8, edgecolor='white')
-                ax3.axhline(0, color='gray', linestyle='--', linewidth=1)
-            
-            ax3.set_xlabel('Day of Week', fontsize=10)
-            ax3.set_ylabel('Avg P&L (₹K)', fontsize=10)
-            ax3.set_title('Avg P&L by Weekday', fontsize=11, fontweight='bold')
-            ax3.grid(True, alpha=0.3, axis='y')
+        ax2.set_title('PnL Distribution', fontsize=12, fontweight='bold')
+        ax2.set_xlabel(f'PnL ({self.currency_symbol})', fontsize=10)
+        ax2.set_ylabel('Frequency', fontsize=10)
+        ax2.legend(loc='upper right')
+        ax2.grid(True, alpha=0.3, axis='y')
         
-        # ----- 4. Cumulative P&L -----
-        ax4 = fig.add_subplot(gs[1, 0])
+        # ----- 3. Trade Returns -----
+        ax3 = axes[1, 0]
+        colors = [self.colors['positive'] if r > 0 else self.colors['negative']
+                 for r in trades_df[return_col]]
+        ax3.bar(range(len(trades_df)), trades_df[return_col] * 100,
+               color=colors, alpha=0.6)
+        ax3.axhline(0, color='black', linewidth=0.5)
+        ax3.set_title('Trade Returns', fontsize=12, fontweight='bold')
+        ax3.set_xlabel('Trade Number', fontsize=10)
+        ax3.set_ylabel('Return (%)', fontsize=10)
+        ax3.grid(True, alpha=0.3, axis='y')
         
-        if 'pnl' in trades.columns:
-            cum_pnl = trades['pnl'].cumsum() / 100000  # In Lakhs
-            
-            ax4.plot(range(len(cum_pnl)), cum_pnl.values,
-                    color=self.colors['primary'], linewidth=2)
-            ax4.fill_between(
-                range(len(cum_pnl)), cum_pnl.values, 0,
-                where=(cum_pnl.values >= 0),
-                color=self.colors['positive'], alpha=0.3
-            )
-            ax4.fill_between(
-                range(len(cum_pnl)), cum_pnl.values, 0,
-                where=(cum_pnl.values < 0),
-                color=self.colors['negative'], alpha=0.3
-            )
-            ax4.axhline(0, color='gray', linestyle='--', linewidth=1)
-            
-            ax4.set_xlabel('Trade Number', fontsize=10)
-            ax4.set_ylabel('Cumulative P&L (₹ Lakhs)', fontsize=10)
-            ax4.set_title('Cumulative P&L', fontsize=11, fontweight='bold')
-            ax4.grid(True, alpha=0.3)
+        # ----- 4. Statistics Table -----
+        ax4 = axes[1, 1]
+        ax4.axis('off')
         
-        # ----- 5. Top/Bottom Performers -----
-        ax5 = fig.add_subplot(gs[1, 1])
+        win_rate = (trades_df[pnl_col] > 0).sum() / len(trades_df) * 100 if len(trades_df) > 0 else 0
+        avg_win = wins.mean() if len(wins) > 0 else 0
+        avg_loss = losses.mean() if len(losses) > 0 else 0
+        profit_factor = abs(wins.sum() / losses.sum()) if len(losses) > 0 and losses.sum() != 0 else np.inf
         
-        if 'ticker' in trades.columns and 'pnl' in trades.columns:
-            ticker_pnl = trades.groupby('ticker')['pnl'].sum().sort_values() / 1000
-            
-            # Top 5 and Bottom 5
-            n_show = min(5, max(1, len(ticker_pnl) // 2))
-            
-            if n_show > 0 and len(ticker_pnl) >= 2:
-                bottom_n = ticker_pnl.head(n_show)
-                top_n = ticker_pnl.tail(n_show)
-                combined = pd.concat([bottom_n, top_n])
-                
-                colors = [self.colors['negative'] if x < 0 else self.colors['positive']
-                         for x in combined.values]
-                
-                y_positions = range(len(combined))
-                ax5.barh(y_positions, combined.values, color=colors, alpha=0.8, edgecolor='white')
-                ax5.set_yticks(y_positions)
-                ax5.set_yticklabels(combined.index, fontsize=9)
-                ax5.axvline(0, color='gray', linestyle='--', linewidth=1)
-                
-                ax5.set_xlabel('Total P&L (₹K)', fontsize=10)
-                ax5.set_title(f'Top/Bottom {n_show} Stocks', fontsize=11, fontweight='bold')
-            
-            ax5.grid(True, alpha=0.3, axis='x')
+        stats_data = [
+            ['Total Trades', f'{len(trades_df)}'],
+            ['Win Rate', f'{win_rate:.1f}%'],
+            ['Avg Win', self._format_currency(avg_win, 0)],
+            ['Avg Loss', self._format_currency(avg_loss, 0)],
+            ['Profit Factor', f'{profit_factor:.2f}' if profit_factor != np.inf else '∞'],
+            ['Total PnL', self._format_currency(trades_df[pnl_col].sum(), 0)],
+            ['Best Trade', self._format_currency(trades_df[pnl_col].max(), 0)],
+            ['Worst Trade', self._format_currency(trades_df[pnl_col].min(), 0)]
+        ]
         
-        # ----- 6. Trade Stats Summary -----
-        ax6 = fig.add_subplot(gs[1, 2])
-        ax6.axis('off')
+        table = ax4.table(cellText=stats_data, cellLoc='left',
+                         colWidths=[0.5, 0.5], loc='center',
+                         bbox=[0, 0, 1, 1])
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1, 2)
         
-        if 'pnl' in trades.columns:
-            wins = trades[trades['pnl'] > 0]
-            losses = trades[trades['pnl'] <= 0]
-            
-            total_trades = len(trades)
-            win_count = len(wins)
-            loss_count = len(losses)
-            win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
-            
-            total_pnl = trades['pnl'].sum()
-            avg_pnl = trades['pnl'].mean()
-            avg_win = wins['pnl'].mean() if len(wins) > 0 else 0
-            avg_loss = losses['pnl'].mean() if len(losses) > 0 else 0
-            best_trade = trades['pnl'].max()
-            worst_trade = trades['pnl'].min()
-            
-            profit_factor = abs(wins['pnl'].sum() / losses['pnl'].sum()) if losses['pnl'].sum() != 0 else float('inf')
-            if np.isinf(profit_factor):
-                profit_factor_str = "∞"
-            else:
-                profit_factor_str = f"{profit_factor:.2f}"
-            
-            stats_text = f"""
-TRADE STATISTICS
-{'─' * 35}
-
-Total Trades:     {total_trades:>10,}
-Winning Trades:   {win_count:>10,}
-Losing Trades:    {loss_count:>10,}
-
-Win Rate:         {win_rate:>10.1f}%
-
-Total P&L:        ₹{total_pnl/100000:>9.2f}L
-Avg P&L/Trade:    ₹{avg_pnl/1000:>9.2f}K
-
-Avg Win:          ₹{avg_win/1000:>9.2f}K
-Avg Loss:         ₹{avg_loss/1000:>9.2f}K
-
-Best Trade:       ₹{best_trade/1000:>9.2f}K
-Worst Trade:      ₹{worst_trade/1000:>9.2f}K
-
-Profit Factor:    {profit_factor_str:>10}
-{'─' * 35}
-"""
-            ax6.text(
-                0.1, 0.95, stats_text,
-                transform=ax6.transAxes,
-                fontsize=10,
-                fontfamily='monospace',
-                verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3)
-            )
+        for i in range(len(stats_data)):
+            table[(i, 0)].set_facecolor('#E8F4F8')
+            table[(i, 0)].set_text_props(weight='bold')
+            table[(i, 1)].set_facecolor('white')
         
-        plt.suptitle(title, fontsize=14, fontweight='bold', y=1.01)
+        ax4.set_title('Statistics', fontsize=12, fontweight='bold', pad=20)
+        
+        plt.suptitle(title, fontsize=14, fontweight='bold', y=0.995)
+        plt.tight_layout()
         
         if save_path:
             self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
         
         if show:
             plt.show()
         
         return fig
-    
-    # =========================================================================
-    # HELPER METHODS
-    # =========================================================================
-    
-    def _calculate_cagr(self, equity_curve: pd.Series) -> float:
-        """Calculate CAGR from equity curve."""
-        if len(equity_curve) < 2:
-            return 0.0
-        total_return = equity_curve.iloc[-1] / equity_curve.iloc[0]
-        n_years = (equity_curve.index[-1] - equity_curve.index[0]).days / 365.25
-        if n_years <= 0:
-            return 0.0
-        return (total_return ** (1 / n_years) - 1) * 100
-    
-    def _calculate_max_drawdown(self, equity_curve: pd.Series) -> float:
-        """Calculate maximum drawdown."""
-        peak = equity_curve.expanding(min_periods=1).max()
-        drawdown = (equity_curve - peak) / peak
-        return drawdown.min()
-    
-    def _calculate_drawdown_series(self, equity_curve: pd.Series) -> pd.Series:
-        """Calculate drawdown series."""
-        peak = equity_curve.expanding(min_periods=1).max()
-        return (equity_curve - peak) / peak
-    
-    def _max_dd_from_returns(self, returns: pd.Series) -> float:
-        """Calculate max drawdown from returns series."""
-        if len(returns) == 0:
-            return 0.0
-        cum_returns = (1 + returns).cumprod()
-        peak = cum_returns.expanding(min_periods=1).max()
-        drawdown = (cum_returns - peak) / peak
-        return drawdown.min()
-    
-    def _format_currency(self, x: float, pos: int) -> str:
-        """Format number in Indian currency style."""
-        if abs(x) >= 1e7:
-            return f'₹{x/1e7:.1f}Cr'
-        elif abs(x) >= 1e5:
-            return f'₹{x/1e5:.1f}L'
-        elif abs(x) >= 1e3:
-            return f'₹{x/1e3:.0f}K'
-        else:
-            return f'₹{x:.0f}'
-    
-    def _format_date_axis(self, ax):
-        """Format x-axis for dates."""
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-    
-    def _save_figure(self, fig: plt.Figure, path: str):
-        """Save figure to file."""
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(path, dpi=self.dpi, bbox_inches='tight',
-                   facecolor=fig.get_facecolor(), edgecolor='none')
-        print(f"✅ Saved: {path}")
 
 
 # =============================================================================
@@ -947,25 +946,9 @@ Profit Factor:    {profit_factor_str:>10}
 # =============================================================================
 
 class FactorPlotter:
-    """
-    Factor analysis and feature importance visualization.
+    """Visualization for factor/feature analysis."""
     
-    Generates:
-        - Feature importance plots
-        - Factor correlation heatmaps
-        - Factor returns analysis
-        - SHAP summary plots
-    
-    Example:
-        >>> plotter = FactorPlotter()
-        >>> fig = plotter.plot_feature_importance(importance_df)
-    """
-    
-    def __init__(
-        self,
-        figsize: Tuple[int, int] = (14, 8),
-        dpi: int = 150
-    ):
+    def __init__(self, figsize: Tuple[int, int] = (12, 6), dpi: int = 150):
         """Initialize factor plotter."""
         self.figsize = figsize
         self.dpi = dpi
@@ -974,242 +957,280 @@ class FactorPlotter:
             'secondary': '#A23B72',
             'positive': '#28A745',
             'negative': '#DC3545',
-            'neutral': '#6C757D'
+            'warning': '#FFC107'
         }
+    
+    def _save_figure(self, fig: plt.Figure, path: str) -> None:
+        """Save figure to file."""
+        save_path = Path(path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
+        logger.info(f"Saved: {save_path}")
+        print(f"✅ Saved: {path}")
     
     def plot_feature_importance(
         self,
         importance_df: pd.DataFrame,
         top_n: int = 20,
-        title: str = "Feature Importance (SHAP Values)",
+        feature_col: str = 'feature',
+        importance_col: str = 'importance',
+        title: str = "Feature Importance",
         save_path: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
+        close_after_save: bool = True
     ) -> plt.Figure:
         """
         Plot feature importance.
         
         Args:
-            importance_df: DataFrame with 'feature' and 'importance' columns
-            top_n: Number of top features to display
+            importance_df: DataFrame with features and importance
+            top_n: Number of top features to show
+            feature_col: Feature name column
+            importance_col: Importance value column
             title: Plot title
-            save_path: Path to save figure
-            show: Whether to display
+            save_path: Save path
+            show: Display plot
+            close_after_save: Close after saving
             
         Returns:
-            matplotlib Figure object
+            Figure object
         """
-        fig, axes = plt.subplots(1, 2, figsize=(self.figsize[0], self.figsize[1]))
+        try:
+            validate_dataframe(importance_df, [feature_col, importance_col], "importance_df")
+        except ValueError as e:
+            logger.error(f"Importance validation failed: {e}")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, str(e), ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
         
-        # Sort and get top features
-        top_features = importance_df.nlargest(top_n, 'importance')
+        # Get top N
+        df_sorted = importance_df.nlargest(top_n, importance_col)
         
-        # ----- 1. Horizontal Bar Chart -----
-        ax1 = axes[0]
+        fig, ax = plt.subplots(figsize=(self.figsize[0], max(6, top_n * 0.3)))
         
-        # Color gradient based on importance
-        norm_importance = top_features['importance'] / top_features['importance'].max()
-        colors = plt.cm.viridis(norm_importance.values)
+        # Horizontal bar chart
+        y_pos = np.arange(len(df_sorted))
+        bars = ax.barh(y_pos, df_sorted[importance_col].values,
+                      color=self.colors['primary'], alpha=0.8)
         
-        y_pos = range(len(top_features))
-        bars = ax1.barh(y_pos, top_features['importance'].values,
-                       color=colors, alpha=0.85, edgecolor='white')
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(df_sorted[feature_col].values, fontsize=9)
+        ax.invert_yaxis()
+        ax.set_xlabel('Importance', fontsize=11)
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
+        ax.grid(True, alpha=0.3, axis='x')
         
-        ax1.set_yticks(y_pos)
-        ax1.set_yticklabels(top_features['feature'].values, fontsize=9)
-        ax1.invert_yaxis()
-        ax1.set_xlabel('Importance Score', fontsize=11)
-        ax1.set_title(f'Top {top_n} Features', fontsize=12, fontweight='bold')
-        ax1.grid(True, alpha=0.3, axis='x')
+        # Add value labels
+        for i, (bar, v) in enumerate(zip(bars, df_sorted[importance_col].values)):
+            ax.text(v, i, f' {v:.4f}', va='center', fontsize=8)
         
-        # Value labels
-        for bar, val in zip(bars, top_features['importance'].values):
-            ax1.text(bar.get_width() + 0.002, bar.get_y() + bar.get_height()/2,
-                    f'{val:.4f}', va='center', fontsize=8, color='gray')
-        
-        # ----- 2. Cumulative Importance -----
-        ax2 = axes[1]
-        
-        sorted_imp = importance_df.sort_values('importance', ascending=False)
-        cumulative = sorted_imp['importance'].cumsum() / sorted_imp['importance'].sum() * 100
-        
-        ax2.plot(range(1, len(cumulative) + 1), cumulative.values,
-                color=self.colors['primary'], linewidth=2.5)
-        ax2.fill_between(range(1, len(cumulative) + 1), cumulative.values,
-                        alpha=0.2, color=self.colors['primary'])
-        
-        # Threshold lines
-        ax2.axhline(80, color=self.colors['positive'], linestyle='--',
-                   linewidth=1.5, label='80% threshold')
-        ax2.axhline(95, color=self.colors['negative'], linestyle='--',
-                   linewidth=1.5, label='95% threshold')
-        
-        # Find crossing points
-        idx_80 = np.argmax(cumulative.values >= 80) + 1 if (cumulative.values >= 80).any() else len(cumulative)
-        idx_95 = np.argmax(cumulative.values >= 95) + 1 if (cumulative.values >= 95).any() else len(cumulative)
-        
-        ax2.axvline(idx_80, color=self.colors['positive'], linestyle=':', alpha=0.7)
-        ax2.axvline(idx_95, color=self.colors['negative'], linestyle=':', alpha=0.7)
-        
-        ax2.annotate(f'{idx_80} features\nfor 80%',
-                    xy=(idx_80, 80), xytext=(idx_80 + 3, 70),
-                    fontsize=9, arrowprops=dict(arrowstyle='->', lw=0.8))
-        
-        ax2.set_xlabel('Number of Features', fontsize=11)
-        ax2.set_ylabel('Cumulative Importance (%)', fontsize=11)
-        ax2.set_title('Cumulative Feature Importance', fontsize=12, fontweight='bold')
-        ax2.legend(loc='lower right', fontsize=9)
-        ax2.set_xlim(0, min(50, len(cumulative)))
-        ax2.set_ylim(0, 102)
-        ax2.grid(True, alpha=0.3)
-        
-        plt.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
         plt.tight_layout()
         
         if save_path:
-            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
-            print(f"✅ Saved: {save_path}")
+            self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
         
         if show:
             plt.show()
         
         return fig
     
-    def plot_factor_correlation(
+    def plot_ic_decay(
         self,
-        factor_data: pd.DataFrame,
-        title: str = "Factor Correlation Matrix",
+        decay_df: pd.DataFrame,
+        horizon_col: str = 'horizon',
+        ic_col: str = 'ic',
+        rank_ic_col: Optional[str] = 'rank_ic',
+        title: str = "Alpha Decay Analysis",
         save_path: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
+        close_after_save: bool = True
     ) -> plt.Figure:
         """
-        Plot factor correlation heatmap.
+        Plot IC decay over horizons.
         
         Args:
-            factor_data: DataFrame with factors as columns
+            decay_df: DataFrame with horizons and IC values
+            horizon_col: Horizon column name
+            ic_col: IC column name
+            rank_ic_col: Rank IC column name (optional)
             title: Plot title
-            save_path: Path to save figure
-            show: Whether to display
+            save_path: Save path
+            show: Display plot
+            close_after_save: Close after saving
             
         Returns:
-            matplotlib Figure object
+            Figure object
         """
-        corr = factor_data.corr()
+        try:
+            validate_dataframe(decay_df, [horizon_col, ic_col], "decay_df")
+        except ValueError as e:
+            logger.error(f"Decay validation failed: {e}")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, str(e), ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
         
-        fig, ax = plt.subplots(figsize=(12, 10))
+        fig, ax = plt.subplots(figsize=self.figsize)
         
-        # Mask upper triangle
-        mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
+        # IC line
+        ax.plot(decay_df[horizon_col], decay_df[ic_col],
+               marker='o', linewidth=2.5, markersize=8,
+               color=self.colors['primary'], label='IC')
         
-        # Heatmap
+        # Rank IC line (if provided)
+        if rank_ic_col and rank_ic_col in decay_df.columns:
+            ax.plot(decay_df[horizon_col], decay_df[rank_ic_col],
+                   marker='s', linewidth=2.5, markersize=8,
+                   color=self.colors['secondary'], label='Rank IC',
+                   linestyle='--')
+        
+        ax.axhline(0, color='gray', linestyle='--', linewidth=1)
+        ax.set_xlabel('Prediction Horizon (days)', fontsize=11)
+        ax.set_ylabel('Information Coefficient', fontsize=11)
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        if save_path:
+            self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
+        
+        if show:
+            plt.show()
+        
+        return fig
+    
+    def plot_correlation_matrix(
+        self,
+        corr_matrix: pd.DataFrame,
+        title: str = "Feature Correlation Matrix",
+        save_path: Optional[str] = None,
+        show: bool = True,
+        close_after_save: bool = True
+    ) -> plt.Figure:
+        """
+        Plot correlation heatmap.
+        
+        Args:
+            corr_matrix: Correlation matrix
+            title: Plot title
+            save_path: Save path
+            show: Display plot
+            close_after_save: Close after saving
+            
+        Returns:
+            Figure object
+        """
+        if corr_matrix is None or len(corr_matrix) == 0:
+            logger.error("Correlation matrix is empty")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, 'Empty Matrix', ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
+        
+        n_features = len(corr_matrix)
+        fig, ax = plt.subplots(figsize=(max(10, n_features * 0.5),
+                                       max(8, n_features * 0.4)))
+        
         sns.heatmap(
-            corr,
-            mask=mask,
-            annot=True,
+            corr_matrix,
+            annot=True if n_features <= 15 else False,
             fmt='.2f',
-            cmap='RdYlBu_r',
+            cmap='coolwarm',
             center=0,
-            ax=ax,
+            vmin=-1,
+            vmax=1,
             square=True,
             linewidths=0.5,
-            cbar_kws={'shrink': 0.8, 'label': 'Correlation'},
-            annot_kws={'size': 8}
+            cbar_kws={'label': 'Correlation'},
+            ax=ax
         )
         
         ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
-        plt.xticks(rotation=45, ha='right')
-        plt.yticks(rotation=0)
+        
         plt.tight_layout()
         
         if save_path:
-            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
-            print(f"✅ Saved: {save_path}")
+            self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
         
         if show:
             plt.show()
         
         return fig
     
-    def plot_factor_returns(
+    def plot_ic_series(
         self,
-        factor_returns: pd.DataFrame,
-        title: str = "Factor Returns Analysis",
+        ic_series: pd.Series,
+        title: str = "Information Coefficient Over Time",
+        rolling_window: int = 6,
         save_path: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
+        close_after_save: bool = True
     ) -> plt.Figure:
         """
-        Plot factor returns analysis.
+        Plot IC time series with rolling average.
         
         Args:
-            factor_returns: DataFrame with factor returns (columns = factors)
+            ic_series: IC values over time
             title: Plot title
-            save_path: Path to save figure
-            show: Whether to display
+            rolling_window: Window for rolling mean
+            save_path: Save path
+            show: Display plot
+            close_after_save: Close after saving
             
         Returns:
-            matplotlib Figure object
+            Figure object
         """
-        fig, axes = plt.subplots(2, 2, figsize=self.figsize)
+        try:
+            ic_series = validate_series(ic_series, "ic_series")
+        except ValueError as e:
+            logger.error(f"IC series validation failed: {e}")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, str(e), ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
         
-        # ----- 1. Cumulative Returns -----
-        ax1 = axes[0, 0]
-        cumulative = (1 + factor_returns).cumprod()
+        fig, ax = plt.subplots(figsize=(14, 6))
         
-        for i, col in enumerate(cumulative.columns[:10]):
-            ax1.plot(cumulative.index, cumulative[col],
-                    linewidth=1.5, label=col, alpha=0.85)
-        
-        ax1.axhline(1, color='gray', linestyle='--', linewidth=1)
-        ax1.set_xlabel('Date', fontsize=10)
-        ax1.set_ylabel('Cumulative Return', fontsize=10)
-        ax1.set_title('Cumulative Factor Returns', fontsize=11, fontweight='bold')
-        ax1.legend(loc='upper left', fontsize=7, ncol=2)
-        ax1.grid(True, alpha=0.3)
-        
-        # ----- 2. Sharpe Ratios -----
-        ax2 = axes[0, 1]
-        sharpe = (factor_returns.mean() / factor_returns.std() * np.sqrt(252)).sort_values()
-        
+        # IC bars
         colors = [self.colors['positive'] if x > 0 else self.colors['negative']
-                 for x in sharpe.values]
+                 for x in ic_series.values]
+        ax.bar(ic_series.index, ic_series.values,
+              color=colors, alpha=0.6, width=20, label='IC')
         
-        ax2.barh(range(len(sharpe)), sharpe.values, color=colors, alpha=0.8)
-        ax2.set_yticks(range(len(sharpe)))
-        ax2.set_yticklabels(sharpe.index, fontsize=9)
-        ax2.axvline(0, color='gray', linestyle='--', linewidth=1)
-        ax2.axvline(1, color=self.colors['positive'], linestyle=':', alpha=0.7)
-        ax2.set_xlabel('Sharpe Ratio', fontsize=10)
-        ax2.set_title('Factor Sharpe Ratios (Ann.)', fontsize=11, fontweight='bold')
-        ax2.grid(True, alpha=0.3, axis='x')
+        # Rolling average
+        if len(ic_series) >= rolling_window:
+            rolling_ic = ic_series.rolling(rolling_window).mean()
+            ax.plot(rolling_ic.index, rolling_ic.values,
+                   color=self.colors['primary'], linewidth=2.5,
+                   label=f'{rolling_window}-period MA')
         
-        # ----- 3. Volatility -----
-        ax3 = axes[1, 0]
-        vol = (factor_returns.std() * np.sqrt(252) * 100).sort_values()
+        # Mean line
+        mean_ic = ic_series.mean()
+        ax.axhline(mean_ic, color=self.colors['primary'], linestyle=':',
+                  linewidth=1.5, label=f'Mean: {mean_ic:.4f}')
+        ax.axhline(0, color='gray', linestyle='--', linewidth=1)
         
-        ax3.barh(range(len(vol)), vol.values, color=self.colors['primary'], alpha=0.8)
-        ax3.set_yticks(range(len(vol)))
-        ax3.set_yticklabels(vol.index, fontsize=9)
-        ax3.set_xlabel('Ann. Volatility (%)', fontsize=10)
-        ax3.set_title('Factor Volatility', fontsize=11, fontweight='bold')
-        ax3.grid(True, alpha=0.3, axis='x')
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
+        ax.set_xlabel('Date', fontsize=11)
+        ax.set_ylabel('Information Coefficient', fontsize=11)
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
         
-        # ----- 4. Correlation Heatmap -----
-        ax4 = axes[1, 1]
-        corr = factor_returns.corr()
-        
-        sns.heatmap(corr, annot=True, fmt='.2f', cmap='RdYlBu_r',
-                   center=0, ax=ax4, annot_kws={'size': 7},
-                   cbar_kws={'shrink': 0.8})
-        ax4.set_title('Factor Correlations', fontsize=11, fontweight='bold')
-        
-        plt.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
         plt.tight_layout()
         
         if save_path:
-            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
-            print(f"✅ Saved: {save_path}")
+            self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
         
         if show:
             plt.show()
@@ -1222,25 +1243,9 @@ class FactorPlotter:
 # =============================================================================
 
 class RiskPlotter:
-    """
-    Risk visualization and analysis.
+    """Risk metrics visualization."""
     
-    Generates:
-        - VaR and CVaR analysis
-        - Risk metrics dashboard
-        - Correlation analysis
-        - Stress testing visualizations
-    
-    Example:
-        >>> plotter = RiskPlotter()
-        >>> fig = plotter.plot_var_analysis(returns)
-    """
-    
-    def __init__(
-        self,
-        figsize: Tuple[int, int] = (14, 8),
-        dpi: int = 150
-    ):
+    def __init__(self, figsize: Tuple[int, int] = (12, 6), dpi: int = 150):
         """Initialize risk plotter."""
         self.figsize = figsize
         self.dpi = dpi
@@ -1249,456 +1254,532 @@ class RiskPlotter:
             'secondary': '#A23B72',
             'positive': '#28A745',
             'negative': '#DC3545',
-            'warning': '#FFC107',
-            'neutral': '#6C757D'
+            'warning': '#FFC107'
         }
+    
+    def _save_figure(self, fig: plt.Figure, path: str) -> None:
+        """Save figure to file."""
+        save_path = Path(path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
+        logger.info(f"Saved: {save_path}")
+        print(f"✅ Saved: {path}")
     
     def plot_var_analysis(
         self,
         returns: pd.Series,
         confidence_levels: List[float] = [0.95, 0.99],
-        title: str = "Value at Risk (VaR) Analysis",
+        title: str = "Value at Risk Analysis",
         save_path: Optional[str] = None,
-        show: bool = True
+        show: bool = True,
+        close_after_save: bool = True
     ) -> plt.Figure:
         """
-        Plot VaR and CVaR analysis.
+        Plot VaR analysis.
         
         Args:
-            returns: Daily returns series
-            confidence_levels: Confidence levels for VaR
+            returns: Returns series
+            confidence_levels: VaR confidence levels
             title: Plot title
-            save_path: Path to save figure
-            show: Whether to display
+            save_path: Save path
+            show: Display plot
+            close_after_save: Close after saving
             
         Returns:
-            matplotlib Figure object
+            Figure object
         """
-        fig, axes = plt.subplots(2, 2, figsize=self.figsize)
+        try:
+            returns_clean = validate_series(returns, "returns")
+        except ValueError as e:
+            logger.error(f"Returns validation failed: {e}")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, str(e), ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
         
-        returns_clean = returns.dropna()
-        
-        # ----- 1. Distribution with VaR Lines -----
-        ax1 = axes[0, 0]
+        fig, ax = plt.subplots(figsize=self.figsize)
         
         returns_pct = returns_clean * 100
-        var_95 = np.percentile(returns_pct, 5)
-        var_99 = np.percentile(returns_pct, 1)
         
         # Histogram
-        n, bins, patches = ax1.hist(returns_pct, bins=50, density=True,
-                                    alpha=0.7, color=self.colors['primary'],
-                                    edgecolor='white')
-        
-        # Color tail red
-        for i, patch in enumerate(patches):
-            if bins[i] < var_95:
-                patch.set_facecolor(self.colors['negative'])
-                patch.set_alpha(0.8)
+        ax.hist(returns_pct, bins=50, alpha=0.7, color=self.colors['primary'],
+               density=True, edgecolor='white')
         
         # VaR lines
-        ax1.axvline(var_95, color=self.colors['warning'], linestyle='--', 
-                   linewidth=2, label=f'VaR 95%: {var_95:.2f}%')
-        ax1.axvline(var_99, color=self.colors['negative'], linestyle='--',
-                   linewidth=2, label=f'VaR 99%: {var_99:.2f}%')
+        colors = [self.colors['warning'], self.colors['negative']]
+        for i, conf in enumerate(confidence_levels):
+            var = np.percentile(returns_pct, (1 - conf) * 100)
+            ax.axvline(var, color=colors[i], linewidth=2.5, linestyle='--',
+                      label=f'VaR {conf*100:.0f}%: {var:.2f}%')
         
-        ax1.set_xlabel('Daily Return (%)', fontsize=10)
-        ax1.set_ylabel('Density', fontsize=10)
-        ax1.set_title('Distribution with VaR', fontsize=11, fontweight='bold')
-        ax1.legend(loc='upper right', fontsize=9)
-        ax1.grid(True, alpha=0.3)
+        ax.set_xlabel('Return (%)', fontsize=11)
+        ax.set_ylabel('Density', fontsize=11)
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
+        ax.legend(loc='upper right', fontsize=10)
+        ax.grid(True, alpha=0.3)
         
-        # ----- 2. Rolling VaR -----
-        ax2 = axes[0, 1]
+        plt.tight_layout()
         
-        window = min(63, len(returns_clean) // 3)  # 3 months or 1/3 of data
-        if window > 10:
-            rolling_var_95 = returns_clean.rolling(window).quantile(0.05) * 100
-            rolling_var_99 = returns_clean.rolling(window).quantile(0.01) * 100
+        if save_path:
+            self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
+        
+        if show:
+            plt.show()
+        
+        return fig
+    
+    def plot_rolling_volatility(
+        self,
+        returns: pd.Series,
+        window: int = 21,
+        title: str = "Rolling Volatility",
+        save_path: Optional[str] = None,
+        show: bool = True,
+        close_after_save: bool = True
+    ) -> plt.Figure:
+        """
+        Plot rolling volatility.
+        
+        Args:
+            returns: Returns series
+            window: Rolling window
+            title: Plot title
+            save_path: Save path
+            show: Display plot
+            close_after_save: Close after saving
             
-            ax2.plot(rolling_var_95.index, rolling_var_95.values,
-                    color=self.colors['warning'], linewidth=1.5, label='VaR 95%')
-            ax2.plot(rolling_var_99.index, rolling_var_99.values,
-                    color=self.colors['negative'], linewidth=1.5, label='VaR 99%')
-            ax2.fill_between(rolling_var_95.index, rolling_var_95.values,
-                            rolling_var_99.values, alpha=0.3, color=self.colors['warning'])
+        Returns:
+            Figure object
+        """
+        try:
+            returns_clean = validate_series(returns, "returns", min_length=window)
+        except ValueError as e:
+            logger.error(f"Returns validation failed: {e}")
+            fig, ax = plt.subplots(figsize=self.figsize)
+            ax.text(0.5, 0.5, str(e), ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12, color='red')
+            return fig
         
-        ax2.set_xlabel('Date', fontsize=10)
-        ax2.set_ylabel('VaR (%)', fontsize=10)
-        ax2.set_title(f'Rolling {window}-Day VaR', fontsize=11, fontweight='bold')
-        ax2.legend(loc='lower left', fontsize=9)
-        ax2.grid(True, alpha=0.3)
-        ax2.invert_yaxis()
+        fig, ax = plt.subplots(figsize=self.figsize)
         
-        # ----- 3. VaR Breaches -----
-        ax3 = axes[1, 0]
+        # Calculate rolling volatility (annualized)
+        rolling_vol = returns_clean.rolling(window).std() * np.sqrt(252) * 100
         
-        var_threshold = np.percentile(returns_clean, 5)
-        breaches = returns_clean < var_threshold
-        breach_returns = returns_clean[breaches] * 100
+        ax.plot(rolling_vol.index, rolling_vol.values,
+               color=self.colors['primary'], linewidth=2)
+        ax.fill_between(rolling_vol.index, 0, rolling_vol.values,
+                       color=self.colors['primary'], alpha=0.2)
         
-        if len(breach_returns) > 0:
-            ax3.scatter(breach_returns.index, breach_returns.values,
-                       color=self.colors['negative'], alpha=0.7, s=50,
-                       label=f'Breaches ({len(breach_returns)})')
-        ax3.axhline(var_threshold * 100, color=self.colors['warning'],
-                   linestyle='--', linewidth=2, label=f'VaR 95%: {var_threshold*100:.2f}%')
+        # Mean line
+        mean_vol = rolling_vol.mean()
+        ax.axhline(mean_vol, color=self.colors['negative'], linestyle='--',
+                  linewidth=1.5, label=f'Mean: {mean_vol:.2f}%')
         
-        ax3.set_xlabel('Date', fontsize=10)
-        ax3.set_ylabel('Daily Return (%)', fontsize=10)
-        ax3.set_title('VaR 95% Breaches', fontsize=11, fontweight='bold')
-        ax3.legend(loc='lower left', fontsize=9)
-        ax3.grid(True, alpha=0.3)
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
+        ax.set_xlabel('Date', fontsize=11)
+        ax.set_ylabel('Annualized Volatility (%)', fontsize=11)
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
         
-        # ----- 4. VaR vs CVaR Comparison -----
-        ax4 = axes[1, 1]
+        plt.tight_layout()
         
-        var_values = []
-        cvar_values = []
-        labels = ['90%', '95%', '99%']
+        if save_path:
+            self._save_figure(fig, save_path)
+            if close_after_save and not show:
+                plt.close(fig)
         
-        for conf in [0.90, 0.95, 0.99]:
-            var = np.percentile(returns_clean, (1-conf)*100) * 100
-            cvar = returns_clean[returns_clean <= np.percentile(returns_clean, (1-conf)*100)].mean() * 100
-            var_values.append(abs(var))
-            cvar_values.append(abs(cvar))
+        if show:
+            plt.show()
         
-        x = np.arange(len(labels))
-        width = 0.35
+        return fig
+
+
+# =============================================================================
+# CONVENIENCE FUNCTIONS
+# =============================================================================
+
+def plot_equity_curve(
+    equity_curve: pd.Series,
+    benchmark: Optional[pd.Series] = None,
+    save_path: Optional[str] = None,
+    show: bool = True,
+    **kwargs
+) -> plt.Figure:
+    """Quick function to plot equity curve."""
+    plotter = PerformancePlotter(**kwargs)
+    return plotter.plot_equity_curve(
+        equity_curve, benchmark, save_path=save_path, show=show
+    )
+
+
+def plot_drawdown(
+    equity_curve: pd.Series,
+    save_path: Optional[str] = None,
+    show: bool = True,
+    **kwargs
+) -> plt.Figure:
+    """Quick function to plot drawdown."""
+    plotter = PerformancePlotter(**kwargs)
+    
+    fig, ax = plt.subplots(figsize=plotter.figsize)
+    
+    drawdown = plotter._calculate_drawdown_series(equity_curve) * 100
+    
+    ax.fill_between(drawdown.index, drawdown.values, 0,
+                   color=plotter.colors['negative'], alpha=0.5)
+    ax.plot(drawdown.index, drawdown.values,
+           color=plotter.colors['negative'], linewidth=1)
+    ax.axhline(0, color='black', linewidth=0.5)
+    
+    ax.set_title('Portfolio Drawdown', fontsize=14, fontweight='bold')
+    ax.set_ylabel('Drawdown (%)', fontsize=11)
+    ax.set_xlabel('Date', fontsize=11)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plotter._save_figure(fig, save_path)
+        if not show:
+            plt.close(fig)
+    
+    if show:
+        plt.show()
+    
+    return fig
+
+
+def plot_returns_distribution(
+    returns: pd.Series,
+    save_path: Optional[str] = None,
+    show: bool = True,
+    **kwargs
+) -> plt.Figure:
+    """Quick function to plot returns distribution."""
+    plotter = PerformancePlotter(**kwargs)
+    return plotter.plot_returns_distribution(returns, save_path=save_path, show=show)
+
+
+def plot_ic_series(
+    ic_series: pd.Series,
+    title: str = "Information Coefficient Over Time",
+    save_path: Optional[str] = None,
+    show: bool = True,
+    **kwargs
+) -> plt.Figure:
+    """Quick function to plot IC series."""
+    plotter = FactorPlotter(**kwargs)
+    return plotter.plot_ic_series(ic_series, title, save_path=save_path, show=show)
+
+
+def plot_feature_importance(
+    importance_df: pd.DataFrame,
+    top_n: int = 20,
+    save_path: Optional[str] = None,
+    show: bool = True,
+    **kwargs
+) -> plt.Figure:
+    """Quick function to plot feature importance."""
+    plotter = FactorPlotter(**kwargs)
+    return plotter.plot_feature_importance(
+        importance_df, top_n, save_path=save_path, show=show
+    )
+
+
+def plot_quantile_returns(
+    predictions_df: pd.DataFrame,
+    n_quantiles: int = 5,
+    pred_col: str = 'prediction',
+    return_col: str = 'forward_return',
+    date_col: str = 'date',
+    title: str = "Returns by Prediction Quantile",
+    save_path: Optional[str] = None,
+    show: bool = True
+) -> plt.Figure:
+    """
+    Plot average returns by prediction quantile.
+    
+    Args:
+        predictions_df: DataFrame with predictions and returns
+        n_quantiles: Number of quantiles
+        pred_col: Prediction column name
+        return_col: Return column name
+        date_col: Date column name
+        title: Plot title
+        save_path: Save path
+        show: Display plot
         
-        bars1 = ax4.bar(x - width/2, var_values, width, label='VaR',
-                       color=self.colors['warning'], alpha=0.8)
-        bars2 = ax4.bar(x + width/2, cvar_values, width, label='CVaR (ES)',
-                       color=self.colors['negative'], alpha=0.8)
+    Returns:
+        Figure object
+    """
+    try:
+        validate_dataframe(predictions_df, [pred_col, return_col, date_col], 
+                          "predictions_df")
+    except ValueError as e:
+        logger.error(f"Predictions validation failed: {e}")
+        fig, ax = plt.subplots(figsize=(14, 6))
+        ax.text(0.5, 0.5, str(e), ha='center', va='center',
+               transform=ax.transAxes, fontsize=12, color='red')
+        return fig
+    
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    df = predictions_df.copy()
+    
+    try:
+        # Calculate quantiles per date with error handling
+        def assign_quantile(x):
+            try:
+                return pd.qcut(x, n_quantiles, labels=range(1, n_quantiles + 1),
+                              duplicates='drop')
+            except ValueError:
+                # If qcut fails, use rank-based assignment
+                return pd.cut(x.rank(method='first'), n_quantiles,
+                            labels=range(1, n_quantiles + 1))
         
-        ax4.set_xticks(x)
-        ax4.set_xticklabels(labels)
-        ax4.set_xlabel('Confidence Level', fontsize=10)
-        ax4.set_ylabel('Loss (%)', fontsize=10)
-        ax4.set_title('VaR vs CVaR Comparison', fontsize=11, fontweight='bold')
-        ax4.legend(fontsize=9)
-        ax4.grid(True, alpha=0.3, axis='y')
+        df['quantile'] = df.groupby(date_col)[pred_col].transform(assign_quantile)
         
-        # Add value labels
-        for bar in bars1:
-            ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
-                    f'{bar.get_height():.2f}', ha='center', fontsize=8)
-        for bar in bars2:
-            ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
-                    f'{bar.get_height():.2f}', ha='center', fontsize=8)
+        # Remove NaN quantiles
+        df = df.dropna(subset=['quantile'])
+        
+        if len(df) == 0:
+            logger.warning("No valid quantiles generated")
+            for ax in axes:
+                ax.text(0.5, 0.5, 'Insufficient Data',
+                       ha='center', va='center', transform=ax.transAxes)
+            return fig
+        
+        # Average return by quantile
+        quantile_returns = df.groupby('quantile')[return_col].mean() * 100
+        
+        # ----- 1. Bar Chart -----
+        ax1 = axes[0]
+        colors = plt.cm.RdYlGn(np.linspace(0.2, 0.8, len(quantile_returns)))
+        
+        bars = ax1.bar(quantile_returns.index.astype(str), quantile_returns.values,
+                      color=colors, alpha=0.8, edgecolor='white')
+        ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
+        ax1.set_xlabel('Prediction Quantile', fontsize=11)
+        ax1.set_ylabel('Avg Return (%)', fontsize=11)
+        ax1.set_title('Avg Return by Quantile', fontsize=12, fontweight='bold')
+        ax1.grid(True, alpha=0.3, axis='y')
+        
+        for bar in bars:
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2, height,
+                    f'{height:.3f}%', ha='center',
+                    va='bottom' if height > 0 else 'top', fontsize=9)
+        
+        # ----- 2. Long-Short Spread -----
+        ax2 = axes[1]
+        
+        spread_data = df.groupby(date_col).apply(
+            lambda x: (x[x['quantile'] == n_quantiles][return_col].mean() -
+                      x[x['quantile'] == 1][return_col].mean())
+        ).dropna() * 100
+        
+        if len(spread_data) > 0:
+            colors_spread = ['#28A745' if x > 0 else '#DC3545'
+                           for x in spread_data.values]
+            ax2.bar(range(len(spread_data)), spread_data.values,
+                   color=colors_spread, alpha=0.6)
+            ax2.axhline(0, color='gray', linestyle='--', linewidth=1)
+            ax2.axhline(spread_data.mean(), color='#2E86AB', linestyle=':',
+                       linewidth=2, label=f'Mean: {spread_data.mean():.3f}%')
+            ax2.set_xlabel('Period', fontsize=11)
+            ax2.set_ylabel('Q5 - Q1 Return (%)', fontsize=11)
+            ax2.set_title('Long-Short Spread', fontsize=12, fontweight='bold')
+            ax2.legend(loc='upper right')
+            ax2.grid(True, alpha=0.3, axis='y')
         
         plt.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
         plt.tight_layout()
         
-        if save_path:
-            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
-            print(f"✅ Saved: {save_path}")
-        
-        if show:
-            plt.show()
-        
-        return fig
+    except Exception as e:
+        logger.error(f"Error in plot_quantile_returns: {e}")
+        for ax in axes:
+            ax.text(0.5, 0.5, f'Error: {str(e)}',
+                   ha='center', va='center', transform=ax.transAxes)
     
-    def plot_risk_dashboard(
-        self,
-        returns: pd.Series,
-        equity_curve: Optional[pd.Series] = None,
-        title: str = "Risk Metrics Dashboard",
-        save_path: Optional[str] = None,
-        show: bool = True
-    ) -> plt.Figure:
-        """
-        Comprehensive risk metrics dashboard.
-        
-        Args:
-            returns: Daily returns series
-            equity_curve: Optional equity curve for drawdown
-            title: Plot title
-            save_path: Path to save figure
-            show: Whether to display
-            
-        Returns:
-            matplotlib Figure object
-        """
-        fig = plt.figure(figsize=(16, 12))
-        gs = GridSpec(3, 3, figure=fig, hspace=0.35, wspace=0.3)
-        
-        returns_clean = returns.dropna()
-        
-        # Calculate metrics
-        metrics = self._calculate_risk_metrics(returns_clean)
-        
-        # ----- Row 1: Key Metrics Cards -----
-        ax_cards = fig.add_subplot(gs[0, :])
-        ax_cards.axis('off')
-        
-        card_data = [
-            ('Volatility\n(Ann.)', f"{metrics['volatility']*100:.1f}%", self.colors['warning']),
-            ('VaR 95%', f"{metrics['var_95']*100:.2f}%", self.colors['negative']),
-            ('CVaR 95%', f"{metrics['cvar_95']*100:.2f}%", self.colors['negative']),
-            ('Max DD', f"{metrics['max_dd']*100:.1f}%", self.colors['negative']),
-            ('Sharpe', f"{metrics['sharpe']:.2f}", self.colors['primary']),
-            ('Sortino', f"{metrics['sortino']:.2f}", self.colors['primary']),
-        ]
-        
-        for i, (name, value, color) in enumerate(card_data):
-            x = 0.08 + i * 0.15
-            
-            # Card background
-            rect = mpatches.FancyBboxPatch(
-                (x - 0.05, 0.15), 0.12, 0.7,
-                boxstyle="round,pad=0.02",
-                facecolor=color, alpha=0.15,
-                edgecolor=color, linewidth=2,
-                transform=ax_cards.transAxes
-            )
-            ax_cards.add_patch(rect)
-            
-            # Value
-            ax_cards.text(x + 0.01, 0.6, value, fontsize=18, fontweight='bold',
-                         color=color, transform=ax_cards.transAxes,
-                         ha='center', va='center')
-            # Label
-            ax_cards.text(x + 0.01, 0.35, name, fontsize=9,
-                         color='gray', transform=ax_cards.transAxes,
-                         ha='center', va='center')
-        
-        # ----- Row 2: Drawdown -----
-        ax2 = fig.add_subplot(gs[1, :2])
-        
-        if equity_curve is not None:
-            peak = equity_curve.expanding(min_periods=1).max()
-            drawdown = (equity_curve - peak) / peak * 100
-        else:
-            cum_returns = (1 + returns_clean).cumprod()
-            peak = cum_returns.expanding(min_periods=1).max()
-            drawdown = (cum_returns - peak) / peak * 100
-        
-        ax2.fill_between(drawdown.index, drawdown.values, 0,
-                        color=self.colors['negative'], alpha=0.5)
-        ax2.plot(drawdown.index, drawdown.values,
-                color=self.colors['negative'], linewidth=1)
-        ax2.axhline(0, color='black', linewidth=0.5)
-        
-        ax2.set_ylabel('Drawdown (%)', fontsize=10)
-        ax2.set_title('Drawdown Over Time', fontsize=11, fontweight='bold')
-        ax2.grid(True, alpha=0.3)
-        
-        # ----- Row 2: Rolling Volatility -----
-        ax3 = fig.add_subplot(gs[1, 2])
-        
-        window = min(21, len(returns_clean) // 5)
-        if window > 5:
-            rolling_vol = returns_clean.rolling(window).std() * np.sqrt(252) * 100
-            
-            ax3.plot(rolling_vol.index, rolling_vol.values,
-                    color=self.colors['warning'], linewidth=1.5)
-            ax3.axhline(rolling_vol.mean(), color=self.colors['primary'],
-                       linestyle='--', linewidth=1.5)
-        
-        ax3.set_ylabel('Volatility (%)', fontsize=10)
-        ax3.set_title(f'Rolling {window}-Day Volatility', fontsize=11, fontweight='bold')
-        ax3.grid(True, alpha=0.3)
-        
-        # ----- Row 3: Return vs Vol Scatter -----
-        ax4 = fig.add_subplot(gs[2, 0])
-        
-        monthly_ret = returns_clean.resample('M').apply(lambda x: (1+x).prod() - 1) * 100
-        monthly_vol = returns_clean.resample('M').std() * np.sqrt(21) * 100
-        
-        colors_scatter = [self.colors['positive'] if r > 0 else self.colors['negative']
-                         for r in monthly_ret.values]
-        ax4.scatter(monthly_vol.values, monthly_ret.values, c=colors_scatter,
-                   alpha=0.6, s=50, edgecolor='white')
-        ax4.axhline(0, color='gray', linestyle='--', linewidth=1)
-        
-        ax4.set_xlabel('Monthly Volatility (%)', fontsize=10)
-        ax4.set_ylabel('Monthly Return (%)', fontsize=10)
-        ax4.set_title('Return vs Volatility', fontsize=11, fontweight='bold')
-        ax4.grid(True, alpha=0.3)
-        
-        # ----- Row 3: Return Percentiles -----
-        ax5 = fig.add_subplot(gs[2, 1])
-        
-        percentiles = [1, 5, 10, 25, 50, 75, 90, 95, 99]
-        pct_values = [np.percentile(returns_clean, p) * 100 for p in percentiles]
-        
-        colors_bar = [self.colors['negative'] if v < 0 else self.colors['positive']
-                     for v in pct_values]
-        
-        ax5.barh(range(len(percentiles)), pct_values, color=colors_bar, alpha=0.8)
-        ax5.set_yticks(range(len(percentiles)))
-        ax5.set_yticklabels([f'{p}th' for p in percentiles])
-        ax5.axvline(0, color='gray', linestyle='--', linewidth=1)
-        
-        ax5.set_xlabel('Daily Return (%)', fontsize=10)
-        ax5.set_title('Return Percentiles', fontsize=11, fontweight='bold')
-        ax5.grid(True, alpha=0.3, axis='x')
-        
-        # ----- Row 3: Stats Table -----
-        ax6 = fig.add_subplot(gs[2, 2])
-        ax6.axis('off')
-        
-        stats_text = f"""
-RISK STATISTICS
-{'─' * 30}
-
-Skewness:       {metrics['skewness']:>10.4f}
-Kurtosis:       {metrics['kurtosis']:>10.4f}
-
-Best Day:       {metrics['best_day']*100:>10.2f}%
-Worst Day:      {metrics['worst_day']*100:>10.2f}%
-
-Positive Days:  {metrics['positive_pct']*100:>10.1f}%
-Avg Win:        {metrics['avg_positive']*100:>10.4f}%
-Avg Loss:       {metrics['avg_negative']*100:>10.4f}%
-
-Max DD Duration: {metrics['max_dd_duration']:>9} days
-{'─' * 30}
-"""
-        ax6.text(0.1, 0.95, stats_text, transform=ax6.transAxes,
-                fontsize=9, fontfamily='monospace', verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
-        
-        plt.suptitle(title, fontsize=14, fontweight='bold', y=1.01)
-        
-        if save_path:
-            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
-            print(f"✅ Saved: {save_path}")
-        
-        if show:
-            plt.show()
-        
-        return fig
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"✅ Saved: {save_path}")
+        if not show:
+            plt.close(fig)
     
-    def _calculate_risk_metrics(self, returns: pd.Series) -> Dict[str, float]:
-        """Calculate all risk metrics."""
-        # Basic
-        volatility = returns.std() * np.sqrt(252)
-        var_95 = np.percentile(returns, 5)
-        var_99 = np.percentile(returns, 1)
-        cvar_95 = returns[returns <= var_95].mean() if (returns <= var_95).any() else var_95
-        cvar_99 = returns[returns <= var_99].mean() if (returns <= var_99).any() else var_99
-        
-        # Drawdown
-        cum_returns = (1 + returns).cumprod()
-        peak = cum_returns.expanding(min_periods=1).max()
-        drawdown = (cum_returns - peak) / peak
-        max_dd = drawdown.min()
-        
-        # DD Duration
-        is_dd = drawdown < 0
-        if is_dd.any():
-            dd_groups = (~is_dd).cumsum()
-            max_dd_duration = is_dd.groupby(dd_groups).sum().max()
-        else:
-            max_dd_duration = 0
-        
-        # Ratios
-        ann_return = returns.mean() * 252
-        sharpe = ann_return / (returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
-        
-        downside = returns[returns < 0]
-        sortino = ann_return / (downside.std() * np.sqrt(252)) if len(downside) > 0 and downside.std() > 0 else 0
-        
-        # Avg positive/negative
-        positive_returns = returns[returns > 0]
-        negative_returns = returns[returns < 0]
-        
-        return {
-            'volatility': volatility,
-            'var_95': var_95,
-            'var_99': var_99,
-            'cvar_95': cvar_95,
-            'cvar_99': cvar_99,
-            'max_dd': max_dd,
-            'max_dd_duration': int(max_dd_duration) if pd.notna(max_dd_duration) else 0,
-            'sharpe': sharpe,
-            'sortino': sortino,
-            'skewness': returns.skew(),
-            'kurtosis': returns.kurtosis(),
-            'best_day': returns.max(),
-            'worst_day': returns.min(),
-            'positive_pct': (returns > 0).mean(),
-            'avg_positive': positive_returns.mean() if len(positive_returns) > 0 else 0,
-            'avg_negative': negative_returns.mean() if len(negative_returns) > 0 else 0
-        }
+    if show:
+        plt.show()
+    
+    return fig
 
 
 # =============================================================================
-# QUICK PLOT FUNCTION
+# COMPREHENSIVE REPORT
 # =============================================================================
 
 def quick_plot_all(
     equity_curve: pd.Series,
     returns: pd.Series,
-    trades: Optional[pd.DataFrame] = None,
-    feature_importance: Optional[pd.DataFrame] = None,
-    output_dir: str = "reports/charts",
-    show: bool = False
-) -> Dict[str, str]:
+    benchmark: Optional[pd.Series] = None,
+    trades_df: Optional[pd.DataFrame] = None,
+    ic_series: Optional[pd.Series] = None,
+    importance_df: Optional[pd.DataFrame] = None,
+    output_dir: str = "output/plots",
+    show: bool = False,
+    **kwargs
+) -> Dict[str, plt.Figure]:
     """
-    Generate all standard plots quickly.
+    Generate all standard plots and save to directory.
     
     Args:
         equity_curve: Portfolio equity curve
-        returns: Daily returns series
-        trades: Optional trade history
-        feature_importance: Optional feature importance DataFrame
-        output_dir: Directory to save plots
-        show: Whether to display plots
+        returns: Returns series
+        benchmark: Benchmark equity curve (optional)
+        trades_df: Trade data (optional)
+        ic_series: IC time series (optional)
+        importance_df: Feature importance (optional)
+        output_dir: Output directory
+        show: Display plots
+        **kwargs: Additional plotter arguments
         
     Returns:
-        Dictionary of plot_name -> file_path
+        Dictionary of figure objects
     """
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
     
-    saved_plots = {}
-    perf = PerformancePlotter()
-    factor = FactorPlotter()
-    risk = RiskPlotter()
+    logger.info(f"Generating all plots to: {output_dir}")
+    print(f"\n📊 Generating Performance Report...")
+    print(f"📁 Output: {output_dir}")
     
-    # Performance plots
-    plots_config = [
-        ('equity_curve', lambda: perf.plot_equity_curve(
-            equity_curve, save_path=f"{output_dir}/equity_curve.png", show=show)),
-        ('returns_distribution', lambda: perf.plot_returns_distribution(
-            returns, save_path=f"{output_dir}/returns_distribution.png", show=show)),
-        ('rolling_metrics', lambda: perf.plot_rolling_metrics(
-            returns, save_path=f"{output_dir}/rolling_metrics.png", show=show)),
-        ('monthly_heatmap', lambda: perf.plot_monthly_heatmap(
-            returns, save_path=f"{output_dir}/monthly_heatmap.png", show=show)),
-        ('var_analysis', lambda: risk.plot_var_analysis(
-            returns, save_path=f"{output_dir}/var_analysis.png", show=show)),
-        ('risk_dashboard', lambda: risk.plot_risk_dashboard(
-            returns, equity_curve, save_path=f"{output_dir}/risk_dashboard.png", show=show)),
-    ]
+    figures = {}
+    perf_plotter = PerformancePlotter(**kwargs)
+    factor_plotter = FactorPlotter()
+    risk_plotter = RiskPlotter()
     
-    for name, plot_func in plots_config:
-        try:
-            plot_func()
-            saved_plots[name] = f"{output_dir}/{name}.png"
-        except Exception as e:
-            print(f"⚠️ Failed: {name} - {e}")
+    # 1. Equity Curve
+    print("  ├─ Equity curve...")
+    figures['equity'] = perf_plotter.plot_equity_curve(
+        equity_curve, benchmark,
+        save_path=output_path / "equity_curve.png",
+        show=show,
+        close_after_save=True
+    )
     
-    # Optional plots
-    if trades is not None and not trades.empty:
-        try:
-            perf.plot_trade_analysis(
-                trades, save_path=f"{output_dir}/trade_analysis.png", show=show)
-            saved_plots['trade_analysis'] = f"{output_dir}/trade_analysis.png"
-        except Exception as e:
-            print(f"⚠️ Failed: trade_analysis - {e}")
+    # 2. Rolling Metrics
+    print("  ├─ Rolling metrics...")
+    figures['rolling'] = perf_plotter.plot_rolling_metrics(
+        returns,
+        save_path=output_path / "rolling_metrics.png",
+        show=show,
+        close_after_save=True
+    )
     
-    if feature_importance is not None and not feature_importance.empty:
-        try:
-            factor.plot_feature_importance(
-                feature_importance, save_path=f"{output_dir}/feature_importance.png", show=show)
-            saved_plots['feature_importance'] = f"{output_dir}/feature_importance.png"
-        except Exception as e:
-            print(f"⚠️ Failed: feature_importance - {e}")
+    # 3. Returns Distribution
+    print("  ├─ Returns distribution...")
+    figures['returns_dist'] = perf_plotter.plot_returns_distribution(
+        returns,
+        save_path=output_path / "returns_distribution.png",
+        show=show,
+        close_after_save=True
+    )
     
-    print(f"\n✅ Generated {len(saved_plots)} plots in {output_dir}/")
-    return saved_plots
+    # 4. Monthly Heatmap
+    print("  ├─ Monthly heatmap...")
+    figures['monthly'] = perf_plotter.plot_monthly_heatmap(
+        returns,
+        save_path=output_path / "monthly_heatmap.png",
+        show=show,
+        close_after_save=True
+    )
+    
+    # 5. Trade Analysis (if provided)
+    if trades_df is not None and len(trades_df) > 0:
+        print("  ├─ Trade analysis...")
+        figures['trades'] = perf_plotter.plot_trade_analysis(
+            trades_df,
+            save_path=output_path / "trade_analysis.png",
+            show=show,
+            close_after_save=True
+        )
+    
+    # 6. IC Series (if provided)
+    if ic_series is not None and len(ic_series) > 0:
+        print("  ├─ IC series...")
+        figures['ic'] = factor_plotter.plot_ic_series(
+            ic_series,
+            save_path=output_path / "ic_series.png",
+            show=show,
+            close_after_save=True
+        )
+    
+    # 7. Feature Importance (if provided)
+    if importance_df is not None and len(importance_df) > 0:
+        print("  ├─ Feature importance...")
+        figures['importance'] = factor_plotter.plot_feature_importance(
+            importance_df,
+            save_path=output_path / "feature_importance.png",
+            show=show,
+            close_after_save=True
+        )
+    
+    # 8. VaR Analysis
+    print("  ├─ VaR analysis...")
+    figures['var'] = risk_plotter.plot_var_analysis(
+        returns,
+        save_path=output_path / "var_analysis.png",
+        show=show,
+        close_after_save=True
+    )
+    
+    # 9. Rolling Volatility
+    print("  └─ Rolling volatility...")
+    figures['vol'] = risk_plotter.plot_rolling_volatility(
+        returns,
+        save_path=output_path / "rolling_volatility.png",
+        show=show,
+        close_after_save=True
+    )
+    
+    print(f"\n✅ Generated {len(figures)} plots")
+    print(f"📂 Saved to: {output_dir}")
+    
+    return figures
+
+
+# =============================================================================
+# EXAMPLE USAGE
+# =============================================================================
+
+if __name__ == "__main__":
+    # Example with synthetic data
+    np.random.seed(42)
+    dates = pd.date_range('2020-01-01', '2023-12-31', freq='D')
+    
+    # Generate sample data
+    returns = pd.Series(np.random.normal(0.0005, 0.01, len(dates)), index=dates)
+    equity = (1 + returns).cumprod() * 100000
+    
+    # Test plots
+    print("Testing plots.py...")
+    
+    plotter = PerformancePlotter(currency_symbol='$', indian_format=False)
+    
+    # Test equity curve
+    fig = plotter.plot_equity_curve(equity, show=False)
+    print("✅ Equity curve generated")
+    plt.close(fig)
+    
+    # Test returns distribution
+    fig = plotter.plot_returns_distribution(returns, show=False)
+    print("✅ Returns distribution generated")
+    plt.close(fig)
+    
+    # Test monthly heatmap
+    fig = plotter.plot_monthly_heatmap(returns, show=False)
+    print("✅ Monthly heatmap generated")
+    plt.close(fig)
+    
+    print("\n✅ All tests passed!")

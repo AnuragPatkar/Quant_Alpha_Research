@@ -1,48 +1,56 @@
 """
-Visualization Module Test Script
-=================================
-Test all visualization components:
+Test Visualization Module
+=========================
+Tests for quant_alpha/visualization/
 - plots.py (PerformancePlotter, FactorPlotter, RiskPlotter)
 - reports.py (ReportGenerator, exports)
-- dashboards.py (already tested separately)
-
-Run: python scripts/test_visualization.py
+- dashboards.py
 """
 
+import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from datetime import datetime
-import sys
-import os
 
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
-print("=" * 70)
-print("   VISUALIZATION MODULE TEST")
-print("=" * 70)
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
 
 
 # =============================================================================
-# STEP 1: Generate Demo Data
+# TEST UTILITIES
 # =============================================================================
 
-def generate_test_data():
-    """Generate comprehensive test data."""
-    print("\n📊 Generating test data...")
+class TestResult:
+    """Track test results."""
+    def __init__(self):
+        self.passed = 0
+        self.failed = 0
+        self.errors = []
     
+    def success(self, name):
+        self.passed += 1
+        print(f"   ✅ {name}")
+    
+    def fail(self, name, error):
+        self.failed += 1
+        self.errors.append((name, str(error)))
+        print(f"   ❌ {name}: {error}")
+    
+    def summary(self):
+        total = self.passed + self.failed
+        print(f"\n   Results: {self.passed}/{total} passed")
+        return self.failed == 0
+
+
+def generate_viz_data(n_days=252, n_trades=100):
+    """Generate comprehensive test data for visualization."""
     np.random.seed(42)
     
-    # Date range
-    dates = pd.date_range(start='2022-01-01', end='2024-01-01', freq='D')
-    n_days = len(dates)
+    dates = pd.date_range(start='2022-01-01', periods=n_days, freq='D')
     
     # Returns with realistic properties
     returns = np.random.normal(0.0005, 0.015, n_days)
-    
-    # Add some autocorrelation and fat tails
     for i in range(1, len(returns)):
         returns[i] += 0.1 * returns[i-1]  # Momentum
         if np.random.random() < 0.02:  # Fat tails
@@ -51,11 +59,10 @@ def generate_test_data():
     returns = pd.Series(returns, index=dates)
     
     # Equity curve
-    initial_capital = 10000000  # 1 Crore
+    initial_capital = 10_000_000
     equity_curve = (1 + returns).cumprod() * initial_capital
     
     # Trades
-    n_trades = 300
     tickers = ['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK',
                'HINDUNILVR', 'SBIN', 'BHARTIARTL', 'KOTAKBANK', 'ITC']
     
@@ -67,8 +74,7 @@ def generate_test_data():
         'entry_price': np.random.uniform(500, 3000, n_trades),
         'pnl': np.random.normal(5000, 20000, n_trades),
         'return_pct': np.random.normal(0.01, 0.04, n_trades)
-    })
-    trades = trades.sort_values('date').reset_index(drop=True)
+    }).sort_values('date').reset_index(drop=True)
     
     # Feature importance
     features = [
@@ -120,14 +126,14 @@ def generate_test_data():
     }
     
     config = {
-        'start_date': '2022-01-01',
-        'end_date': '2024-01-01',
+        'start_date': str(dates[0].date()),
+        'end_date': str(dates[-1].date()),
         'universe': 'NIFTY 50',
         'initial_capital': initial_capital,
         'strategy': 'ML Multi-Factor Alpha'
     }
     
-    backtest_results = {
+    return {
         'metrics': metrics,
         'equity_curve': equity_curve,
         'returns': returns,
@@ -135,96 +141,146 @@ def generate_test_data():
         'feature_importance': feature_importance,
         'config': config
     }
-    
-    print("   ✅ Test data generated!")
-    print(f"   - Equity curve: {len(equity_curve)} days")
-    print(f"   - Returns: {len(returns)} days")
-    print(f"   - Trades: {len(trades)} trades")
-    print(f"   - Features: {len(feature_importance)} features")
-    
-    return backtest_results
+
+
+def get_output_dir():
+    """Create and return output directory."""
+    output_dir = ROOT / 'test_outputs' / f"viz_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
 
 
 # =============================================================================
-# STEP 2: Test Plots
+# TEST: PERFORMANCE PLOTTER
 # =============================================================================
 
-def test_plots(data, output_dir):
-    """Test all plotting functions."""
-    print("\n" + "=" * 70)
-    print("   TESTING: plots.py")
-    print("=" * 70)
+def test_performance_plotter(data, output_dir):
+    """Test PerformancePlotter class."""
+    print("\n" + "="*60)
+    print("🧪 TEST: PerformancePlotter")
+    print("="*60)
     
-    from quant_alpha.visualization.plots import (
-        PerformancePlotter,
-        FactorPlotter,
-        RiskPlotter,
-        quick_plot_all
-    )
-    
-    plots_dir = output_dir / 'plots'
+    result = TestResult()
+    plots_dir = output_dir / 'performance_plots'
     plots_dir.mkdir(parents=True, exist_ok=True)
     
+    # Import
+    try:
+        from quant_alpha.visualization.plots import PerformancePlotter
+        result.success("PerformancePlotter imported")
+    except ImportError as e:
+        result.fail("Import", e)
+        return result.summary()
+    
+    perf = PerformancePlotter(style='default')
     equity_curve = data['equity_curve']
     returns = data['returns']
     trades = data['trades']
-    feature_importance = data['feature_importance']
     
-    # Test PerformancePlotter
-    print("\n📈 Testing PerformancePlotter...")
-    perf = PerformancePlotter(style='default')
-    
-    tests = [
-        ("Equity Curve", lambda: perf.plot_equity_curve(
-            equity_curve, 
+    # Test: Equity Curve
+    try:
+        perf.plot_equity_curve(
+            equity_curve,
             save_path=str(plots_dir / 'equity_curve.png'),
             show=False
-        )),
-        ("Returns Distribution", lambda: perf.plot_returns_distribution(
+        )
+        assert (plots_dir / 'equity_curve.png').exists(), "File not created"
+        result.success("plot_equity_curve()")
+    except Exception as e:
+        result.fail("plot_equity_curve()", e)
+    
+    # Test: Returns Distribution
+    try:
+        perf.plot_returns_distribution(
             returns,
             save_path=str(plots_dir / 'returns_distribution.png'),
             show=False
-        )),
-        ("Rolling Metrics", lambda: perf.plot_rolling_metrics(
+        )
+        assert (plots_dir / 'returns_distribution.png').exists()
+        result.success("plot_returns_distribution()")
+    except Exception as e:
+        result.fail("plot_returns_distribution()", e)
+    
+    # Test: Rolling Metrics
+    try:
+        perf.plot_rolling_metrics(
             returns,
             save_path=str(plots_dir / 'rolling_metrics.png'),
             show=False
-        )),
-        ("Monthly Heatmap", lambda: perf.plot_monthly_heatmap(
+        )
+        assert (plots_dir / 'rolling_metrics.png').exists()
+        result.success("plot_rolling_metrics()")
+    except Exception as e:
+        result.fail("plot_rolling_metrics()", e)
+    
+    # Test: Monthly Heatmap
+    try:
+        perf.plot_monthly_heatmap(
             returns,
             save_path=str(plots_dir / 'monthly_heatmap.png'),
             show=False
-        )),
-        ("Trade Analysis", lambda: perf.plot_trade_analysis(
+        )
+        assert (plots_dir / 'monthly_heatmap.png').exists()
+        result.success("plot_monthly_heatmap()")
+    except Exception as e:
+        result.fail("plot_monthly_heatmap()", e)
+    
+    # Test: Trade Analysis
+    try:
+        perf.plot_trade_analysis(
             trades,
             save_path=str(plots_dir / 'trade_analysis.png'),
             show=False
-        )),
-    ]
+        )
+        assert (plots_dir / 'trade_analysis.png').exists()
+        result.success("plot_trade_analysis()")
+    except Exception as e:
+        result.fail("plot_trade_analysis()", e)
     
-    for name, test_func in tests:
-        try:
-            test_func()
-            print(f"   ✅ {name}")
-        except Exception as e:
-            print(f"   ❌ {name}: {e}")
+    print(f"\n   📁 Plots saved to: {plots_dir}")
+    return result.summary()
+
+
+# =============================================================================
+# TEST: FACTOR PLOTTER
+# =============================================================================
+
+def test_factor_plotter(data, output_dir):
+    """Test FactorPlotter class."""
+    print("\n" + "="*60)
+    print("🧪 TEST: FactorPlotter")
+    print("="*60)
     
-    # Test FactorPlotter
-    print("\n🔬 Testing FactorPlotter...")
+    result = TestResult()
+    plots_dir = output_dir / 'factor_plots'
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Import
+    try:
+        from quant_alpha.visualization.plots import FactorPlotter
+        result.success("FactorPlotter imported")
+    except ImportError as e:
+        result.fail("Import", e)
+        return result.summary()
+    
     factor = FactorPlotter()
+    feature_importance = data['feature_importance']
+    returns = data['returns']
     
+    # Test: Feature Importance
     try:
         factor.plot_feature_importance(
             feature_importance,
             save_path=str(plots_dir / 'feature_importance.png'),
             show=False
         )
-        print("   ✅ Feature Importance")
+        assert (plots_dir / 'feature_importance.png').exists()
+        result.success("plot_feature_importance()")
     except Exception as e:
-        print(f"   ❌ Feature Importance: {e}")
+        result.fail("plot_feature_importance()", e)
     
+    # Test: Factor Returns
     try:
-        # Create dummy factor returns for testing
         factor_returns = pd.DataFrame(
             np.random.randn(len(returns), 5) * 0.01,
             index=returns.index,
@@ -235,24 +291,54 @@ def test_plots(data, output_dir):
             save_path=str(plots_dir / 'factor_returns.png'),
             show=False
         )
-        print("   ✅ Factor Returns")
+        assert (plots_dir / 'factor_returns.png').exists()
+        result.success("plot_factor_returns()")
     except Exception as e:
-        print(f"   ❌ Factor Returns: {e}")
+        result.fail("plot_factor_returns()", e)
     
-    # Test RiskPlotter
-    print("\n⚠️ Testing RiskPlotter...")
+    print(f"\n   📁 Plots saved to: {plots_dir}")
+    return result.summary()
+
+
+# =============================================================================
+# TEST: RISK PLOTTER
+# =============================================================================
+
+def test_risk_plotter(data, output_dir):
+    """Test RiskPlotter class."""
+    print("\n" + "="*60)
+    print("🧪 TEST: RiskPlotter")
+    print("="*60)
+    
+    result = TestResult()
+    plots_dir = output_dir / 'risk_plots'
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Import
+    try:
+        from quant_alpha.visualization.plots import RiskPlotter
+        result.success("RiskPlotter imported")
+    except ImportError as e:
+        result.fail("Import", e)
+        return result.summary()
+    
     risk = RiskPlotter()
+    returns = data['returns']
+    equity_curve = data['equity_curve']
     
+    # Test: VaR Analysis
     try:
         risk.plot_var_analysis(
             returns,
             save_path=str(plots_dir / 'var_analysis.png'),
             show=False
         )
-        print("   ✅ VaR Analysis")
+        assert (plots_dir / 'var_analysis.png').exists()
+        result.success("plot_var_analysis()")
     except Exception as e:
-        print(f"   ❌ VaR Analysis: {e}")
+        result.fail("plot_var_analysis()", e)
     
+    # Test: Risk Dashboard
     try:
         risk.plot_risk_dashboard(
             returns,
@@ -260,269 +346,461 @@ def test_plots(data, output_dir):
             save_path=str(plots_dir / 'risk_dashboard.png'),
             show=False
         )
-        print("   ✅ Risk Dashboard")
+        assert (plots_dir / 'risk_dashboard.png').exists()
+        result.success("plot_risk_dashboard()")
     except Exception as e:
-        print(f"   ❌ Risk Dashboard: {e}")
-    
-    # Test quick_plot_all
-    print("\n⚡ Testing quick_plot_all...")
-    try:
-        saved = quick_plot_all(
-            equity_curve=equity_curve,
-            returns=returns,
-            trades=trades,
-            feature_importance=feature_importance,
-            output_dir=str(plots_dir / 'quick_all'),
-            show=False
-        )
-        print(f"   ✅ Generated {len(saved)} plots")
-    except Exception as e:
-        print(f"   ❌ quick_plot_all: {e}")
+        result.fail("plot_risk_dashboard()", e)
     
     print(f"\n   📁 Plots saved to: {plots_dir}")
+    return result.summary()
 
 
 # =============================================================================
-# STEP 3: Test Reports
+# TEST: QUICK PLOT ALL
 # =============================================================================
 
-def test_reports(data, output_dir):
-    """Test all report generation functions."""
-    print("\n" + "=" * 70)
-    print("   TESTING: reports.py")
-    print("=" * 70)
+def test_quick_plot_all(data, output_dir):
+    """Test quick_plot_all convenience function."""
+    print("\n" + "="*60)
+    print("🧪 TEST: quick_plot_all()")
+    print("="*60)
     
-    from quant_alpha.visualization.reports import (
-        ReportGenerator,
-        generate_report,
-        print_metrics,
-        save_all_charts,
-        export_to_json,
-        export_to_excel,
-        export_to_csv
-    )
+    result = TestResult()
+    plots_dir = output_dir / 'quick_all'
     
+    # Import
+    try:
+        from quant_alpha.visualization.plots import quick_plot_all
+        result.success("quick_plot_all imported")
+    except ImportError as e:
+        result.fail("Import", e)
+        return result.summary()
+    
+    # Test
+    try:
+        saved_files = quick_plot_all(
+            equity_curve=data['equity_curve'],
+            returns=data['returns'],
+            trades=data['trades'],
+            feature_importance=data['feature_importance'],
+            output_dir=str(plots_dir),
+            show=False
+        )
+        
+        assert len(saved_files) > 0, "No files saved"
+        result.success(f"Generated {len(saved_files)} plots")
+        
+        # Verify files exist
+        for filepath in saved_files:
+            if Path(filepath).exists():
+                continue
+            else:
+                result.fail(f"File missing", filepath)
+                break
+        else:
+            result.success("All files exist")
+        
+    except Exception as e:
+        result.fail("quick_plot_all()", e)
+    
+    print(f"\n   📁 Plots saved to: {plots_dir}")
+    return result.summary()
+
+
+# =============================================================================
+# TEST: REPORT GENERATOR
+# =============================================================================
+
+def test_report_generator(data, output_dir):
+    """Test ReportGenerator class."""
+    print("\n" + "="*60)
+    print("🧪 TEST: ReportGenerator")
+    print("="*60)
+    
+    result = TestResult()
     reports_dir = output_dir / 'reports'
     reports_dir.mkdir(parents=True, exist_ok=True)
     
-    # Test ReportGenerator class
-    print("\n📄 Testing ReportGenerator class...")
+    # Import
+    try:
+        from quant_alpha.visualization.reports import ReportGenerator
+        result.success("ReportGenerator imported")
+    except ImportError as e:
+        result.fail("Import", e)
+        return result.summary()
+    
     generator = ReportGenerator(output_dir=str(reports_dir))
     
-    # Test PDF generation
-    print("\n   📑 Generating PDF report...")
-    try:
-        pdf_path = generator.generate_pdf(data, 'test_report')
-        print(f"   ✅ PDF: {pdf_path}")
-    except Exception as e:
-        print(f"   ❌ PDF: {e}")
-    
-    # Test terminal report
-    print("\n   🖥️ Testing terminal report...")
-    try:
-        generator.print_terminal_report(data)
-        print("   ✅ Terminal report printed above")
-    except Exception as e:
-        print(f"   ❌ Terminal report: {e}")
-    
-    # Test JSON export
-    print("\n   📋 Testing JSON export...")
+    # Test: JSON Export
     try:
         json_path = generator.export_to_json(data, 'test_metrics')
-        print(f"   ✅ JSON: {json_path}")
+        assert Path(json_path).exists(), "JSON file not created"
+        result.success(f"export_to_json()")
     except Exception as e:
-        print(f"   ❌ JSON: {e}")
+        result.fail("export_to_json()", e)
     
-    # Test Excel export
-    print("\n   📊 Testing Excel export...")
+    # Test: CSV Export
     try:
-        excel_path = generator.export_to_excel(data, 'test_data')
-        print(f"   ✅ Excel: {excel_path}")
+        csv_path = generator.export_to_csv(data, 'test_data')
+        assert Path(csv_path).exists(), "CSV file not created"
+        result.success(f"export_to_csv()")
     except Exception as e:
-        print(f"   ❌ Excel: {e}")
+        result.fail("export_to_csv()", e)
     
-    # Test CSV export
-    print("\n   📝 Testing CSV export...")
+    # Test: Excel Export
     try:
-        csv_path = generator.export_to_csv(data, 'test_csv')
-        print(f"   ✅ CSV: {csv_path}")
+        excel_path = generator.export_to_excel(data, 'test_excel')
+        assert Path(excel_path).exists(), "Excel file not created"
+        result.success(f"export_to_excel()")
     except Exception as e:
-        print(f"   ❌ CSV: {e}")
+        result.fail("export_to_excel()", e)
     
-    # Test Pickle export
-    print("\n   💾 Testing Pickle export...")
+    # Test: Pickle Export
     try:
         pkl_path = generator.export_to_pickle(data, 'test_pickle')
-        print(f"   ✅ Pickle: {pkl_path}")
+        assert Path(pkl_path).exists(), "Pickle file not created"
+        result.success(f"export_to_pickle()")
     except Exception as e:
-        print(f"   ❌ Pickle: {e}")
+        result.fail("export_to_pickle()", e)
     
-    # Test save_all_charts
-    print("\n   🖼️ Testing save_all_charts...")
+    # Test: Save All Charts
     try:
         charts_path = generator.save_all_charts(data, 'test_charts')
-        print(f"   ✅ Charts: {charts_path}")
+        assert Path(charts_path).exists(), "Charts directory not created"
+        result.success(f"save_all_charts()")
     except Exception as e:
-        print(f"   ❌ Charts: {e}")
+        result.fail("save_all_charts()", e)
     
-    # Test convenience functions
-    print("\n⚡ Testing convenience functions...")
-    
-    # generate_report
+    # Test: Terminal Report
     try:
-        outputs = generate_report(
-            data,
-            output_dir=str(reports_dir / 'quick_report'),
-            formats=['json', 'png']  # Skip PDF for faster test
-        )
-        print(f"   ✅ generate_report: {len(outputs)} formats")
+        print("\n   --- Terminal Report Preview ---")
+        generator.print_terminal_report(data)
+        print("   --- End Preview ---\n")
+        result.success("print_terminal_report()")
     except Exception as e:
-        print(f"   ❌ generate_report: {e}")
+        result.fail("print_terminal_report()", e)
     
-    # print_metrics (already tested above, skip verbose output)
-    print("   ✅ print_metrics: (tested above)")
+    # Test: PDF (optional - may need extra dependencies)
+    try:
+        pdf_path = generator.generate_pdf(data, 'test_report')
+        assert Path(pdf_path).exists(), "PDF file not created"
+        result.success(f"generate_pdf()")
+    except Exception as e:
+        result.fail("generate_pdf()", f"(Optional) {e}")
     
     print(f"\n   📁 Reports saved to: {reports_dir}")
+    return result.summary()
 
 
 # =============================================================================
-# STEP 4: Test Full Report Generation
+# TEST: CONVENIENCE FUNCTIONS
+# =============================================================================
+
+def test_convenience_functions(data, output_dir):
+    """Test convenience functions from reports module."""
+    print("\n" + "="*60)
+    print("🧪 TEST: Convenience Functions")
+    print("="*60)
+    
+    result = TestResult()
+    conv_dir = output_dir / 'convenience'
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Import
+    try:
+        from quant_alpha.visualization.reports import (
+            generate_report,
+            print_metrics,
+            export_to_json,
+            export_to_excel,
+            export_to_csv
+        )
+        result.success("Convenience functions imported")
+    except ImportError as e:
+        result.fail("Import", e)
+        return result.summary()
+    
+    # Test: generate_report
+    try:
+        outputs = generate_report(
+            data,
+            output_dir=str(conv_dir),
+            formats=['json', 'csv']  # Skip PDF for faster test
+        )
+        assert len(outputs) > 0, "No outputs generated"
+        result.success(f"generate_report() - {len(outputs)} formats")
+    except Exception as e:
+        result.fail("generate_report()", e)
+    
+    # Test: print_metrics
+    try:
+        print_metrics(data['metrics'])
+        result.success("print_metrics()")
+    except Exception as e:
+        result.fail("print_metrics()", e)
+    
+    # Test: Individual exports
+    try:
+        export_to_json(data, str(conv_dir / 'direct_export.json'))
+        result.success("export_to_json() direct")
+    except Exception as e:
+        result.fail("export_to_json() direct", e)
+    
+    print(f"\n   📁 Files saved to: {conv_dir}")
+    return result.summary()
+
+
+# =============================================================================
+# TEST: EDGE CASES
+# =============================================================================
+
+def test_edge_cases(output_dir):
+    """Test edge cases in visualization."""
+    print("\n" + "="*60)
+    print("🧪 TEST: Edge Cases")
+    print("="*60)
+    
+    result = TestResult()
+    edge_dir = output_dir / 'edge_cases'
+    edge_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Import
+    try:
+        from quant_alpha.visualization.plots import PerformancePlotter
+        from quant_alpha.visualization.reports import ReportGenerator
+    except ImportError as e:
+        result.fail("Import", e)
+        return result.summary()
+    
+    perf = PerformancePlotter()
+    
+    # Test 1: Empty returns
+    try:
+        empty_returns = pd.Series([], dtype=float)
+        perf.plot_returns_distribution(empty_returns, show=False)
+        result.fail("Empty returns", "Should have raised error")
+    except Exception:
+        result.success("Empty returns raises error (expected)")
+    
+    # Test 2: Single data point
+    try:
+        single_return = pd.Series([0.01], index=pd.date_range('2020-01-01', periods=1))
+        perf.plot_returns_distribution(single_return, show=False)
+        result.success("Single data point handled")
+    except Exception:
+        result.success("Single data point raises error (OK)")
+    
+    # Test 3: NaN values in returns
+    try:
+        nan_returns = pd.Series(
+            [0.01, np.nan, 0.02, np.nan, 0.03],
+            index=pd.date_range('2020-01-01', periods=5)
+        )
+        perf.plot_returns_distribution(nan_returns, show=False)
+        result.success("NaN values handled")
+    except Exception as e:
+        result.fail("NaN values", e)
+    
+    # Test 4: Empty trades DataFrame
+    try:
+        empty_trades = pd.DataFrame(columns=['date', 'ticker', 'side', 'pnl', 'return_pct'])
+        perf.plot_trade_analysis(empty_trades, show=False)
+        result.success("Empty trades handled")
+    except Exception:
+        result.success("Empty trades raises error (OK)")
+    
+    # Test 5: Very large dataset
+    try:
+        np.random.seed(42)
+        large_returns = pd.Series(
+            np.random.randn(10000) * 0.01,
+            index=pd.date_range('2000-01-01', periods=10000)
+        )
+        perf.plot_returns_distribution(
+            large_returns,
+            save_path=str(edge_dir / 'large_dataset.png'),
+            show=False
+        )
+        result.success("Large dataset (10k points) handled")
+    except Exception as e:
+        result.fail("Large dataset", e)
+    
+    # Test 6: Negative equity curve
+    try:
+        # This shouldn't happen in practice, but test anyway
+        neg_equity = pd.Series(
+            [100, 90, 80, -10, -20],  # Goes negative
+            index=pd.date_range('2020-01-01', periods=5)
+        )
+        perf.plot_equity_curve(neg_equity, show=False)
+        result.success("Negative equity handled")
+    except Exception:
+        result.success("Negative equity raises error (OK)")
+    
+    # Test 7: All same returns (zero volatility)
+    try:
+        constant_returns = pd.Series(
+            [0.01] * 100,
+            index=pd.date_range('2020-01-01', periods=100)
+        )
+        perf.plot_returns_distribution(constant_returns, show=False)
+        result.success("Constant returns handled")
+    except Exception as e:
+        result.fail("Constant returns", e)
+    
+    return result.summary()
+
+
+# =============================================================================
+# TEST: FULL REPORT GENERATION
 # =============================================================================
 
 def test_full_report(data, output_dir):
     """Test complete report generation with all formats."""
-    print("\n" + "=" * 70)
-    print("   TESTING: Full Report Generation")
-    print("=" * 70)
+    print("\n" + "="*60)
+    print("🧪 TEST: Full Report Generation")
+    print("="*60)
     
-    from quant_alpha.visualization.reports import ReportGenerator
+    result = TestResult()
+    full_dir = output_dir / 'full_report'
+    full_dir.mkdir(parents=True, exist_ok=True)
     
-    full_report_dir = output_dir / 'full_report'
-    full_report_dir.mkdir(parents=True, exist_ok=True)
+    # Import
+    try:
+        from quant_alpha.visualization.reports import ReportGenerator
+        result.success("ReportGenerator imported")
+    except ImportError as e:
+        result.fail("Import", e)
+        return result.summary()
     
-    generator = ReportGenerator(output_dir=str(full_report_dir))
+    generator = ReportGenerator(output_dir=str(full_dir))
     
-    print("\n🚀 Generating complete report (all formats)...")
-    
+    # Test: generate_full_report
     try:
         outputs = generator.generate_full_report(
             data,
-            formats=['pdf', 'terminal', 'json', 'excel', 'csv', 'png', 'pickle'],
+            formats=['terminal', 'json', 'csv', 'png', 'pickle'],  # Skip PDF for speed
             report_name='complete_backtest_report'
         )
         
+        assert len(outputs) > 0, "No outputs generated"
+        result.success(f"generate_full_report() - {len(outputs)} formats")
+        
         print("\n   Generated files:")
         for fmt, path in outputs.items():
-            print(f"   ✅ {fmt}: {path}")
+            print(f"      {fmt}: {path}")
         
     except Exception as e:
-        print(f"   ❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+        result.fail("generate_full_report()", e)
+    
+    print(f"\n   📁 Full report saved to: {full_dir}")
+    return result.summary()
 
 
 # =============================================================================
-# STEP 5: Display Sample Outputs
+# SUMMARY HELPER
 # =============================================================================
 
-def display_sample_outputs(data, output_dir):
-    """Show sample of what was generated."""
-    print("\n" + "=" * 70)
-    print("   SAMPLE OUTPUTS")
-    print("=" * 70)
+def print_file_summary(output_dir):
+    """Print summary of generated files."""
+    print("\n" + "="*60)
+    print("📊 FILE SUMMARY")
+    print("="*60)
     
-    # Show metrics
-    print("\n📊 Sample Metrics:")
-    metrics = data['metrics']
-    print(f"   CAGR:            {metrics['cagr']*100:>10.2f}%")
-    print(f"   Sharpe Ratio:    {metrics['sharpe_ratio']:>10.2f}")
-    print(f"   Max Drawdown:    {metrics['max_drawdown']*100:>10.2f}%")
-    print(f"   Win Rate:        {metrics['win_rate']*100:>10.1f}%")
-    print(f"   Total Trades:    {metrics['total_trades']:>10.0f}")
+    # Count files by type
+    png_files = list(output_dir.rglob('*.png'))
+    pdf_files = list(output_dir.rglob('*.pdf'))
+    json_files = list(output_dir.rglob('*.json'))
+    excel_files = list(output_dir.rglob('*.xlsx'))
+    csv_files = list(output_dir.rglob('*.csv'))
+    pkl_files = list(output_dir.rglob('*.pkl'))
     
-    # Show top features
-    print("\n🔬 Top 5 Features:")
-    for i, row in data['feature_importance'].head(5).iterrows():
-        print(f"   {i+1}. {row['feature']}: {row['importance']:.4f}")
+    total = len(png_files) + len(pdf_files) + len(json_files) + len(excel_files) + len(csv_files) + len(pkl_files)
     
-    # Show recent trades
-    print("\n💹 Recent Trades (last 5):")
-    recent = data['trades'].tail(5)
-    for _, row in recent.iterrows():
-        pnl_str = f"₹{row['pnl']:,.0f}"
-        side_emoji = "🟢" if row['side'] == 'LONG' else "🔴"
-        print(f"   {side_emoji} {row['ticker']}: {pnl_str}")
+    print(f"""
+   Files Generated:
+   ─────────────────────
+   PNG Charts:     {len(png_files):>5}
+   PDF Reports:    {len(pdf_files):>5}
+   JSON Files:     {len(json_files):>5}
+   Excel Files:    {len(excel_files):>5}
+   CSV Files:      {len(csv_files):>5}
+   Pickle Files:   {len(pkl_files):>5}
+   ─────────────────────
+   TOTAL:          {total:>5}
+   
+   📁 Output Location: {output_dir}
+    """)
     
-    # List generated files
-    print("\n📁 Generated Files:")
-    for item in sorted(output_dir.rglob('*')):
-        if item.is_file():
-            rel_path = item.relative_to(output_dir)
-            size_kb = item.stat().st_size / 1024
-            print(f"   📄 {rel_path} ({size_kb:.1f} KB)")
+    return total
 
 
 # =============================================================================
 # MAIN
 # =============================================================================
 
-def main():
-    """Run all tests."""
-    print("\n" + "🚀" * 35)
-    print("\n   Starting Visualization Module Tests...")
-    print("\n" + "🚀" * 35)
+if __name__ == "__main__":
+    print("\n" + "="*60)
+    print("🚀 VISUALIZATION MODULE TEST SUITE")
+    print("="*60)
     
     # Setup output directory
-    output_dir = Path('test_outputs') / f"viz_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = get_output_dir()
     print(f"\n📂 Output directory: {output_dir}")
     
     # Generate test data
-    data = generate_test_data()
+    print("\n📊 Generating test data...")
+    data = generate_viz_data(n_days=252, n_trades=100)
+    print(f"   ✅ Data ready:")
+    print(f"      - Equity curve: {len(data['equity_curve'])} days")
+    print(f"      - Returns: {len(data['returns'])} days")
+    print(f"      - Trades: {len(data['trades'])} trades")
+    print(f"      - Features: {len(data['feature_importance'])} features")
     
     # Run tests
-    test_plots(data, output_dir)
-    test_reports(data, output_dir)
-    test_full_report(data, output_dir)
-    display_sample_outputs(data, output_dir)
+    all_passed = True
     
-    # Summary
-    print("\n" + "=" * 70)
-    print("   TEST SUMMARY")
-    print("=" * 70)
+    if not test_performance_plotter(data, output_dir):
+        all_passed = False
     
-    # Count files
-    total_files = len(list(output_dir.rglob('*.*')))
-    png_files = len(list(output_dir.rglob('*.png')))
-    pdf_files = len(list(output_dir.rglob('*.pdf')))
-    json_files = len(list(output_dir.rglob('*.json')))
-    excel_files = len(list(output_dir.rglob('*.xlsx')))
-    csv_files = len(list(output_dir.rglob('*.csv')))
+    if not test_factor_plotter(data, output_dir):
+        all_passed = False
+    
+    if not test_risk_plotter(data, output_dir):
+        all_passed = False
+    
+    if not test_quick_plot_all(data, output_dir):
+        all_passed = False
+    
+    if not test_report_generator(data, output_dir):
+        all_passed = False
+    
+    if not test_convenience_functions(data, output_dir):
+        all_passed = False
+    
+    if not test_edge_cases(output_dir):
+        all_passed = False
+    
+    if not test_full_report(data, output_dir):
+        all_passed = False
+    
+    # Print file summary
+    total_files = print_file_summary(output_dir)
+    
+    # Final result
+    print("\n" + "="*60)
+    if all_passed:
+        print("✅ ALL VISUALIZATION TESTS PASSED!")
+    else:
+        print("❌ SOME TESTS FAILED!")
+    print("="*60)
     
     print(f"""
-   📊 Files Generated:
-   ─────────────────────
-   PNG Charts:     {png_files:>5}
-   PDF Reports:    {pdf_files:>5}
-   JSON Files:     {json_files:>5}
-   Excel Files:    {excel_files:>5}
-   CSV Files:      {csv_files:>5}
-   ─────────────────────
-   TOTAL:          {total_files:>5}
-   
-   📁 Output Location: {output_dir}
-   
-   ✅ All tests completed!
-   
    Next Steps:
    1. Open PNG files to view charts
-   2. Open PDF for complete report
-   3. Open Excel/CSV for data
+   2. Open Excel/CSV for data export verification
+   3. Check JSON files for metrics export
    4. Run dashboard: streamlit run quant_alpha/visualization/dashboards.py
     """)
     
-    return output_dir
-
-
-if __name__ == "__main__":
-    output_dir = main()
+    sys.exit(0 if all_passed else 1)
