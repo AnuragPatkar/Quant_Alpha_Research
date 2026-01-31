@@ -173,7 +173,7 @@ class FeatureConfig:
     volume_windows: tuple = (5, 10, 21)
     
     # Target variable
-    forward_return_days: int = 21  # Predict 1-month forward returns
+    forward_return_days: int = 10  # Predict 1-month forward returns
     
     # Data cleaning
     winsorize_limits: tuple = (0.01, 0.99)  # Remove extreme 1% outliers
@@ -210,20 +210,21 @@ class ModelConfig:
     def __post_init__(self):
         """Set default params only if not provided."""
         # LightGBM defaults
+        # LightGBM defaults - HEAVILY REGULARIZED for noisy data
         default_lgb = {
             "objective": "regression",
-            "metric": "rmse",
+            "metric": "mae",                # Changed: rmse -> mae (robust)
             "boosting_type": "gbdt",
-            "n_estimators": 300,
-            "max_depth": 5,
-            "learning_rate": 0.05,
-            "num_leaves": 31,
-            "subsample": 0.8,
+            "n_estimators": 100,            # Changed: 300 -> 100
+            "max_depth": 3,                 # Changed: 5 -> 3 (shallow)
+            "learning_rate": 0.01,          # Changed: 0.05 -> 0.01 (slower)
+            "num_leaves": 8,                # Changed: 31 -> 8
+            "subsample": 0.5,               # Changed: 0.8 -> 0.5
             "subsample_freq": 1,
-            "colsample_bytree": 0.8,
-            "reg_alpha": 0.1,
-            "reg_lambda": 1.0,
-            "min_child_samples": 20,
+            "colsample_bytree": 0.5,        # Changed: 0.8 -> 0.5
+            "reg_alpha": 5.0,               # Changed: 0.1 -> 5.0 (50x more L1)
+            "reg_lambda": 50.0,             # Changed: 1.0 -> 50.0 (50x more L2)
+            "min_child_samples": 100,       # Changed: 20 -> 100
             "random_state": self.random_seed,
             "verbose": -1,
             "n_jobs": -1

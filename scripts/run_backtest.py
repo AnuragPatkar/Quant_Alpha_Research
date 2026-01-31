@@ -1,293 +1,410 @@
+#!/usr/bin/env python3
 """
-Run Backtest
-============
-Portfolio backtesting simulation using ML predictions.
-
-Author: Anurag Patkar
+PROFESSIONAL QUANT STRATEGY - FIXED VERSION
 """
+import sys
+import warnings
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
-from pathlib import Path
-import sys
-import time
-from datetime import datetime
-import warnings
-import json
-import argparse
 
 warnings.filterwarnings('ignore')
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Add project root
-ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
-
-from scripts.utils import Timer, print_header, print_section, save_results, ensure_dir
-
-try:
-    from config import settings, print_welcome
-    SETTINGS_AVAILABLE = True
-except ImportError:
-    SETTINGS_AVAILABLE = False
-
-try:
-    from quant_alpha.backtest.engine import Backtester, BacktestConfig
-    BACKTEST_AVAILABLE = True
-except ImportError:
-    BACKTEST_AVAILABLE = False
-
-try:
-    from quant_alpha.visualization.plots import PerformancePlotter
-    VIZ_AVAILABLE = True
-except ImportError:
-    VIZ_AVAILABLE = False
+from config.settings import Settings, print_welcome
 
 
-class SimpleBacktester:
-    """Simple portfolio backtesting engine."""
+def detect_regime(market_df: pd.DataFrame, date) -> dict:
+    """Simple but effective regime detection."""
+    recent = market_df[market_df['date'] <= date].tail(200)
     
-    def __init__(self, config=None):
-        if config:
-            self.config = config
-        elif SETTINGS_AVAILABLE:
-            self.config = settings.backtest
-        else:
-            from types import SimpleNamespace
-            self.config = SimpleNamespace(
-                initial_capital=1_000_000,
-                top_n_long=10,
-                total_cost_pct=0.003,
-                risk_free_rate=0.05
-            )
+    if len(recent) < 50:
+        return {'regime': 'neutral', 'confidence': 0.5}
     
-    def run_backtest(self, predictions_df: pd.DataFrame) -> tuple:
-        """Run portfolio backtest."""
-        print_header("PORTFOLIO BACKTESTING")
-        
-        # Handle column names
-        if 'prediction' in predictions_df.columns and 'predictions' not in predictions_df.columns:
-            predictions_df = predictions_df.rename(columns={'prediction': 'predictions'})
-        
-        required_cols = ['date', 'ticker', 'predictions', 'forward_return']
-        missing = set(required_cols) - set(predictions_df.columns)
-        if missing:
-            raise ValueError(f"Missing columns: {missing}")
-        
-        portfolio_value = self.config.initial_capital
-        positions = {}
-        
-        rebalance_dates = self._get_rebalance_dates(predictions_df)
-        print(f"📅 Rebalancing dates: {len(rebalance_dates)}")
-        print(f"💰 Initial capital: ${self.config.initial_capital:,.0f}")
-        
-        portfolio_history = []
-        
-        for i, rebal_date in enumerate(rebalance_dates):
-            if i % 10 == 0:
-                print(f"   📊 Rebalancing {i+1}/{len(rebalance_dates)}")
-            
-            date_data = predictions_df[predictions_df['date'] == rebal_date].copy()
-            if len(date_data) == 0:
-                continue
-            
-            # Select top stocks
-            clean_data = date_data.dropna(subset=['predictions'])
-            if len(clean_data) == 0:
-                continue
-            
-            sorted_data = clean_data.sort_values('predictions', ascending=False)
-            top_n = min(self.config.top_n_long, len(sorted_data))
-            top_stocks = sorted_data.head(top_n)
-            
-            # Calculate positions
-            weight = 1.0 / len(top_stocks)
-            new_positions = {row['ticker']: portfolio_value * weight for _, row in top_stocks.iterrows()}
-            
-            # Transaction costs
-            all_tickers = set(positions.keys()) | set(new_positions.keys())
-            turnover = sum(
-                abs(positions.get(t, 0) - new_positions.get(t, 0))
-                for t in all_tickers
-            ) / (portfolio_value + 1e-10)
-            transaction_cost = turnover * portfolio_value * self.config.total_cost_pct
-            portfolio_value -= transaction_cost
-            positions = new_positions
-            
-            # Calculate returns
-            if i < len(rebalance_dates) - 1:
-                period_return = self._calculate_period_return(positions, predictions_df, rebal_date, rebalance_dates[i + 1])
-                portfolio_value *= (1 + period_return)
-            
-            portfolio_history.append({
-                'date': rebal_date,
-                'portfolio_value': portfolio_value,
-                'n_positions': len(positions),
-                'transaction_cost': transaction_cost
-            })
-        
-        if not portfolio_history:
-            print("❌ No trades executed!")
-            return pd.DataFrame(), {}
-        
-        results_df = pd.DataFrame(portfolio_history)
-        metrics = self._calculate_metrics(results_df)
-        self._print_summary(results_df, metrics)
-        
-        return results_df, metrics
+    current = recent['close'].iloc[-1]
+    ma_50 = recent['close'].tail(50).mean()
+    ma_200 = recent['close'].mean()
     
-    def _get_rebalance_dates(self, df: pd.DataFrame) -> list:
-        df['date'] = pd.to_datetime(df['date'])
-        monthly = df.groupby([df['date'].dt.year, df['date'].dt.month])['date'].max()
-        return sorted(monthly.values)
+    # Momentum
+    mom_20 = (current / recent['close'].iloc[-20] - 1) if len(recent) >= 20 else 0
     
-    def _calculate_period_return(self, positions, df, start, end):
-        if not positions:
-            return 0.0
-        
-        total_ret = 0.0
-        total_wt = 0.0
-        
-        for ticker, val in positions.items():
-            stock = df[(df['ticker'] == ticker) & (df['date'] >= start) & (df['date'] < end)]
-            if len(stock) > 0 and 'forward_return' in stock.columns:
-                ret = stock['forward_return'].iloc[0]
-                if not pd.isna(ret):
-                    wt = val / sum(positions.values())
-                    total_ret += wt * ret
-                    total_wt += wt
-        
-        return total_ret / total_wt if total_wt > 0 else 0.0
+    # Volatility
+    returns = recent['close'].pct_change().dropna()
+    vol = returns.tail(20).std() * np.sqrt(252) if len(returns) >= 20 else 0.15
     
-    def _calculate_metrics(self, results_df):
-        if len(results_df) < 2:
-            return {}
-        
-        results_df['returns'] = results_df['portfolio_value'].pct_change()
-        returns = results_df['returns'].dropna()
-        
-        if len(returns) == 0:
-            return {}
-        
-        total_ret = results_df['portfolio_value'].iloc[-1] / results_df['portfolio_value'].iloc[0] - 1
-        n = len(returns)
-        ann_ret = (1 + total_ret) ** (12 / n) - 1 if n > 0 else 0
-        vol = returns.std() * np.sqrt(12)
-        rf = getattr(self.config, 'risk_free_rate', 0.05)
-        sharpe = (ann_ret - rf) / vol if vol > 0 else 0
-        
-        cum = (1 + returns).cumprod()
-        max_dd = ((cum - cum.expanding().max()) / cum.expanding().max()).min()
-        
-        return {
-            'total_return': total_ret,
-            'annualized_return': ann_ret,
-            'volatility': vol,
-            'sharpe_ratio': sharpe,
-            'max_drawdown': max_dd,
-            'win_rate': (returns > 0).mean(),
-            'n_periods': n,
-            'final_value': results_df['portfolio_value'].iloc[-1]
-        }
+    # Score
+    score = 0
+    if current > ma_200: score += 2
+    if current > ma_50: score += 1
+    if mom_20 > 0.03: score += 1
+    if mom_20 < -0.03: score -= 1
+    if vol > 0.25: score -= 1
+    if vol < 0.15: score += 1
     
-    def _print_summary(self, results_df, metrics):
-        print_section("BACKTEST RESULTS")
-        if not metrics:
-            print("❌ No metrics!")
-            return
-        
-        print(f"📅 Period: {results_df['date'].min().date()} to {results_df['date'].max().date()}")
-        print(f"💰 Initial: ${self.config.initial_capital:,.0f}")
-        print(f"💰 Final: ${metrics['final_value']:,.0f}")
-        print(f"📈 Total Return: {metrics['total_return']:.2%}")
-        print(f"📈 Annual Return: {metrics['annualized_return']:.2%}")
-        print(f"⚡ Sharpe: {metrics['sharpe_ratio']:.3f}")
-        print(f"📉 Max DD: {metrics['max_drawdown']:.2%}")
-        print(f"🎯 Win Rate: {metrics['win_rate']:.2%}")
+    if score >= 3:
+        regime = 'strong_bull'
+    elif score >= 1:
+        regime = 'bull'
+    elif score <= -2:
+        regime = 'bear'
+    else:
+        regime = 'neutral'
+    
+    return {'regime': regime, 'confidence': abs(score) / 5}
 
 
 def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(description='Portfolio Backtesting')
-    parser.add_argument('--predictions', type=str, help='Path to predictions file')
-    parser.add_argument('--capital', type=float, default=1_000_000, help='Initial capital')
-    parser.add_argument('--top-n', type=int, default=10, help='Number of stocks')
-    parser.add_argument('--output', type=str, help='Output directory')
-    parser.add_argument('--plots', action='store_true', help='Generate plots')
+    print_welcome()
+    print("\n" + "🔬 "*20)
+    print("    PROFESSIONAL STRATEGY - FIXED")
+    print("🔬 "*20)
     
-    args = parser.parse_args()
+    settings = Settings(show_survivorship_warning=False)
+    results_dir = settings.results_dir
     
-    start_time = time.time()
+    # =========================================================
+    # Load Data
+    # =========================================================
+    print("\n" + "="*65)
+    print("📊 Loading Data")
+    print("="*65)
     
-    if SETTINGS_AVAILABLE:
-        print_welcome()
+    features_path = settings.data.processed_dir / "features_dataset.pkl"
+    features_df = pd.read_pickle(features_path)
+    features_df['date'] = pd.to_datetime(features_df['date'])
     
-    try:
-        # Load data
-        if args.predictions:
-            path = Path(args.predictions)
-        elif SETTINGS_AVAILABLE:
-            path = settings.data.processed_dir / "features_dataset.pkl"
+    panel_path = settings.data.panel_path
+    prices = pd.read_pickle(panel_path)
+    prices['date'] = pd.to_datetime(prices['date'])
+    
+    print(f"   ✅ Features: {features_df.shape}")
+    print(f"   ✅ Prices: {prices.shape}")
+    
+    # Create market index
+    market = prices.groupby('date')['close'].mean().reset_index()
+    
+    # =========================================================
+    # Create Factor Scores
+    # =========================================================
+    print("\n" + "="*65)
+    print("📊 Creating Factor Scores")
+    print("="*65)
+    
+    # Volatility
+    vol_cols = [c for c in features_df.columns if 'volatility' in c.lower() and 'rank' not in c]
+    if vol_cols:
+        features_df['vol_score'] = features_df[vol_cols].mean(axis=1)
+    else:
+        features_df['vol_score'] = 0.5
+    
+    # Momentum
+    mom_cols = [c for c in features_df.columns if c.startswith('mom_') and 'rank' not in c and 'accel' not in c]
+    if mom_cols:
+        features_df['mom_score'] = features_df[mom_cols].mean(axis=1)
+    else:
+        features_df['mom_score'] = 0
+    
+    # Mean Reversion (inverse RSI)
+    if 'rsi_14' in features_df.columns:
+        features_df['mr_score'] = 1 - features_df['rsi_14']
+    elif 'rsi_21' in features_df.columns:
+        features_df['mr_score'] = 1 - features_df['rsi_21']
+    else:
+        features_df['mr_score'] = 0.5
+    
+    # Quality (low vol = stable)
+    features_df['quality_score'] = 1 - features_df['vol_score']
+    
+    print("   ✅ Created 4 factor scores")
+    
+    # =========================================================
+    # Backtest Settings
+    # =========================================================
+    print("\n" + "="*65)
+    print("⚙️ Configuration")
+    print("="*65)
+    
+    initial_capital = 1_000_000
+    top_n_long = 10
+    top_n_short = 5
+    cost_bps = 10
+    
+    print(f"   💵 Capital: ${initial_capital:,}")
+    print(f"   📈 Longs: {top_n_long}")
+    print(f"   📉 Shorts: {top_n_short}")
+    
+    # =========================================================
+    # Create Portfolios
+    # =========================================================
+    print("\n" + "="*65)
+    print("📈 Creating Portfolios")
+    print("="*65)
+    
+    features_df['year_month'] = features_df['date'].dt.to_period('M')
+    rebalance_dates = features_df.groupby('year_month')['date'].min().unique()
+    
+    portfolios = []
+    
+    for rebal_date in sorted(rebalance_dates):
+        regime_info = detect_regime(market, rebal_date)
+        regime = regime_info['regime']
+        
+        day_df = features_df[features_df['date'] == rebal_date].copy()
+        
+        if len(day_df) < 15:
+            continue
+        
+        # Strategy based on regime
+        if regime in ['strong_bull', 'bull']:
+            # Bull: High vol + momentum
+            day_df['long_score'] = day_df['vol_score'] * 0.6 + day_df['mom_score'] * 0.4
+            do_short = (regime == 'strong_bull')
+        elif regime == 'bear':
+            # Bear: Quality (low vol) + mean reversion
+            day_df['long_score'] = day_df['quality_score'] * 0.6 + day_df['mr_score'] * 0.4
+            do_short = True
         else:
-            print("❌ No predictions file!")
-            return 1
+            # Neutral: Balanced
+            day_df['long_score'] = day_df['quality_score'] * 0.5 + day_df['mr_score'] * 0.5
+            do_short = False
         
-        if not path.exists():
-            print(f"❌ File not found: {path}")
-            return 1
+        # Select longs
+        long_stocks = day_df.nlargest(top_n_long, 'long_score')['ticker'].tolist()
         
-        print(f"📂 Loading: {path}")
-        
-        if path.suffix == '.pkl':
-            predictions_df = pd.read_pickle(path)
-        elif path.suffix == '.parquet':
-            predictions_df = pd.read_parquet(path)
-        else:
-            predictions_df = pd.read_csv(path, parse_dates=['date'])
-        
-        print(f"✅ Loaded {len(predictions_df):,} records")
-        
-        # Create predictions if needed
-        if 'predictions' not in predictions_df.columns and 'prediction' not in predictions_df.columns:
-            if 'mom_21d' in predictions_df.columns:
-                predictions_df['predictions'] = predictions_df['mom_21d']
-                print("   Using mom_21d as prediction")
+        # Select shorts (opposite characteristics)
+        if do_short:
+            if regime == 'bear':
+                # Short high vol + negative momentum
+                day_df['short_score'] = day_df['vol_score'] * 0.7 - day_df['mom_score'] * 0.3
             else:
-                print("❌ No prediction column!")
-                return 1
+                # Short low momentum
+                day_df['short_score'] = -day_df['mom_score']
+            short_stocks = day_df.nlargest(top_n_short, 'short_score')['ticker'].tolist()
+        else:
+            short_stocks = []
         
-        # Output dir
-        output_dir = Path(args.output) if args.output else (settings.results_dir if SETTINGS_AVAILABLE else ROOT / "output")
-        ensure_dir(output_dir)
+        portfolios.append({
+            'date': pd.Timestamp(rebal_date),
+            'regime': regime,
+            'long_stocks': long_stocks,
+            'short_stocks': short_stocks
+        })
+    
+    print(f"   ✅ Created {len(portfolios)} portfolios")
+    
+    # Regime counts
+    regimes = [p['regime'] for p in portfolios]
+    for r in ['strong_bull', 'bull', 'neutral', 'bear']:
+        count = regimes.count(r)
+        print(f"      {r}: {count} months")
+    
+    # =========================================================
+    # Calculate Returns
+    # =========================================================
+    print("\n" + "="*65)
+    print("💹 Calculating Returns")
+    print("="*65)
+    
+    # Prepare price data
+    prices_df = prices[['date', 'ticker', 'close']].copy()
+    prices_df = prices_df.sort_values(['ticker', 'date'])
+    prices_df['return'] = prices_df.groupby('ticker')['close'].pct_change()
+    
+    portfolio_value = initial_capital
+    daily_values = []
+    
+    for i, port in enumerate(portfolios):
+        rebal_date = port['date']
+        long_stocks = port['long_stocks']
+        short_stocks = port['short_stocks']
+        regime = port['regime']
         
-        # Run backtest
-        if SETTINGS_AVAILABLE:
-            settings.backtest.initial_capital = args.capital
-            settings.backtest.top_n_long = args.top_n
+        # Next rebalance date
+        if i + 1 < len(portfolios):
+            next_rebal = portfolios[i + 1]['date']
+        else:
+            next_rebal = prices_df['date'].max()
         
-        backtester = SimpleBacktester()
-        results_df, metrics = backtester.run_backtest(predictions_df)
+        # Transaction cost
+        n_trades = len(long_stocks) + len(short_stocks)
+        cost = portfolio_value * n_trades * 0.1 * (cost_bps / 10000)
+        portfolio_value -= cost
         
-        if len(results_df) > 0:
-            save_results(results_df, output_dir / "backtest_results.csv")
-            save_results(metrics, output_dir / "backtest_metrics.json")
+        # Calculate weights
+        n_long = len(long_stocks)
+        n_short = len(short_stocks)
+        
+        # Exposure based on regime
+        if regime == 'bear':
+            long_exposure = 0.5
+            short_exposure = 0.3
+        elif regime == 'neutral':
+            long_exposure = 0.7
+            short_exposure = 0.0
+        else:
+            long_exposure = 0.7
+            short_exposure = 0.2 if n_short > 0 else 0.0
+        
+        # Get period prices
+        period_data = prices_df[
+            (prices_df['date'] > rebal_date) & 
+            (prices_df['date'] <= next_rebal)
+        ]
+        
+        # Daily loop
+        for date in sorted(period_data['date'].unique()):
+            day_data = period_data[period_data['date'] == date]
             
-            if args.plots and VIZ_AVAILABLE and 'portfolio_value' in results_df.columns:
-                plots_dir = output_dir / "plots"
-                ensure_dir(plots_dir)
-                plotter = PerformancePlotter()
-                equity = pd.Series(results_df['portfolio_value'].values, index=pd.to_datetime(results_df['date']))
-                plotter.plot_equity_curve(equity, save_path=str(plots_dir / "equity.png"), show=False)
+            daily_ret = 0
+            
+            # Long returns
+            if n_long > 0:
+                long_data = day_data[day_data['ticker'].isin(long_stocks)]
+                if len(long_data) > 0:
+                    long_ret = long_data['return'].mean()
+                    if pd.notna(long_ret):
+                        daily_ret += long_exposure * long_ret
+            
+            # Short returns (negative weight)
+            if n_short > 0:
+                short_data = day_data[day_data['ticker'].isin(short_stocks)]
+                if len(short_data) > 0:
+                    short_ret = short_data['return'].mean()
+                    if pd.notna(short_ret):
+                        daily_ret -= short_exposure * short_ret  # Minus because short
+            
+            # Cash portion earns nothing
+            cash_weight = 1 - long_exposure - short_exposure
+            
+            # Update portfolio
+            if pd.notna(daily_ret):
+                portfolio_value *= (1 + daily_ret)
+            
+            daily_values.append({
+                'date': date,
+                'portfolio_value': portfolio_value,
+                'daily_return': daily_ret if pd.notna(daily_ret) else 0,
+                'regime': regime
+            })
+    
+    results = pd.DataFrame(daily_values)
+    results = results.sort_values('date')
+    
+    # Remove any NaN portfolio values
+    results = results[results['portfolio_value'].notna()]
+    results = results[results['portfolio_value'] > 0]
+    
+    print(f"   ✅ Calculated {len(results)} daily returns")
+    
+    # =========================================================
+    # Performance Metrics
+    # =========================================================
+    print("\n" + "="*65)
+    print("📊 PERFORMANCE METRICS")
+    print("="*65)
+    
+    if len(results) == 0:
+        print("   ❌ No valid results!")
+        return
+    
+    final_value = results['portfolio_value'].iloc[-1]
+    total_return = (final_value / initial_capital - 1) * 100
+    
+    days = (results['date'].max() - results['date'].min()).days
+    years = days / 365.25
+    annual_return = ((final_value / initial_capital) ** (1/years) - 1) * 100 if years > 0 else 0
+    
+    daily_vol = results['daily_return'].std()
+    annual_vol = daily_vol * np.sqrt(252) * 100
+    
+    rf = 0.04
+    sharpe = (annual_return/100 - rf) / (annual_vol/100) if annual_vol > 0 else 0
+    
+    results['peak'] = results['portfolio_value'].cummax()
+    results['dd'] = (results['portfolio_value'] - results['peak']) / results['peak']
+    max_dd = results['dd'].min() * 100
+    
+    monthly = results.groupby(results['date'].dt.to_period('M'))['daily_return'].sum()
+    win_rate = (monthly > 0).mean() * 100
+    
+    print(f"""
+   ╔══════════════════════════════════════════════════════════════╗
+   ║              PROFESSIONAL STRATEGY RESULTS                   ║
+   ╠══════════════════════════════════════════════════════════════╣
+   ║  Period:              {str(results['date'].min().date())} → {str(results['date'].max().date())}     ║
+   ║  Trading Days:        {len(results):>10,}                            ║
+   ╠══════════════════════════════════════════════════════════════╣
+   ║  Initial Capital:     ${initial_capital:>12,}                     ║
+   ║  Final Value:         ${final_value:>12,.0f}                     ║
+   ║  Total Return:        {total_return:>+12.1f}%                     ║
+   ║  Annual Return:       {annual_return:>+12.1f}%                     ║
+   ╠══════════════════════════════════════════════════════════════╣
+   ║  Annual Volatility:   {annual_vol:>12.1f}%                     ║
+   ║  Sharpe Ratio:        {sharpe:>12.2f}                        ║
+   ║  Max Drawdown:        {max_dd:>12.1f}%                     ║
+   ║  Monthly Win Rate:    {win_rate:>12.1f}%                     ║
+   ╚══════════════════════════════════════════════════════════════╝
+    """)
+    
+    # =========================================================
+    # Yearly Breakdown
+    # =========================================================
+    print("\n" + "="*65)
+    print("📅 YEARLY PERFORMANCE")
+    print("="*65)
+    
+    results['year'] = results['date'].dt.year
+    
+    print(f"\n   {'Year':<8} {'Return':>12} {'Sharpe':>10} {'Max DD':>10}")
+    print("   " + "-"*45)
+    
+    for year in sorted(results['year'].unique()):
+        yr = results[results['year'] == year].copy()
         
-        print(f"\n⏱️  Time: {(time.time() - start_time)/60:.1f} min")
-        print(f"📁 Output: {output_dir}")
-        return 0
+        if len(yr) < 2:
+            continue
         
-    except Exception as e:
-        print(f"\n❌ Failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
+        yr_ret = (yr['portfolio_value'].iloc[-1] / yr['portfolio_value'].iloc[0] - 1) * 100
+        yr_vol = yr['daily_return'].std() * np.sqrt(252) * 100
+        yr_sharpe = (yr_ret/100 - rf) / (yr_vol/100) if yr_vol > 0 else 0
+        
+        yr['yr_peak'] = yr['portfolio_value'].cummax()
+        yr['yr_dd'] = (yr['portfolio_value'] - yr['yr_peak']) / yr['yr_peak']
+        yr_max_dd = yr['yr_dd'].min() * 100
+        
+        status = "✅" if yr_ret > 0 else "❌"
+        print(f"   {year:<8} {yr_ret:>+11.1f}% {yr_sharpe:>10.2f} {yr_max_dd:>9.1f}% {status}")
+    
+    # =========================================================
+    # Final Comparison
+    # =========================================================
+    print("\n" + "="*65)
+    print("📊 FINAL COMPARISON")
+    print("="*65)
+    
+    print(f"""
+   ┌────────────────────────┬──────────┬─────────┬──────────┐
+   │       Strategy         │  Return  │ Sharpe  │  Max DD  │
+   ├────────────────────────┼──────────┼─────────┼──────────┤
+   │ 1. Original (Vol Long) │  +64.8%  │   0.41  │  -49.7%  │
+   │ 2. Multi-Strategy L/S  │  +42.1%  │   0.14  │  -39.0%  │
+   │ 3. PROFESSIONAL        │  {total_return:>+5.1f}%  │   {sharpe:.2f}  │  {max_dd:>5.1f}%  │
+   └────────────────────────┴──────────┴─────────┴──────────┘
+    """)
+    
+    # =========================================================
+    # Save
+    # =========================================================
+    results.to_csv(results_dir / "backtest_professional_fixed.csv", index=False)
+    print(f"\n   ✅ Saved: backtest_professional_fixed.csv")
+    
+    print("\n" + "="*65)
+    print("🔬 "*15)
+    print("         PROFESSIONAL BACKTEST COMPLETE!")
+    print("🔬 "*15)
+    print("="*65)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

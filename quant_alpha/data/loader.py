@@ -528,7 +528,7 @@ class DataLoader:
                 "\n".join(f"  - {e}" for e in errors)
             )
         
-        logger.info("Data validation passed ✓")
+        logger.info("Data validation passed [OK]")
     
     def _calculate_returns(self) -> pd.DataFrame:
         """
