@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
 """
-PROFESSIONAL QUANT STRATEGY - FIXED VERSION
+Professional Quant Strategy Backtest
+Regime-based long/short with multiple factors
 """
+
 import sys
 import warnings
 from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 warnings.filterwarnings('ignore')
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import Settings, print_welcome
+
+
+def print_header(title: str) -> None:
+    """Print section header."""
+    print(f"\n{'='*65}")
+    print(f"  📊 {title}")
+    print('='*65)
 
 
 def detect_regime(market_df: pd.DataFrame, date) -> dict:
@@ -26,14 +35,11 @@ def detect_regime(market_df: pd.DataFrame, date) -> dict:
     ma_50 = recent['close'].tail(50).mean()
     ma_200 = recent['close'].mean()
     
-    # Momentum
     mom_20 = (current / recent['close'].iloc[-20] - 1) if len(recent) >= 20 else 0
     
-    # Volatility
     returns = recent['close'].pct_change().dropna()
     vol = returns.tail(20).std() * np.sqrt(252) if len(returns) >= 20 else 0.15
     
-    # Score
     score = 0
     if current > ma_200: score += 2
     if current > ma_50: score += 1
@@ -56,8 +62,9 @@ def detect_regime(market_df: pd.DataFrame, date) -> dict:
 
 def main():
     print_welcome()
+    
     print("\n" + "🔬 "*20)
-    print("    PROFESSIONAL STRATEGY - FIXED")
+    print("  PROFESSIONAL QUANT STRATEGY BACKTEST")
     print("🔬 "*20)
     
     settings = Settings(show_survivorship_warning=False)
@@ -66,9 +73,7 @@ def main():
     # =========================================================
     # Load Data
     # =========================================================
-    print("\n" + "="*65)
-    print("📊 Loading Data")
-    print("="*65)
+    print_header("STEP 1: Loading Data")
     
     features_path = settings.data.processed_dir / "features_dataset.pkl"
     features_df = pd.read_pickle(features_path)
@@ -78,34 +83,28 @@ def main():
     prices = pd.read_pickle(panel_path)
     prices['date'] = pd.to_datetime(prices['date'])
     
-    print(f"   ✅ Features: {features_df.shape}")
-    print(f"   ✅ Prices: {prices.shape}")
+    print(f"  📂 Features: {features_df.shape}")
+    print(f"  📂 Prices: {prices.shape}")
     
-    # Create market index
     market = prices.groupby('date')['close'].mean().reset_index()
     
     # =========================================================
     # Create Factor Scores
     # =========================================================
-    print("\n" + "="*65)
-    print("📊 Creating Factor Scores")
-    print("="*65)
+    print_header("STEP 2: Creating Factor Scores")
     
-    # Volatility
     vol_cols = [c for c in features_df.columns if 'volatility' in c.lower() and 'rank' not in c]
     if vol_cols:
         features_df['vol_score'] = features_df[vol_cols].mean(axis=1)
     else:
         features_df['vol_score'] = 0.5
     
-    # Momentum
     mom_cols = [c for c in features_df.columns if c.startswith('mom_') and 'rank' not in c and 'accel' not in c]
     if mom_cols:
         features_df['mom_score'] = features_df[mom_cols].mean(axis=1)
     else:
         features_df['mom_score'] = 0
     
-    # Mean Reversion (inverse RSI)
     if 'rsi_14' in features_df.columns:
         features_df['mr_score'] = 1 - features_df['rsi_14']
     elif 'rsi_21' in features_df.columns:
@@ -113,33 +112,33 @@ def main():
     else:
         features_df['mr_score'] = 0.5
     
-    # Quality (low vol = stable)
     features_df['quality_score'] = 1 - features_df['vol_score']
     
-    print("   ✅ Created 4 factor scores")
+    print("  ✅ Created 4 factor scores:")
+    print("    → vol_score (volatility)")
+    print("    → mom_score (momentum)")
+    print("    → mr_score (mean reversion)")
+    print("    → quality_score (stability)")
     
     # =========================================================
     # Backtest Settings
     # =========================================================
-    print("\n" + "="*65)
-    print("⚙️ Configuration")
-    print("="*65)
+    print_header("STEP 3: Configuration")
     
     initial_capital = 1_000_000
     top_n_long = 10
     top_n_short = 5
     cost_bps = 10
     
-    print(f"   💵 Capital: ${initial_capital:,}")
-    print(f"   📈 Longs: {top_n_long}")
-    print(f"   📉 Shorts: {top_n_short}")
+    print(f"  💵 Capital    : ${initial_capital:,}")
+    print(f"  📈 Long Pos   : {top_n_long}")
+    print(f"  📉 Short Pos  : {top_n_short}")
+    print(f"  💰 Cost       : {cost_bps} bps")
     
     # =========================================================
     # Create Portfolios
     # =========================================================
-    print("\n" + "="*65)
-    print("📈 Creating Portfolios")
-    print("="*65)
+    print_header("STEP 4: Creating Portfolios")
     
     features_df['year_month'] = features_df['date'].dt.to_period('M')
     rebalance_dates = features_df.groupby('year_month')['date'].min().unique()
@@ -155,30 +154,22 @@ def main():
         if len(day_df) < 15:
             continue
         
-        # Strategy based on regime
         if regime in ['strong_bull', 'bull']:
-            # Bull: High vol + momentum
             day_df['long_score'] = day_df['vol_score'] * 0.6 + day_df['mom_score'] * 0.4
             do_short = (regime == 'strong_bull')
         elif regime == 'bear':
-            # Bear: Quality (low vol) + mean reversion
             day_df['long_score'] = day_df['quality_score'] * 0.6 + day_df['mr_score'] * 0.4
             do_short = True
         else:
-            # Neutral: Balanced
             day_df['long_score'] = day_df['quality_score'] * 0.5 + day_df['mr_score'] * 0.5
             do_short = False
         
-        # Select longs
         long_stocks = day_df.nlargest(top_n_long, 'long_score')['ticker'].tolist()
         
-        # Select shorts (opposite characteristics)
         if do_short:
             if regime == 'bear':
-                # Short high vol + negative momentum
                 day_df['short_score'] = day_df['vol_score'] * 0.7 - day_df['mom_score'] * 0.3
             else:
-                # Short low momentum
                 day_df['short_score'] = -day_df['mom_score']
             short_stocks = day_df.nlargest(top_n_short, 'short_score')['ticker'].tolist()
         else:
@@ -191,22 +182,20 @@ def main():
             'short_stocks': short_stocks
         })
     
-    print(f"   ✅ Created {len(portfolios)} portfolios")
-    
-    # Regime counts
+    print(f"  ✅ Created {len(portfolios)} portfolios")
+    print()
+    print("  🎯 Regime Distribution:")
     regimes = [p['regime'] for p in portfolios]
     for r in ['strong_bull', 'bull', 'neutral', 'bear']:
         count = regimes.count(r)
-        print(f"      {r}: {count} months")
+        emoji = "🟢" if r == 'strong_bull' else "🟡" if r == 'bull' else "⚪" if r == 'neutral' else "🔴"
+        print(f"    {emoji} {r:<12}: {count} months")
     
     # =========================================================
     # Calculate Returns
     # =========================================================
-    print("\n" + "="*65)
-    print("💹 Calculating Returns")
-    print("="*65)
+    print_header("STEP 5: Calculating Returns")
     
-    # Prepare price data
     prices_df = prices[['date', 'ticker', 'close']].copy()
     prices_df = prices_df.sort_values(['ticker', 'date'])
     prices_df['return'] = prices_df.groupby('ticker')['close'].pct_change()
@@ -220,22 +209,18 @@ def main():
         short_stocks = port['short_stocks']
         regime = port['regime']
         
-        # Next rebalance date
         if i + 1 < len(portfolios):
             next_rebal = portfolios[i + 1]['date']
         else:
             next_rebal = prices_df['date'].max()
         
-        # Transaction cost
         n_trades = len(long_stocks) + len(short_stocks)
         cost = portfolio_value * n_trades * 0.1 * (cost_bps / 10000)
         portfolio_value -= cost
         
-        # Calculate weights
         n_long = len(long_stocks)
         n_short = len(short_stocks)
         
-        # Exposure based on regime
         if regime == 'bear':
             long_exposure = 0.5
             short_exposure = 0.3
@@ -246,19 +231,16 @@ def main():
             long_exposure = 0.7
             short_exposure = 0.2 if n_short > 0 else 0.0
         
-        # Get period prices
         period_data = prices_df[
             (prices_df['date'] > rebal_date) & 
             (prices_df['date'] <= next_rebal)
         ]
         
-        # Daily loop
         for date in sorted(period_data['date'].unique()):
             day_data = period_data[period_data['date'] == date]
             
             daily_ret = 0
             
-            # Long returns
             if n_long > 0:
                 long_data = day_data[day_data['ticker'].isin(long_stocks)]
                 if len(long_data) > 0:
@@ -266,18 +248,13 @@ def main():
                     if pd.notna(long_ret):
                         daily_ret += long_exposure * long_ret
             
-            # Short returns (negative weight)
             if n_short > 0:
                 short_data = day_data[day_data['ticker'].isin(short_stocks)]
                 if len(short_data) > 0:
                     short_ret = short_data['return'].mean()
                     if pd.notna(short_ret):
-                        daily_ret -= short_exposure * short_ret  # Minus because short
+                        daily_ret -= short_exposure * short_ret
             
-            # Cash portion earns nothing
-            cash_weight = 1 - long_exposure - short_exposure
-            
-            # Update portfolio
             if pd.notna(daily_ret):
                 portfolio_value *= (1 + daily_ret)
             
@@ -290,22 +267,18 @@ def main():
     
     results = pd.DataFrame(daily_values)
     results = results.sort_values('date')
-    
-    # Remove any NaN portfolio values
     results = results[results['portfolio_value'].notna()]
     results = results[results['portfolio_value'] > 0]
     
-    print(f"   ✅ Calculated {len(results)} daily returns")
+    print(f"  ✅ Calculated {len(results)} daily returns")
     
     # =========================================================
     # Performance Metrics
     # =========================================================
-    print("\n" + "="*65)
-    print("📊 PERFORMANCE METRICS")
-    print("="*65)
+    print_header("STEP 6: Performance Metrics")
     
     if len(results) == 0:
-        print("   ❌ No valid results!")
+        print("  ❌ [ERROR] No valid results!")
         return
     
     final_value = results['portfolio_value'].iloc[-1]
@@ -329,35 +302,33 @@ def main():
     win_rate = (monthly > 0).mean() * 100
     
     print(f"""
-   ╔══════════════════════════════════════════════════════════════╗
-   ║              PROFESSIONAL STRATEGY RESULTS                   ║
-   ╠══════════════════════════════════════════════════════════════╣
-   ║  Period:              {str(results['date'].min().date())} → {str(results['date'].max().date())}     ║
-   ║  Trading Days:        {len(results):>10,}                            ║
-   ╠══════════════════════════════════════════════════════════════╣
-   ║  Initial Capital:     ${initial_capital:>12,}                     ║
-   ║  Final Value:         ${final_value:>12,.0f}                     ║
-   ║  Total Return:        {total_return:>+12.1f}%                     ║
-   ║  Annual Return:       {annual_return:>+12.1f}%                     ║
-   ╠══════════════════════════════════════════════════════════════╣
-   ║  Annual Volatility:   {annual_vol:>12.1f}%                     ║
-   ║  Sharpe Ratio:        {sharpe:>12.2f}                        ║
-   ║  Max Drawdown:        {max_dd:>12.1f}%                     ║
-   ║  Monthly Win Rate:    {win_rate:>12.1f}%                     ║
-   ╚══════════════════════════════════════════════════════════════╝
+  ╔════════════════════════════════════════════════════════════╗
+  ║  💹 BACKTEST RESULTS                                       ║
+  ╠════════════════════════════════════════════════════════════╣
+  ║  📅 Period             : {str(results['date'].min().date())} → {str(results['date'].max().date())}  ║
+  ║  📊 Trading Days       : {len(results):>10,}                       ║
+  ╠════════════════════════════════════════════════════════════╣
+  ║  💵 Initial Capital    : ${initial_capital:>12,}                ║
+  ║  💰 Final Value        : ${final_value:>12,.0f}                ║
+  ║  📈 Total Return       : {total_return:>+12.1f}%                ║
+  ║  📈 Annual Return      : {annual_return:>+12.1f}%                ║
+  ╠════════════════════════════════════════════════════════════╣
+  ║  📉 Annual Volatility  : {annual_vol:>12.1f}%                ║
+  ║  🎯 Sharpe Ratio       : {sharpe:>12.2f}                   ║
+  ║  ⚠️  Max Drawdown       : {max_dd:>12.1f}%                ║
+  ║  🏆 Monthly Win Rate   : {win_rate:>12.1f}%                ║
+  ╚════════════════════════════════════════════════════════════╝
     """)
     
     # =========================================================
     # Yearly Breakdown
     # =========================================================
-    print("\n" + "="*65)
-    print("📅 YEARLY PERFORMANCE")
-    print("="*65)
+    print_header("STEP 7: Yearly Performance")
     
     results['year'] = results['date'].dt.year
     
-    print(f"\n   {'Year':<8} {'Return':>12} {'Sharpe':>10} {'Max DD':>10}")
-    print("   " + "-"*45)
+    print(f"\n  {'Year':<8} {'Return':>12} {'Sharpe':>10} {'Max DD':>10}")
+    print("  " + "-"*45)
     
     for year in sorted(results['year'].unique()):
         yr = results[results['year'] == year].copy()
@@ -374,35 +345,21 @@ def main():
         yr_max_dd = yr['yr_dd'].min() * 100
         
         status = "✅" if yr_ret > 0 else "❌"
-        print(f"   {year:<8} {yr_ret:>+11.1f}% {yr_sharpe:>10.2f} {yr_max_dd:>9.1f}% {status}")
+        print(f"  {year:<8} {yr_ret:>+11.1f}% {yr_sharpe:>10.2f} {yr_max_dd:>9.1f}% {status}")
     
     # =========================================================
-    # Final Comparison
+    # Save Results
     # =========================================================
-    print("\n" + "="*65)
-    print("📊 FINAL COMPARISON")
-    print("="*65)
+    print_header("STEP 8: Saving Results")
     
-    print(f"""
-   ┌────────────────────────┬──────────┬─────────┬──────────┐
-   │       Strategy         │  Return  │ Sharpe  │  Max DD  │
-   ├────────────────────────┼──────────┼─────────┼──────────┤
-   │ 1. Original (Vol Long) │  +64.8%  │   0.41  │  -49.7%  │
-   │ 2. Multi-Strategy L/S  │  +42.1%  │   0.14  │  -39.0%  │
-   │ 3. PROFESSIONAL        │  {total_return:>+5.1f}%  │   {sharpe:.2f}  │  {max_dd:>5.1f}%  │
-   └────────────────────────┴──────────┴─────────┴──────────┘
-    """)
-    
-    # =========================================================
-    # Save
-    # =========================================================
-    results.to_csv(results_dir / "backtest_professional_fixed.csv", index=False)
-    print(f"\n   ✅ Saved: backtest_professional_fixed.csv")
+    results.to_csv(results_dir / "backtest_results.csv", index=False)
+    print(f"  💾 Saved: backtest_results.csv")
     
     print("\n" + "="*65)
-    print("🔬 "*15)
-    print("         PROFESSIONAL BACKTEST COMPLETE!")
-    print("🔬 "*15)
+    print("🎉 "*16)
+    print("  COMPLETE")
+    print("🎉 "*16)
+    print(f"  ✅ Backtest finished successfully")
     print("="*65)
 
 
