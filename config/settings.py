@@ -346,9 +346,9 @@ class BacktestConfig:
     rebalance_frequency: str = "monthly"  # "monthly", "weekly", "daily"
     
     # Transaction costs (US market - realistic for large caps)
-    commission_bps: float = 0.5   # 0.005%
+    commission_bps: float = 1.0   # 1.0%
     slippage_bps: float = 5.0     # 0.05%
-    market_impact_bps: float = 2.0  # 0.02%
+    market_impact_bps: float = 5.0  # 0.05%
     
     # Benchmark
     benchmark: str = "SPY"  # S&P 500 ETF

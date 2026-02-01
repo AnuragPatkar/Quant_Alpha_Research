@@ -274,22 +274,16 @@ def calculate_cross_sectional_ic(
     return result.reset_index()
 
 
-def calculate_information_ratio(ic_series: pd.Series) -> float:
+def calculate_information_ratio(
+    ic_series: pd.Series,
+    frequency: str = 'daily',
+    annualize: bool = True
+) -> float:
     """
     Calculate Information Ratio from IC time series.
     
-    IR = mean(IC) / std(IC)
-    
-    A higher IR indicates more consistent alpha generation.
-    Generally, IR > 0.5 is considered good, IR > 1.0 is excellent.
-    
-    Args:
-        ic_series: Series of IC values (one per date)
-        
-    Returns:
-        Information Ratio, or 0 if calculation fails
+    IR = mean(IC) / std(IC) * sqrt(periods)
     """
-    # Remove NaN values
     ic_clean = ic_series.dropna()
     
     if len(ic_clean) < 5:
@@ -301,7 +295,20 @@ def calculate_information_ratio(ic_series: pd.Series) -> float:
     if std_ic < 1e-8:
         return 0.0
     
-    return float(mean_ic / std_ic)
+    ir = mean_ic / std_ic
+    
+    # ✅ FIX: Apply annualization
+    if annualize:
+        periods_per_year = {
+            'daily': 252,
+            'weekly': 52,
+            'monthly': 12,
+            'quarterly': 4
+        }
+        periods = periods_per_year.get(frequency, 252)
+        ir *= np.sqrt(periods)
+    
+    return float(ir)
 
 
 def calculate_all_metrics(

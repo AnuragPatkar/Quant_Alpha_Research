@@ -1,10 +1,12 @@
 {
   "total_return": 1.6138196378811713,
   "annual_return": 0.21215475537268236,
+  "volatility": 0.17340824511547936,
   "sharpe_ratio": 0.9927714524648914,
   "max_drawdown": -0.24144104196918967,
   "win_rate": 0.7,
   "total_impact_cost": 20759.03838949668,
-  "annual_cost_drag": 0.004156929151186217,
-  "stocks_used": 38
+  "annual_cost_drag": 0.004156929151186218,
+  "trading_days": 1257,
+  "portfolios": 60
 }
