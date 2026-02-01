@@ -1,0 +1,74 @@
+================================================================================
+ML ALPHA MODEL - COMPREHENSIVE ANALYSIS REPORT
+================================================================================
+Generated: 2026-02-01 09:42:54
+
+MODEL PERFORMANCE
+----------------------------------------
+  test_ic:
+    Mean: 0.0801
+    Std:  0.1138
+    Range: [-0.1478, 0.2397]
+  test_rank_ic:
+    Mean: 0.0697
+    Std:  0.0981
+    Range: [-0.1462, 0.2571]
+
+  Stability:
+    Positive Folds: 22/29
+    Positive Rate: 75.9%
+
+TOP FEATURES
+----------------------------------------
+   1. volatility_63                  0.1009
+   2. volume_ma_21                   0.0981
+   3. ma_21                          0.0776
+   4. ma_10                          0.0763
+   5. dist_ma_200                    0.0737
+   6. hl_range_21                    0.0454
+   7. volume_ma_5                    0.0398
+   8. price_position_52w             0.0388
+   9. return_63d                     0.0382
+  10. gk_volatility_21               0.0380
+
+FEATURE CATEGORIES
+----------------------------------------
+  MOMENTUM:
+    Total Importance: 0.0825
+    Feature Count: 12
+    Top Feature: return_63d
+  MEAN_REVERSION:
+    Total Importance: 0.1475
+    Feature Count: 6
+    Top Feature: dist_ma_200
+  VOLATILITY:
+    Total Importance: 0.2588
+    Feature Count: 8
+    Top Feature: volatility_63
+  VOLUME:
+    Total Importance: 0.1870
+    Feature Count: 7
+    Top Feature: volume_ma_21
+
+BACKTEST PERFORMANCE
+----------------------------------------
+  Total Return:       +161.38%
+  Annual Return:       +21.22%
+  Sharpe Ratio:          0.993
+  Max Drawdown:        -24.14%
+  Win Rate:             70.00%
+  Total Impact Cost: $    20,759
+  Annual Cost Drag:      0.42%
+
+RISK METRICS
+----------------------------------------
+  VaR (95%):        -1.59%
+  VaR (99%):        -2.87%
+  Skewness:         -0.050
+  Kurtosis:          7.058
+  Worst Day:        -7.25%
+  Best Day:          7.82%
+
+================================================================================
+END OF REPORT
+================================================================================

@@ -15,6 +15,9 @@ warnings.filterwarnings('ignore')
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import Settings, print_welcome
+from quant_alpha.data import DataLoader  # ✅ ADD THIS
+from quant_alpha.features import compute_all_features  # ✅ ADD THIS
+from quant_alpha.backtest.market_impact import MarketImpactModel
 
 
 def print_header(title: str) -> None:
@@ -57,7 +60,7 @@ def detect_regime(market_df: pd.DataFrame, date) -> dict:
     else:
         regime = 'neutral'
     
-    return {'regime': regime, 'confidence': abs(score) / 5}
+    return {'regime': regime, 'confidence': abs(score) / 5, 'volatility': vol}
 
 
 def main():
@@ -65,33 +68,68 @@ def main():
     
     print("\n" + "🔬 "*20)
     print("  PROFESSIONAL QUANT STRATEGY BACKTEST")
+    print("  WITH REALISTIC MARKET IMPACT MODEL")
     print("🔬 "*20)
     
     settings = Settings(show_survivorship_warning=False)
     results_dir = settings.results_dir
     
+    # Initialize market impact model
+    impact_model = MarketImpactModel(
+        temp_impact_coef=50,
+        perm_impact_coef=20,
+        bid_ask_spread_bps=1.5
+    )
+    
     # =========================================================
-    # Load Data
+    # Load Data - USE DATALOADER (Same as main.py)
     # =========================================================
     print_header("STEP 1: Loading Data")
     
-    features_path = settings.data.processed_dir / "features_dataset.pkl"
-    features_df = pd.read_pickle(features_path)
-    features_df['date'] = pd.to_datetime(features_df['date'])
-    
-    panel_path = settings.data.panel_path
-    prices = pd.read_pickle(panel_path)
+    # ✅ USE DATALOADER INSTEAD OF PICKLE FILES
+    loader = DataLoader()
+    prices = loader.load()
     prices['date'] = pd.to_datetime(prices['date'])
     
-    print(f"  📂 Features: {features_df.shape}")
     print(f"  📂 Prices: {prices.shape}")
+    print(f"  📊 Stocks: {prices['ticker'].nunique()}")
+    
+    # ✅ COMPUTE FEATURES FRESH
+    print_header("STEP 1.5: Computing Features")
+    features_df = compute_all_features(prices)
+    features_df['date'] = pd.to_datetime(features_df['date'])
+    
+    print(f"  📂 Features: {features_df.shape}")
+    
+    # =========================================================
+    # Calculate Volume & Volatility Metrics
+    # =========================================================
+    print_header("STEP 2: Calculating Volume & Volatility Metrics")
+    
+    stock_metrics = prices.groupby('ticker').agg({
+        'close': 'last',
+        'volume': 'mean',
+    }).reset_index()
+    stock_metrics.columns = ['ticker', 'last_price', 'avg_volume']
+    stock_metrics['avg_dollar_volume'] = stock_metrics['last_price'] * stock_metrics['avg_volume']
+    
+    vol_df = prices.groupby('ticker').apply(
+        lambda x: x['close'].pct_change().std() if len(x) > 1 else 0.02
+    ).reset_index()
+    vol_df.columns = ['ticker', 'daily_volatility']
+    stock_metrics = stock_metrics.merge(vol_df, on='ticker', how='left')
+    stock_metrics['daily_volatility'] = stock_metrics['daily_volatility'].fillna(0.02)
+    
+    print(f"  ✅ Calculated metrics for {len(stock_metrics)} stocks")
+    print(f"  📊 Avg Daily Dollar Volume: ${stock_metrics['avg_dollar_volume'].mean():,.0f}")
+    print(f"  📊 Avg Daily Volatility: {stock_metrics['daily_volatility'].mean()*100:.2f}%")
     
     market = prices.groupby('date')['close'].mean().reset_index()
     
     # =========================================================
     # Create Factor Scores
     # =========================================================
-    print_header("STEP 2: Creating Factor Scores")
+    print_header("STEP 3: Creating Factor Scores")
     
     vol_cols = [c for c in features_df.columns if 'volatility' in c.lower() and 'rank' not in c]
     if vol_cols:
@@ -123,31 +161,32 @@ def main():
     # =========================================================
     # Backtest Settings
     # =========================================================
-    print_header("STEP 3: Configuration")
+    print_header("STEP 4: Configuration")
     
     initial_capital = 1_000_000
     top_n_long = 10
     top_n_short = 5
-    cost_bps = 10
     
     print(f"  💵 Capital    : ${initial_capital:,}")
     print(f"  📈 Long Pos   : {top_n_long}")
     print(f"  📉 Short Pos  : {top_n_short}")
-    print(f"  💰 Cost       : {cost_bps} bps")
+    print(f"  💰 Cost Model : Almgren-Chriss Market Impact")
     
     # =========================================================
     # Create Portfolios
     # =========================================================
-    print_header("STEP 4: Creating Portfolios")
+    print_header("STEP 5: Creating Portfolios")
     
     features_df['year_month'] = features_df['date'].dt.to_period('M')
     rebalance_dates = features_df.groupby('year_month')['date'].min().unique()
     
     portfolios = []
+    regime_counts = {'strong_bull': 0, 'bull': 0, 'neutral': 0, 'bear': 0}
     
     for rebal_date in sorted(rebalance_dates):
         regime_info = detect_regime(market, rebal_date)
         regime = regime_info['regime']
+        regime_counts[regime] += 1
         
         day_df = features_df[features_df['date'] == rebal_date].copy()
         
@@ -179,29 +218,30 @@ def main():
             'date': pd.Timestamp(rebal_date),
             'regime': regime,
             'long_stocks': long_stocks,
-            'short_stocks': short_stocks
+            'short_stocks': short_stocks,
+            'volatility': regime_info.get('volatility', 0.15)
         })
     
     print(f"  ✅ Created {len(portfolios)} portfolios")
     print()
     print("  🎯 Regime Distribution:")
-    regimes = [p['regime'] for p in portfolios]
     for r in ['strong_bull', 'bull', 'neutral', 'bear']:
-        count = regimes.count(r)
+        count = regime_counts[r]
         emoji = "🟢" if r == 'strong_bull' else "🟡" if r == 'bull' else "⚪" if r == 'neutral' else "🔴"
         print(f"    {emoji} {r:<12}: {count} months")
     
     # =========================================================
     # Calculate Returns
     # =========================================================
-    print_header("STEP 5: Calculating Returns")
+    print_header("STEP 6: Calculating Returns (With Market Impact)")
     
-    prices_df = prices[['date', 'ticker', 'close']].copy()
+    prices_df = prices[['date', 'ticker', 'close', 'volume']].copy()
     prices_df = prices_df.sort_values(['ticker', 'date'])
     prices_df['return'] = prices_df.groupby('ticker')['close'].pct_change()
     
     portfolio_value = initial_capital
     daily_values = []
+    total_impact_cost = 0
     
     for i, port in enumerate(portfolios):
         rebal_date = port['date']
@@ -214,10 +254,40 @@ def main():
         else:
             next_rebal = prices_df['date'].max()
         
-        n_trades = len(long_stocks) + len(short_stocks)
-        cost = portfolio_value * n_trades * 0.1 * (cost_bps / 10000)
-        portfolio_value -= cost
+        # Calculate market impact
+        all_stocks = long_stocks + short_stocks
+        n_positions = len(all_stocks)
         
+        if n_positions > 0:
+            position_size = portfolio_value / n_positions
+            period_impact_cost = 0
+            
+            for ticker in all_stocks:
+                stock_data = stock_metrics[stock_metrics['ticker'] == ticker]
+                
+                if len(stock_data) > 0:
+                    daily_dollar_volume = stock_data['avg_dollar_volume'].values[0]
+                    stock_volatility = stock_data['daily_volatility'].values[0]
+                    stock_price = stock_data['last_price'].values[0]
+                else:
+                    daily_dollar_volume = 500_000_000
+                    stock_volatility = 0.02
+                    stock_price = 100
+                
+                total_slippage, _ = impact_model.calculate_slippage(
+                    order_size_dollars=position_size,
+                    daily_volume_dollars=daily_dollar_volume,
+                    volatility=stock_volatility,
+                    price=stock_price
+                )
+                
+                trade_cost = position_size * total_slippage
+                period_impact_cost += trade_cost
+            
+            portfolio_value -= period_impact_cost
+            total_impact_cost += period_impact_cost
+        
+        # Position exposures
         n_long = len(long_stocks)
         n_short = len(short_stocks)
         
@@ -271,11 +341,13 @@ def main():
     results = results[results['portfolio_value'] > 0]
     
     print(f"  ✅ Calculated {len(results)} daily returns")
+    print(f"  💰 Total Market Impact Cost: ${total_impact_cost:,.2f}")
+    print(f"  📊 Avg Impact per Rebalance: ${total_impact_cost/len(portfolios):,.2f}")
     
     # =========================================================
     # Performance Metrics
     # =========================================================
-    print_header("STEP 6: Performance Metrics")
+    print_header("STEP 7: Performance Metrics")
     
     if len(results) == 0:
         print("  ❌ [ERROR] No valid results!")
@@ -301,12 +373,15 @@ def main():
     monthly = results.groupby(results['date'].dt.to_period('M'))['daily_return'].sum()
     win_rate = (monthly > 0).mean() * 100
     
+    impact_drag = (total_impact_cost / initial_capital) * 100 / years
+    
     print(f"""
   ╔════════════════════════════════════════════════════════════╗
-  ║  💹 BACKTEST RESULTS                                       ║
+  ║  💹 BACKTEST RESULTS (WITH MARKET IMPACT)                  ║
   ╠════════════════════════════════════════════════════════════╣
   ║  📅 Period             : {str(results['date'].min().date())} → {str(results['date'].max().date())}  ║
   ║  📊 Trading Days       : {len(results):>10,}                       ║
+  ║  📊 Stocks Used        : {prices['ticker'].nunique():>10}                       ║
   ╠════════════════════════════════════════════════════════════╣
   ║  💵 Initial Capital    : ${initial_capital:>12,}                ║
   ║  💰 Final Value        : ${final_value:>12,.0f}                ║
@@ -317,35 +392,11 @@ def main():
   ║  🎯 Sharpe Ratio       : {sharpe:>12.2f}                   ║
   ║  ⚠️  Max Drawdown       : {max_dd:>12.1f}%                ║
   ║  🏆 Monthly Win Rate   : {win_rate:>12.1f}%                ║
+  ╠════════════════════════════════════════════════════════════╣
+  ║  💸 Total Impact Cost  : ${total_impact_cost:>12,.0f}                ║
+  ║  📉 Annual Cost Drag   : {impact_drag:>12.2f}%                ║
   ╚════════════════════════════════════════════════════════════╝
     """)
-    
-    # =========================================================
-    # Yearly Breakdown
-    # =========================================================
-    print_header("STEP 7: Yearly Performance")
-    
-    results['year'] = results['date'].dt.year
-    
-    print(f"\n  {'Year':<8} {'Return':>12} {'Sharpe':>10} {'Max DD':>10}")
-    print("  " + "-"*45)
-    
-    for year in sorted(results['year'].unique()):
-        yr = results[results['year'] == year].copy()
-        
-        if len(yr) < 2:
-            continue
-        
-        yr_ret = (yr['portfolio_value'].iloc[-1] / yr['portfolio_value'].iloc[0] - 1) * 100
-        yr_vol = yr['daily_return'].std() * np.sqrt(252) * 100
-        yr_sharpe = (yr_ret/100 - rf) / (yr_vol/100) if yr_vol > 0 else 0
-        
-        yr['yr_peak'] = yr['portfolio_value'].cummax()
-        yr['yr_dd'] = (yr['portfolio_value'] - yr['yr_peak']) / yr['yr_peak']
-        yr_max_dd = yr['yr_dd'].min() * 100
-        
-        status = "✅" if yr_ret > 0 else "❌"
-        print(f"  {year:<8} {yr_ret:>+11.1f}% {yr_sharpe:>10.2f} {yr_max_dd:>9.1f}% {status}")
     
     # =========================================================
     # Save Results
@@ -355,11 +406,26 @@ def main():
     results.to_csv(results_dir / "backtest_results.csv", index=False)
     print(f"  💾 Saved: backtest_results.csv")
     
+    import json
+    metrics = {
+        'total_return': total_return / 100,
+        'annual_return': annual_return / 100,
+        'sharpe_ratio': sharpe,
+        'max_drawdown': max_dd / 100,
+        'win_rate': win_rate / 100,
+        'total_impact_cost': total_impact_cost,
+        'annual_cost_drag': impact_drag / 100,
+        'stocks_used': int(prices['ticker'].nunique())
+    }
+    
+    with open(results_dir / "backtest_metrics.json", 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f"  💾 Saved: backtest_metrics.json")
+    
     print("\n" + "="*65)
     print("🎉 "*16)
-    print("  COMPLETE")
+    print("  COMPLETE (WITH REALISTIC MARKET IMPACT)")
     print("🎉 "*16)
-    print(f"  ✅ Backtest finished successfully")
     print("="*65)
 
 
