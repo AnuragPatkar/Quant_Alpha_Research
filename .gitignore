@@ -1,0 +1,11 @@
+venv/
+venv
+__pycache__/
+*.pyc
+.env
+data/
+models/
+results/
+config/api_keys.py
+.vscode/
+.idea/
