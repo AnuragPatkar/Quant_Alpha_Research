@@ -157,6 +157,23 @@ class Config:
         self.VOLATILITY_WINDOWS = [5, 10, 21, 63, 126]
         self.VOLUME_WINDOWS = [5, 10, 21, 63]
 
+        # --------------------------------------------------------
+        # ML PREPROCESSING
+        # --------------------------------------------------------
+        self.RSI_PERIOD = 14
+        self.BB_PERIOD = 20
+        self.BB_STD = 2.0
+        
+        # Feature Selection (Prevents overfitting/model confusion)
+        self.MAX_FEATURES = 80             # Retain only the Top 80 predictive signals
+        self.FEATURE_CORRELATION_THRESHOLD = 0.90 # Remove highly correlated (duplicate) signals
+        
+        # Data Cleaning (Normalization & Outlier Management)
+        self.NORMALIZE_FEATURES = True     # Z-Score Standardization (Scale all features equally)
+        self.WINSORIZE_FEATURES = True     # Clip extreme outliers
+        self.WINSORIZE_QUANTILES = (0.01, 0.99) # Cap the Top/Bottom 1% of values
+
+        
         # Feature Engineering Switches
         self.ENABLE_TECHNICAL_FEATURES = True
         self.ENABLE_FUNDAMENTAL_FEATURES = True
@@ -251,6 +268,7 @@ class Config:
         self.MAX_DRAWDOWN_LIMIT = 0.20   # Stop trading if 20% loss
         self.STOP_LOSS_PCT = 0.05        # Stop loss per trade
         self.TAKE_PROFIT_PCT = 0.15      # Take profit per trade
+        self.MAX_POSITION_SIZE = 0.15
         
         # Realistic Market Simulation (ADDED NEW)
         self.TRANSACTION_COST_BPS = 10.0  # Fees
