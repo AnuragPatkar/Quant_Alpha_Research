@@ -1,0 +1,8 @@
+pyarrow
+dateutil
+pathlib
+yfinance
+numpy
+pandas
+tqdm
+lxml
