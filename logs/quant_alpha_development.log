@@ -7,3 +7,31 @@
 2026-02-07 12:29:39 - TestSystem - INFO - Info message: System start ho raha hai.
 2026-02-07 12:29:39 - TestSystem - WARNING - Warning message: Ye ek warning test hai.
 2026-02-07 12:29:39 - TestSystem - ERROR - Error message: Kuch galat hua (Sirf testing ke liye).
+2026-02-07 15:49:21 - Quant_Alpha - INFO - ==================================================
+2026-02-07 15:49:21 - Quant_Alpha - INFO - 🚀 QUANT ALPHA SYSTEM INITIALIZATION
+2026-02-07 15:49:21 - Quant_Alpha - INFO - ==================================================
+2026-02-07 15:49:21 - Quant_Alpha - INFO - 🛠️ Initializing PriceLoader...
+2026-02-07 15:49:21 - Quant_Alpha - INFO - 🔄 Processing raw data for: sp500_prices.parquet
+2026-02-07 15:49:21 - Quant_Alpha - INFO - 📂 Found 499 files. Loading...
+2026-02-07 15:49:43 - Quant_Alpha - INFO - 🧹 Cleaning & Sorting data...
+2026-02-07 15:49:43 - Quant_Alpha - INFO - ✅ Data Cleaned. Final Shape: (976019, 7)
+2026-02-07 15:49:43 - Quant_Alpha - INFO - 💾 Saved to cache: sp500_prices.parquet (976,019 rows)
+2026-02-07 15:49:43 - Quant_Alpha - INFO - 
+==================================================
+2026-02-07 15:49:43 - Quant_Alpha - INFO - ✅ SUCCESS! Data Loaded.
+2026-02-07 15:49:43 - Quant_Alpha - INFO - 📊 Total Rows: 976,019
+2026-02-07 15:49:44 - Quant_Alpha - INFO - 📅 Date Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-07 15:49:44 - Quant_Alpha - INFO - 🏢 Unique Tickers: 499
+2026-02-07 15:49:44 - Quant_Alpha - INFO - ==================================================
+2026-02-07 15:51:01 - Quant_Alpha - INFO - ==================================================
+2026-02-07 15:51:01 - Quant_Alpha - INFO - 🚀 QUANT ALPHA SYSTEM INITIALIZATION
+2026-02-07 15:51:01 - Quant_Alpha - INFO - ==================================================
+2026-02-07 15:51:01 - Quant_Alpha - INFO - 🛠️ Initializing PriceLoader...
+2026-02-07 15:51:01 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-07 15:51:01 - Quant_Alpha - INFO - 
+==================================================
+2026-02-07 15:51:01 - Quant_Alpha - INFO - ✅ SUCCESS! Data Loaded.
+2026-02-07 15:51:01 - Quant_Alpha - INFO - 📊 Total Rows: 976,019
+2026-02-07 15:51:01 - Quant_Alpha - INFO - 📅 Date Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-07 15:51:01 - Quant_Alpha - INFO - 🏢 Unique Tickers: 499
+2026-02-07 15:51:01 - Quant_Alpha - INFO - ==================================================
