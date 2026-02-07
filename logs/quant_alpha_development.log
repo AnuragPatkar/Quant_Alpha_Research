@@ -146,3 +146,70 @@
 ==================================================
 2026-02-07 18:03:07 - Quant_Alpha - INFO - 🎉 DATA ENGINE TEST COMPLETE
 2026-02-07 18:03:07 - Quant_Alpha - INFO - ==================================================
+2026-02-07 18:38:37 - Quant_Alpha - INFO - ==================================================
+2026-02-07 18:38:37 - Quant_Alpha - INFO - 🚀 QUANT ALPHA SYSTEM - DATA VERIFICATION
+2026-02-07 18:38:37 - Quant_Alpha - INFO - ==================================================
+2026-02-07 18:38:37 - Quant_Alpha - INFO - 
+--- 1. Testing PriceLoader ---
+2026-02-07 18:38:37 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-07 18:38:37 - Quant_Alpha - INFO - ✅ PRICES SUCCESS!
+2026-02-07 18:38:37 - Quant_Alpha - INFO - 📊 Rows: 976,019
+2026-02-07 18:38:37 - Quant_Alpha - INFO - 📅 Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-07 18:38:37 - Quant_Alpha - INFO - 
+--- 2. Testing FundamentalLoader ---
+2026-02-07 18:38:37 - Quant_Alpha - INFO - 🔄 Processing raw data for: fundamentals.parquet
+2026-02-07 18:38:37 - Quant_Alpha - INFO - 📂 Found 499 folders. Extracting info...
+2026-02-07 18:38:41 - Quant_Alpha - INFO - 🧹 Cleaning Fundamental data...
+2026-02-07 18:38:41 - Quant_Alpha - INFO - ✂️  Clipping Outliers (1% - 99%)...
+2026-02-07 18:38:41 - Quant_Alpha - INFO - ✅ Fundamentals Cleaned. Shape: (499, 21)
+2026-02-07 18:38:41 - Quant_Alpha - INFO - 💾 Saved to cache: fundamentals.parquet (499 rows)
+2026-02-07 18:38:41 - Quant_Alpha - INFO - ✅ FUNDAMENTALS SUCCESS!
+2026-02-07 18:38:41 - Quant_Alpha - INFO - 📊 Stocks Found: 499
+2026-02-07 18:38:41 - Quant_Alpha - INFO - ✨ SUCCESS: Advanced Metrics (ROE, EPS) Detected!
+2026-02-07 18:38:41 - Quant_Alpha - INFO - 
+==================================================
+2026-02-07 18:38:41 - Quant_Alpha - INFO - 🎉 DATA ENGINE TEST COMPLETE
+2026-02-07 18:38:41 - Quant_Alpha - INFO - ==================================================
+2026-02-07 19:11:42 - Quant_Alpha - INFO - ==================================================
+2026-02-07 19:11:42 - Quant_Alpha - INFO - 🚀 QUANT ALPHA SYSTEM - DATA VERIFICATION
+2026-02-07 19:11:42 - Quant_Alpha - INFO - ==================================================
+2026-02-07 19:11:42 - Quant_Alpha - INFO - 
+--- 1. Testing PriceLoader ---
+2026-02-07 19:11:42 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-07 19:11:42 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-07 19:11:42 - Quant_Alpha - INFO - ✅ Data is clean (0 NaNs).
+2026-02-07 19:11:42 - Quant_Alpha - INFO - ✅ PRICES SUCCESS!
+2026-02-07 19:11:42 - Quant_Alpha - INFO - 📊 Rows: 976,019
+2026-02-07 19:11:42 - Quant_Alpha - INFO - 📅 Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-07 19:11:42 - Quant_Alpha - INFO - 
+--- 2. Testing FundamentalLoader ---
+2026-02-07 19:11:42 - Quant_Alpha - INFO - 🔄 Processing raw data for: fundamentals.parquet
+2026-02-07 19:11:42 - Quant_Alpha - INFO - 📂 Found 499 folders. Extracting info...
+2026-02-07 19:11:47 - Quant_Alpha - INFO - 🧹 Cleaning Fundamental data...
+2026-02-07 19:11:47 - Quant_Alpha - INFO - ✂️ Clipping Outliers (1% - 99%)...
+2026-02-07 19:11:47 - Quant_Alpha - INFO - ✅ Fundamentals Cleaned. Shape: (499, 20)
+2026-02-07 19:11:47 - Quant_Alpha - INFO - 💾 Saved to cache: fundamentals.parquet (499 rows)
+2026-02-07 19:11:47 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-07 19:11:47 - Quant_Alpha - WARNING - ⚠️ Data contains NaNs (Total Rows: 499):
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - beta: 9 missing (1.80%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - pe_ratio: 26 missing (5.21%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - peg_ratio: 499 missing (100.00%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - eps: 1 missing (0.20%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - roe: 30 missing (6.01%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - roa: 16 missing (3.21%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - op_margin: 1 missing (0.20%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - gross_margin: 1 missing (0.20%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - debt_to_equity: 53 missing (10.62%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - current_ratio: 35 missing (7.01%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - quick_ratio: 35 missing (7.01%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - fcf: 61 missing (12.22%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - op_cashflow: 56 missing (11.22%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - rev_growth: 3 missing (0.60%)
+2026-02-07 19:11:47 - Quant_Alpha - WARNING -    - earnings_growth: 57 missing (11.42%)
+2026-02-07 19:11:47 - Quant_Alpha - INFO - ✅ FUNDAMENTALS SUCCESS!
+2026-02-07 19:11:47 - Quant_Alpha - INFO - 📊 Stocks Found: 499
+2026-02-07 19:11:47 - Quant_Alpha - INFO - ✨ SUCCESS: Advanced Metrics (ROE, EPS) Detected!
+2026-02-07 19:11:47 - Quant_Alpha - INFO - 
+==================================================
+2026-02-07 19:11:47 - Quant_Alpha - INFO - 🎉 DATA ENGINE TEST COMPLETE
+2026-02-07 19:11:47 - Quant_Alpha - INFO - ==================================================
