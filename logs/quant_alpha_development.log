@@ -123,3 +123,26 @@
 ==================================================
 2026-02-07 17:14:23 - Quant_Alpha - INFO - 🎉 DATA ENGINE TEST COMPLETE
 2026-02-07 17:14:23 - Quant_Alpha - INFO - ==================================================
+2026-02-07 18:03:00 - Quant_Alpha - INFO - ==================================================
+2026-02-07 18:03:00 - Quant_Alpha - INFO - 🚀 QUANT ALPHA SYSTEM - DATA VERIFICATION
+2026-02-07 18:03:00 - Quant_Alpha - INFO - ==================================================
+2026-02-07 18:03:00 - Quant_Alpha - INFO - 
+--- 1. Testing PriceLoader ---
+2026-02-07 18:03:00 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-07 18:03:01 - Quant_Alpha - INFO - ✅ PRICES SUCCESS!
+2026-02-07 18:03:01 - Quant_Alpha - INFO - 📊 Rows: 976,019
+2026-02-07 18:03:02 - Quant_Alpha - INFO - 📅 Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-07 18:03:02 - Quant_Alpha - INFO - 
+--- 2. Testing FundamentalLoader ---
+2026-02-07 18:03:02 - Quant_Alpha - INFO - 🔄 Processing raw data for: fundamentals.parquet
+2026-02-07 18:03:02 - Quant_Alpha - INFO - 📂 Found 499 folders. Extracting info...
+2026-02-07 18:03:07 - Quant_Alpha - INFO - 🧹 Cleaning Fundamental data...
+2026-02-07 18:03:07 - Quant_Alpha - INFO - ✅ Fundamentals Cleaned. Shape: (499, 21)
+2026-02-07 18:03:07 - Quant_Alpha - INFO - 💾 Saved to cache: fundamentals.parquet (499 rows)
+2026-02-07 18:03:07 - Quant_Alpha - INFO - ✅ FUNDAMENTALS SUCCESS!
+2026-02-07 18:03:07 - Quant_Alpha - INFO - 📊 Stocks Found: 499
+2026-02-07 18:03:07 - Quant_Alpha - INFO - ✨ SUCCESS: Advanced Metrics (ROE, EPS) Detected!
+2026-02-07 18:03:07 - Quant_Alpha - INFO - 
+==================================================
+2026-02-07 18:03:07 - Quant_Alpha - INFO - 🎉 DATA ENGINE TEST COMPLETE
+2026-02-07 18:03:07 - Quant_Alpha - INFO - ==================================================
