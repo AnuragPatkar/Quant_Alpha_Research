@@ -284,7 +284,8 @@ class Config:
         self.LOG_FILE = self.LOG_DIR / f'quant_alpha_{self.ENV}.log'
         self.LOG_LEVEL = 'INFO'
         self.LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-
+        self.LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+        
     # ==================== VALIDATION ====================
 
     def _validate_config(self):

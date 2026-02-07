@@ -1,0 +1,9 @@
+2026-02-07 12:23:32 - TestSystem - INFO - Info message: System start ho raha hai.
+2026-02-07 12:23:32 - TestSystem - WARNING - Warning message: Ye ek warning test hai.
+2026-02-07 12:23:32 - TestSystem - ERROR - Error message: Kuch galat hua (Sirf testing ke liye).
+2026-02-07 12:29:29 - TestSystem - INFO - Info message: System start ho raha hai.
+2026-02-07 12:29:29 - TestSystem - WARNING - Warning message: Ye ek warning test hai.
+2026-02-07 12:29:29 - TestSystem - ERROR - Error message: Kuch galat hua (Sirf testing ke liye).
+2026-02-07 12:29:39 - TestSystem - INFO - Info message: System start ho raha hai.
+2026-02-07 12:29:39 - TestSystem - WARNING - Warning message: Ye ek warning test hai.
+2026-02-07 12:29:39 - TestSystem - ERROR - Error message: Kuch galat hua (Sirf testing ke liye).
