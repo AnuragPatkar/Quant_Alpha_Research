@@ -3,6 +3,8 @@ from config.logging_config import logger
 from quant_alpha.data.price_loader import PriceLoader
 from quant_alpha.data.fundamental_loader import FundamentalLoader
 from quant_alpha.data.earnings_loader import EarningsLoader
+from quant_alpha.data.alternative_loader import AlternativeLoader
+
 
 def main():
     logger.info("="*50)
@@ -79,6 +81,25 @@ def main():
 
     except Exception as e:
         logger.exception(f"❌ Earnings Loader Failed: {e}")
+
+    # ---- 4. Alternative Loader (Focus Area) ---------
+    logger.info("\n--- 4. Testing AlternativeLoader ---")
+    try:
+        al = AlternativeLoader()
+        alternatives = al.get_data(force_reload=True)
+        
+        if not alternatives.empty:
+            logger.info(f"✅ ALTERNATIVES DATA SUCCESS!")
+            logger.info(f"📊 Shape: {alternatives.shape}")
+            logger.info(f"🌍 Columns Found: {list(alternatives.columns)}")
+
+            print("\nSample Alternatives Data:")
+            print(alternatives.tail(5))
+        else:
+            logger.error("❌ Alternatives DataFrame is empty!")
+    except Exception as e:
+        logger.exception(f"❌ Alternative Loader Failed: {e}")
+
 
 
     logger.info("\n" + "="*50)
