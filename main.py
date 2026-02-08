@@ -2,6 +2,7 @@ from config.settings import config
 from config.logging_config import logger
 from quant_alpha.data.price_loader import PriceLoader
 from quant_alpha.data.fundamental_loader import FundamentalLoader
+from quant_alpha.data.earnings_loader import EarningsLoader
 
 def main():
     logger.info("="*50)
@@ -53,6 +54,32 @@ def main():
             logger.error("❌ Fundamentals DataFrame is empty!")
     except Exception as e:
         logger.exception(f"❌ Fundamental Loader Failed: {e}")
+
+    # ---- Step 3:Load Earnings ------------------------
+    logger.info("\n--- 3. Testing EarningsLoader ---")
+    try:
+        earn_loader = EarningsLoader()
+        earnings = earn_loader.get_data(force_reload=True)
+        
+        if not earnings.empty:
+            logger.info(f"✅ EARNINGS SUCCESS!")
+            logger.info(f"📊 Records Found: {len(earnings):,}")
+
+            # Print Sample to verify Date Shift & Surprise
+            print("\nSample Earnings Surprise (Date Shifted +1 Day):")
+            cols = ['date','ticker','eps_actual','surprise_pct']
+            valid_cols = [c for c in cols if c in earnings.columns]
+            # Show last few records
+            print(earnings[valid_cols].tail(5))
+            logger.info("✨ Success: Earnings Surprise Data Loaded!")
+        
+        else:
+            logger.error("❌ Earnings DataFrame is empty!(Check data/raw/earnings folder)")
+
+
+    except Exception as e:
+        logger.exception(f"❌ Earnings Loader Failed: {e}")
+
 
     logger.info("\n" + "="*50)
     logger.info("🎉 DATA ENGINE TEST COMPLETE")
