@@ -46,12 +46,12 @@ class FactorRegistry:
         """
         for class_name, factor_cls in self._registered_classes.items():
             try:
-                # 1. Config Dhoondo: Kya is factor ke liye koi specific setting hai?
+                # 1. Lookup Config: Check if there are specific settings for this factor.
                 # Example: config = {'RSI': {'period': 21}}
                 specific_config = self.factor_config.get(class_name, {})
                 
-                # 2. Instantiate with Config (**kwargs unpacking)
-                # Agar config empty hai, toh Factor ke default values use honge (Fallback)
+                # 2. Instantiate with Config (using **kwargs unpacking)
+                # If config is empty, the Factor's default values will be used (Fallback mechanism).
                 instance = factor_cls(**specific_config)
                 
                 self.factors[instance.name] = instance
