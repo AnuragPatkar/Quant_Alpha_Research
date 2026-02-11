@@ -423,3 +423,1099 @@
 2026-02-11 09:23:32 - Quant_Alpha - INFO - ✅ Computed 2/2 factors in 0.02s
 2026-02-11 09:23:32 - Quant_Alpha - INFO - 🔍 Analyzing Feature Correlations...
 2026-02-11 09:23:32 - Quant_Alpha - INFO - ✂️ Dropped 0 correlated features. Kept 2.
+2026-02-11 13:46:11 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:46:11 - Quant_Alpha - INFO - 🧪 MOMENTUM FACTORS TEST SUITE
+2026-02-11 13:46:11 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:46:11 - Quant_Alpha - INFO - 
+[STEP 1] Loading Price Data...
+2026-02-11 13:46:11 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-11 13:46:12 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-11 13:46:12 - Quant_Alpha - INFO - ✅ Data is clean (0 NaNs).
+2026-02-11 13:46:12 - Quant_Alpha - INFO - ✅ Data Loaded Successfully
+2026-02-11 13:46:12 - Quant_Alpha - INFO -    📊 Total Rows: 976,019
+2026-02-11 13:46:12 - Quant_Alpha - INFO -    📈 Unique Tickers: 499
+2026-02-11 13:46:12 - Quant_Alpha - INFO -    📅 Date Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-11 13:46:12 - Quant_Alpha - INFO -    📋 Columns: date, ticker, open, high, low, close, volume
+2026-02-11 13:46:12 - Quant_Alpha - INFO - 
+[STEP 2] Initializing Factor Registry...
+2026-02-11 13:46:12 - Quant_Alpha - INFO - ✅ FactorRegistry initialized with 0 factors.
+2026-02-11 13:46:12 - Quant_Alpha - INFO - ✅ Registry Initialized
+2026-02-11 13:46:12 - Quant_Alpha - INFO -    📦 Registered Factors: 0
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  No factors registered. This might be intentional.
+2026-02-11 13:46:12 - Quant_Alpha - INFO - 
+[STEP 3] Testing Individual Momentum Factors...
+2026-02-11 13:46:12 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  Return5D not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  Return10D not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  Return21D not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  Return63D not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  Return126D not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  Return252D not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  MomentumAcceleration10D not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  MomentumAcceleration21D not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  RSI14D not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  RSI21 not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  MACD not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  MACDSignal not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  StochasticOscillator not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - WARNING - ⚠️  WilliamsR not found in registry, skipping...
+2026-02-11 13:46:12 - Quant_Alpha - INFO - 
+======================================================================
+2026-02-11 13:46:12 - Quant_Alpha - INFO - [STEP 4] TEST SUMMARY
+2026-02-11 13:46:12 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:46:12 - Quant_Alpha - INFO - ✅ Successful: 0
+2026-02-11 13:46:12 - Quant_Alpha - INFO - ❌ Failed: 14
+2026-02-11 13:46:12 - Quant_Alpha - INFO - 📊 Success Rate: 0.0%
+2026-02-11 13:46:12 - Quant_Alpha - INFO - 
+[STEP 6] Sample Data (First 5 rows of each ticker)
+2026-02-11 13:46:13 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:46:13 - Quant_Alpha - INFO - 
+A:
+2026-02-11 13:46:13 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:46:13 - Quant_Alpha - INFO -   Prices: 35.63 - 37.61
+2026-02-11 13:46:13 - Quant_Alpha - INFO - 
+AAPL:
+2026-02-11 13:46:13 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:46:13 - Quant_Alpha - INFO -   Prices: 21.75 - 23.75
+2026-02-11 13:46:13 - Quant_Alpha - INFO - 
+ABBV:
+2026-02-11 13:46:13 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:46:13 - Quant_Alpha - INFO -   Prices: 36.42 - 37.71
+2026-02-11 13:46:13 - Quant_Alpha - INFO - 
+======================================================================
+2026-02-11 13:46:13 - Quant_Alpha - WARNING - ⚠️  14 tests failed. Check details above.
+2026-02-11 13:46:52 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:46:52 - Quant_Alpha - INFO - 🧪 MOMENTUM FACTORS TEST SUITE
+2026-02-11 13:46:52 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:46:52 - Quant_Alpha - INFO - 
+[STEP 1] Loading Price Data...
+2026-02-11 13:46:52 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-11 13:46:54 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-11 13:46:54 - Quant_Alpha - INFO - ✅ Data is clean (0 NaNs).
+2026-02-11 13:46:54 - Quant_Alpha - INFO - ✅ Data Loaded Successfully
+2026-02-11 13:46:54 - Quant_Alpha - INFO -    📊 Total Rows: 976,019
+2026-02-11 13:46:54 - Quant_Alpha - INFO -    📈 Unique Tickers: 499
+2026-02-11 13:46:54 - Quant_Alpha - INFO -    📅 Date Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-11 13:46:54 - Quant_Alpha - INFO -    📋 Columns: date, ticker, open, high, low, close, volume
+2026-02-11 13:46:54 - Quant_Alpha - INFO - 
+[STEP 2] Initializing Factor Registry...
+2026-02-11 13:46:54 - Quant_Alpha - INFO - ✅ FactorRegistry initialized with 15 factors.
+2026-02-11 13:46:54 - Quant_Alpha - INFO - ✅ Registry Initialized
+2026-02-11 13:46:54 - Quant_Alpha - INFO -    📦 Registered Factors: 15
+2026-02-11 13:46:54 - Quant_Alpha - INFO - 
+[STEP 3] Testing Individual Momentum Factors...
+2026-02-11 13:46:54 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  Return5D not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  Return10D not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  Return21D not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  Return63D not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  Return126D not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  Return252D not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  MomentumAcceleration10D not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  MomentumAcceleration21D not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  RSI14D not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  RSI21 not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  MACD not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  MACDSignal not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  StochasticOscillator not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  WilliamsR not found in registry, skipping...
+2026-02-11 13:46:54 - Quant_Alpha - INFO - 
+======================================================================
+2026-02-11 13:46:54 - Quant_Alpha - INFO - [STEP 4] TEST SUMMARY
+2026-02-11 13:46:54 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:46:54 - Quant_Alpha - INFO - ✅ Successful: 0
+2026-02-11 13:46:54 - Quant_Alpha - INFO - ❌ Failed: 14
+2026-02-11 13:46:54 - Quant_Alpha - INFO - 📊 Success Rate: 0.0%
+2026-02-11 13:46:54 - Quant_Alpha - INFO - 
+[STEP 6] Sample Data (First 5 rows of each ticker)
+2026-02-11 13:46:54 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:46:54 - Quant_Alpha - INFO - 
+A:
+2026-02-11 13:46:54 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:46:54 - Quant_Alpha - INFO -   Prices: 35.63 - 37.61
+2026-02-11 13:46:54 - Quant_Alpha - INFO - 
+AAPL:
+2026-02-11 13:46:54 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:46:54 - Quant_Alpha - INFO -   Prices: 21.75 - 23.75
+2026-02-11 13:46:54 - Quant_Alpha - INFO - 
+ABBV:
+2026-02-11 13:46:54 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:46:54 - Quant_Alpha - INFO -   Prices: 36.42 - 37.71
+2026-02-11 13:46:54 - Quant_Alpha - INFO - 
+======================================================================
+2026-02-11 13:46:54 - Quant_Alpha - WARNING - ⚠️  14 tests failed. Check details above.
+2026-02-11 13:47:22 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:47:22 - Quant_Alpha - INFO - 🧪 MOMENTUM FACTORS TEST SUITE
+2026-02-11 13:47:23 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:47:23 - Quant_Alpha - INFO - 
+[STEP 1] Loading Price Data...
+2026-02-11 13:47:23 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-11 13:47:23 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-11 13:47:23 - Quant_Alpha - INFO - ✅ Data is clean (0 NaNs).
+2026-02-11 13:47:23 - Quant_Alpha - INFO - ✅ Data Loaded Successfully
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    📊 Total Rows: 976,019
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    📈 Unique Tickers: 499
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    📅 Date Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    📋 Columns: date, ticker, open, high, low, close, volume
+2026-02-11 13:47:23 - Quant_Alpha - INFO - 
+[STEP 2] Initializing Factor Registry...
+2026-02-11 13:47:23 - Quant_Alpha - INFO - ✅ FactorRegistry initialized with 15 factors.
+2026-02-11 13:47:23 - Quant_Alpha - INFO - ✅ Registry Initialized
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    📦 Registered Factors: 15
+2026-02-11 13:47:23 - Quant_Alpha - INFO - 
+[STEP 3] Testing Individual Momentum Factors...
+2026-02-11 13:47:23 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:47:23 - Quant_Alpha - INFO - 📦 Found 15 registered factors:
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - return_5d
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - return_10d
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - return_21d
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - return_63d
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - return_126d
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - return_252d
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - mom_accel_10d
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - mom_accel_21d
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - rsi_14d
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - rsi_21
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - macd_12_26
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - macd_signal_12_26_9
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - stoch_k
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - williams_r
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    - tsi
+2026-02-11 13:47:23 - Quant_Alpha - INFO - 
+Testing factors...
+2026-02-11 13:47:23 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:47:23 - Quant_Alpha - INFO - 
+▶️  Testing: return_5d
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    Description: 5-day return
+2026-02-11 13:47:23 - Quant_Alpha - INFO -    Lookback Period: 6
+2026-02-11 13:47:25 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:25 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:25 - Quant_Alpha - INFO -       Range: [-7.1468, 11.1825]
+2026-02-11 13:47:25 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9977
+2026-02-11 13:47:25 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:25 - Quant_Alpha - INFO - 
+▶️  Testing: return_10d
+2026-02-11 13:47:25 - Quant_Alpha - INFO -    Description: 10-day return
+2026-02-11 13:47:25 - Quant_Alpha - INFO -    Lookback Period: 11
+2026-02-11 13:47:26 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:26 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:26 - Quant_Alpha - INFO -       Range: [-6.0014, 8.9205]
+2026-02-11 13:47:26 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9964
+2026-02-11 13:47:26 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:26 - Quant_Alpha - INFO - 
+▶️  Testing: return_21d
+2026-02-11 13:47:26 - Quant_Alpha - INFO -    Description: 21-day return
+2026-02-11 13:47:26 - Quant_Alpha - INFO -    Lookback Period: 22
+2026-02-11 13:47:28 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:28 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:28 - Quant_Alpha - INFO -       Range: [-5.5824, 10.6965]
+2026-02-11 13:47:28 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9936
+2026-02-11 13:47:28 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:28 - Quant_Alpha - INFO - 
+▶️  Testing: return_63d
+2026-02-11 13:47:28 - Quant_Alpha - INFO -    Description: 63-day return
+2026-02-11 13:47:28 - Quant_Alpha - INFO -    Lookback Period: 64
+2026-02-11 13:47:29 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:29 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:29 - Quant_Alpha - INFO -       Range: [-4.5366, 6.7554]
+2026-02-11 13:47:29 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9827
+2026-02-11 13:47:29 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:29 - Quant_Alpha - INFO - 
+▶️  Testing: return_126d
+2026-02-11 13:47:29 - Quant_Alpha - INFO -    Description: 126-day return
+2026-02-11 13:47:29 - Quant_Alpha - INFO -    Lookback Period: 127
+2026-02-11 13:47:31 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:31 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:31 - Quant_Alpha - INFO -       Range: [-3.6185, 6.8086]
+2026-02-11 13:47:31 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9663
+2026-02-11 13:47:31 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:31 - Quant_Alpha - INFO - 
+▶️  Testing: return_252d
+2026-02-11 13:47:31 - Quant_Alpha - INFO -    Description: 252-day return
+2026-02-11 13:47:31 - Quant_Alpha - INFO -    Lookback Period: 253
+2026-02-11 13:47:33 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:33 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:33 - Quant_Alpha - INFO -       Range: [-3.1803, 6.6609]
+2026-02-11 13:47:33 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9325
+2026-02-11 13:47:33 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:33 - Quant_Alpha - INFO - 
+▶️  Testing: mom_accel_10d
+2026-02-11 13:47:33 - Quant_Alpha - INFO -    Description: 10-day momentum acceleration
+2026-02-11 13:47:33 - Quant_Alpha - INFO -    Lookback Period: 20
+2026-02-11 13:47:34 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:34 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:34 - Quant_Alpha - INFO -       Range: [-9.0181, 6.4273]
+2026-02-11 13:47:34 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9938
+2026-02-11 13:47:34 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:34 - Quant_Alpha - INFO - 
+▶️  Testing: mom_accel_21d
+2026-02-11 13:47:34 - Quant_Alpha - INFO -    Description: 21-day momentum acceleration
+2026-02-11 13:47:34 - Quant_Alpha - INFO -    Lookback Period: 42
+2026-02-11 13:47:36 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:36 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:36 - Quant_Alpha - INFO -       Range: [-8.6743, 8.1526]
+2026-02-11 13:47:36 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9882
+2026-02-11 13:47:36 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:36 - Quant_Alpha - INFO - 
+▶️  Testing: rsi_14d
+2026-02-11 13:47:36 - Quant_Alpha - INFO -    Description: RSI 14
+2026-02-11 13:47:36 - Quant_Alpha - INFO -    Lookback Period: 42
+2026-02-11 13:47:38 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:38 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:38 - Quant_Alpha - INFO -       Range: [-4.7856, 6.0397]
+2026-02-11 13:47:38 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9956
+2026-02-11 13:47:38 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:38 - Quant_Alpha - INFO - 
+▶️  Testing: rsi_21
+2026-02-11 13:47:38 - Quant_Alpha - INFO -    Description: RSI 21
+2026-02-11 13:47:38 - Quant_Alpha - INFO -    Lookback Period: 63
+2026-02-11 13:47:40 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:40 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:40 - Quant_Alpha - INFO -       Range: [-4.6884, 5.5830]
+2026-02-11 13:47:40 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9938
+2026-02-11 13:47:40 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:40 - Quant_Alpha - INFO - 
+▶️  Testing: macd_12_26
+2026-02-11 13:47:40 - Quant_Alpha - INFO -    Description: MACD Main Line
+2026-02-11 13:47:40 - Quant_Alpha - INFO -    Lookback Period: 36
+2026-02-11 13:47:42 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:42 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:42 - Quant_Alpha - INFO -       Range: [-17.3485, 14.9047]
+2026-02-11 13:47:42 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9987
+2026-02-11 13:47:42 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:42 - Quant_Alpha - INFO - 
+▶️  Testing: macd_signal_12_26_9
+2026-02-11 13:47:42 - Quant_Alpha - INFO -    Description: MACD Signal Line
+2026-02-11 13:47:42 - Quant_Alpha - INFO -    Lookback Period: 45
+2026-02-11 13:47:44 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:44 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:44 - Quant_Alpha - INFO -       Range: [-18.4187, 14.9047]
+2026-02-11 13:47:44 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9987
+2026-02-11 13:47:44 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:44 - Quant_Alpha - INFO - 
+▶️  Testing: stoch_k
+2026-02-11 13:47:44 - Quant_Alpha - INFO -    Description: Stochastic Oscillator %K
+2026-02-11 13:47:44 - Quant_Alpha - INFO -    Lookback Period: 14
+2026-02-11 13:47:45 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:45 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:45 - Quant_Alpha - INFO -       Range: [-5.9047, 12.3687]
+2026-02-11 13:47:45 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9959
+2026-02-11 13:47:45 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:45 - Quant_Alpha - INFO - 
+▶️  Testing: williams_r
+2026-02-11 13:47:45 - Quant_Alpha - INFO -    Description: Williams %R
+2026-02-11 13:47:45 - Quant_Alpha - INFO -    Lookback Period: 14
+2026-02-11 13:47:47 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:47 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:47 - Quant_Alpha - INFO -       Range: [-5.9047, 12.3687]
+2026-02-11 13:47:47 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9959
+2026-02-11 13:47:47 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:47 - Quant_Alpha - INFO - 
+▶️  Testing: tsi
+2026-02-11 13:47:47 - Quant_Alpha - INFO -    Description: True Strength Index
+2026-02-11 13:47:47 - Quant_Alpha - INFO -    Lookback Period: 38
+2026-02-11 13:47:49 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:47:49 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:47:49 - Quant_Alpha - INFO -       Range: [-4.6050, 7.1137]
+2026-02-11 13:47:49 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9987
+2026-02-11 13:47:49 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+======================================================================
+2026-02-11 13:47:49 - Quant_Alpha - INFO - [STEP 4] TEST SUMMARY
+2026-02-11 13:47:49 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:47:49 - Quant_Alpha - INFO - ✅ Successful: 15
+2026-02-11 13:47:49 - Quant_Alpha - INFO - ❌ Failed: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 📊 Success Rate: 100.0%
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+[STEP 5] Detailed Results Table
+2026-02-11 13:47:49 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+Factor Statistics Summary:
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+return_5d:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -7.146762
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 11.182501
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.997692
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+return_10d:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -6.001447
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 8.920486
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.996412
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+return_21d:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -5.582381
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 10.696541
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.993592
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+return_63d:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -4.536571
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 6.755369
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.982750
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+return_126d:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -3.618490
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 6.808577
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.966290
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+return_252d:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -3.180279
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 6.660942
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.932547
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+mom_accel_10d:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -9.018077
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 6.427336
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.993849
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+mom_accel_21d:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -8.674262
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 8.152592
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.988185
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+rsi_14d:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -4.785559
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 6.039749
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.995644
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+rsi_21:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -4.688424
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 5.582986
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.993849
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+macd_12_26:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -17.348470
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 14.904714
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.998730
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+macd_signal_12_26_9:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -18.418668
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 14.904714
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.998730
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+stoch_k:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -5.904659
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 12.368730
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.995858
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+williams_r:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -5.904659
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 12.368730
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.995858
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+tsi:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Min: -4.605007
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Max: 7.113704
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Std: 0.998730
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+[STEP 6] Sample Data (First 5 rows of each ticker)
+2026-02-11 13:47:49 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+A:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Prices: 35.63 - 37.61
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+AAPL:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Prices: 21.75 - 23.75
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+ABBV:
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:47:49 - Quant_Alpha - INFO -   Prices: 36.42 - 37.71
+2026-02-11 13:47:49 - Quant_Alpha - INFO - 
+======================================================================
+2026-02-11 13:47:49 - Quant_Alpha - INFO - ✅ ALL TESTS PASSED - Momentum factors are working correctly!
+2026-02-11 13:47:59 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:47:59 - Quant_Alpha - INFO - 🧪 MOMENTUM FACTORS TEST SUITE
+2026-02-11 13:47:59 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:47:59 - Quant_Alpha - INFO - 
+[STEP 1] Loading Price Data...
+2026-02-11 13:47:59 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-11 13:47:59 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-11 13:47:59 - Quant_Alpha - INFO - ✅ Data is clean (0 NaNs).
+2026-02-11 13:47:59 - Quant_Alpha - INFO - ✅ Data Loaded Successfully
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    📊 Total Rows: 976,019
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    📈 Unique Tickers: 499
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    📅 Date Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    📋 Columns: date, ticker, open, high, low, close, volume
+2026-02-11 13:47:59 - Quant_Alpha - INFO - 
+[STEP 2] Initializing Factor Registry...
+2026-02-11 13:47:59 - Quant_Alpha - INFO - ✅ FactorRegistry initialized with 15 factors.
+2026-02-11 13:47:59 - Quant_Alpha - INFO - ✅ Registry Initialized
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    📦 Registered Factors: 15
+2026-02-11 13:47:59 - Quant_Alpha - INFO - 
+[STEP 3] Testing Individual Momentum Factors...
+2026-02-11 13:47:59 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:47:59 - Quant_Alpha - INFO - 📦 Found 15 registered factors:
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - return_5d
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - return_10d
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - return_21d
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - return_63d
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - return_126d
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - return_252d
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - mom_accel_10d
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - mom_accel_21d
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - rsi_14d
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - rsi_21
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - macd_12_26
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - macd_signal_12_26_9
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - stoch_k
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - williams_r
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    - tsi
+2026-02-11 13:47:59 - Quant_Alpha - INFO - 
+Testing factors...
+2026-02-11 13:47:59 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:47:59 - Quant_Alpha - INFO - 
+▶️  Testing: return_5d
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    Description: 5-day return
+2026-02-11 13:47:59 - Quant_Alpha - INFO -    Lookback Period: 6
+2026-02-11 13:48:01 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:01 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:01 - Quant_Alpha - INFO -       Range: [-7.1468, 11.1825]
+2026-02-11 13:48:01 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9977
+2026-02-11 13:48:01 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:01 - Quant_Alpha - INFO - 
+▶️  Testing: return_10d
+2026-02-11 13:48:01 - Quant_Alpha - INFO -    Description: 10-day return
+2026-02-11 13:48:01 - Quant_Alpha - INFO -    Lookback Period: 11
+2026-02-11 13:48:02 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:02 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:02 - Quant_Alpha - INFO -       Range: [-6.0014, 8.9205]
+2026-02-11 13:48:02 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9964
+2026-02-11 13:48:02 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:02 - Quant_Alpha - INFO - 
+▶️  Testing: return_21d
+2026-02-11 13:48:02 - Quant_Alpha - INFO -    Description: 21-day return
+2026-02-11 13:48:02 - Quant_Alpha - INFO -    Lookback Period: 22
+2026-02-11 13:48:04 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:04 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:04 - Quant_Alpha - INFO -       Range: [-5.5824, 10.6965]
+2026-02-11 13:48:04 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9936
+2026-02-11 13:48:04 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:04 - Quant_Alpha - INFO - 
+▶️  Testing: return_63d
+2026-02-11 13:48:04 - Quant_Alpha - INFO -    Description: 63-day return
+2026-02-11 13:48:04 - Quant_Alpha - INFO -    Lookback Period: 64
+2026-02-11 13:48:05 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:05 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:05 - Quant_Alpha - INFO -       Range: [-4.5366, 6.7554]
+2026-02-11 13:48:05 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9827
+2026-02-11 13:48:05 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:05 - Quant_Alpha - INFO - 
+▶️  Testing: return_126d
+2026-02-11 13:48:05 - Quant_Alpha - INFO -    Description: 126-day return
+2026-02-11 13:48:05 - Quant_Alpha - INFO -    Lookback Period: 127
+2026-02-11 13:48:07 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:07 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:07 - Quant_Alpha - INFO -       Range: [-3.6185, 6.8086]
+2026-02-11 13:48:07 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9663
+2026-02-11 13:48:07 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:07 - Quant_Alpha - INFO - 
+▶️  Testing: return_252d
+2026-02-11 13:48:07 - Quant_Alpha - INFO -    Description: 252-day return
+2026-02-11 13:48:07 - Quant_Alpha - INFO -    Lookback Period: 253
+2026-02-11 13:48:08 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:08 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:08 - Quant_Alpha - INFO -       Range: [-3.1803, 6.6609]
+2026-02-11 13:48:08 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9325
+2026-02-11 13:48:08 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:08 - Quant_Alpha - INFO - 
+▶️  Testing: mom_accel_10d
+2026-02-11 13:48:08 - Quant_Alpha - INFO -    Description: 10-day momentum acceleration
+2026-02-11 13:48:08 - Quant_Alpha - INFO -    Lookback Period: 20
+2026-02-11 13:48:10 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:10 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:10 - Quant_Alpha - INFO -       Range: [-9.0181, 6.4273]
+2026-02-11 13:48:10 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9938
+2026-02-11 13:48:10 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:10 - Quant_Alpha - INFO - 
+▶️  Testing: mom_accel_21d
+2026-02-11 13:48:10 - Quant_Alpha - INFO -    Description: 21-day momentum acceleration
+2026-02-11 13:48:10 - Quant_Alpha - INFO -    Lookback Period: 42
+2026-02-11 13:48:11 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:11 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:11 - Quant_Alpha - INFO -       Range: [-8.6743, 8.1526]
+2026-02-11 13:48:11 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9882
+2026-02-11 13:48:11 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:11 - Quant_Alpha - INFO - 
+▶️  Testing: rsi_14d
+2026-02-11 13:48:11 - Quant_Alpha - INFO -    Description: RSI 14
+2026-02-11 13:48:11 - Quant_Alpha - INFO -    Lookback Period: 42
+2026-02-11 13:48:13 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:13 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:13 - Quant_Alpha - INFO -       Range: [-4.7856, 6.0397]
+2026-02-11 13:48:13 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9956
+2026-02-11 13:48:13 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:13 - Quant_Alpha - INFO - 
+▶️  Testing: rsi_21
+2026-02-11 13:48:13 - Quant_Alpha - INFO -    Description: RSI 21
+2026-02-11 13:48:13 - Quant_Alpha - INFO -    Lookback Period: 63
+2026-02-11 13:48:15 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:15 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:15 - Quant_Alpha - INFO -       Range: [-4.6884, 5.5830]
+2026-02-11 13:48:15 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9938
+2026-02-11 13:48:15 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:15 - Quant_Alpha - INFO - 
+▶️  Testing: macd_12_26
+2026-02-11 13:48:15 - Quant_Alpha - INFO -    Description: MACD Main Line
+2026-02-11 13:48:15 - Quant_Alpha - INFO -    Lookback Period: 36
+2026-02-11 13:48:17 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:17 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:17 - Quant_Alpha - INFO -       Range: [-17.3485, 14.9047]
+2026-02-11 13:48:17 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9987
+2026-02-11 13:48:17 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:17 - Quant_Alpha - INFO - 
+▶️  Testing: macd_signal_12_26_9
+2026-02-11 13:48:17 - Quant_Alpha - INFO -    Description: MACD Signal Line
+2026-02-11 13:48:17 - Quant_Alpha - INFO -    Lookback Period: 45
+2026-02-11 13:48:19 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:19 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:19 - Quant_Alpha - INFO -       Range: [-18.4187, 14.9047]
+2026-02-11 13:48:19 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9987
+2026-02-11 13:48:19 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:19 - Quant_Alpha - INFO - 
+▶️  Testing: stoch_k
+2026-02-11 13:48:19 - Quant_Alpha - INFO -    Description: Stochastic Oscillator %K
+2026-02-11 13:48:19 - Quant_Alpha - INFO -    Lookback Period: 14
+2026-02-11 13:48:21 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:21 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:21 - Quant_Alpha - INFO -       Range: [-5.9047, 12.3687]
+2026-02-11 13:48:21 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9959
+2026-02-11 13:48:21 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:21 - Quant_Alpha - INFO - 
+▶️  Testing: williams_r
+2026-02-11 13:48:21 - Quant_Alpha - INFO -    Description: Williams %R
+2026-02-11 13:48:21 - Quant_Alpha - INFO -    Lookback Period: 14
+2026-02-11 13:48:22 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:22 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:22 - Quant_Alpha - INFO -       Range: [-5.9047, 12.3687]
+2026-02-11 13:48:22 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9959
+2026-02-11 13:48:22 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:22 - Quant_Alpha - INFO - 
+▶️  Testing: tsi
+2026-02-11 13:48:22 - Quant_Alpha - INFO -    Description: True Strength Index
+2026-02-11 13:48:22 - Quant_Alpha - INFO -    Lookback Period: 38
+2026-02-11 13:48:24 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:24 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:24 - Quant_Alpha - INFO -       Range: [-4.6050, 7.1137]
+2026-02-11 13:48:24 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9987
+2026-02-11 13:48:24 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+======================================================================
+2026-02-11 13:48:24 - Quant_Alpha - INFO - [STEP 4] TEST SUMMARY
+2026-02-11 13:48:24 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:48:24 - Quant_Alpha - INFO - ✅ Successful: 15
+2026-02-11 13:48:24 - Quant_Alpha - INFO - ❌ Failed: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 📊 Success Rate: 100.0%
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+[STEP 5] Detailed Results Table
+2026-02-11 13:48:24 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+Factor Statistics Summary:
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+return_5d:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -7.146762
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 11.182501
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.997692
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+return_10d:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -6.001447
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 8.920486
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.996412
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+return_21d:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -5.582381
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 10.696541
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.993592
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+return_63d:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -4.536571
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 6.755369
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.982750
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+return_126d:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -3.618490
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 6.808577
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.966290
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+return_252d:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -3.180279
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 6.660942
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.932547
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+mom_accel_10d:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -9.018077
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 6.427336
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.993849
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+mom_accel_21d:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -8.674262
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 8.152592
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.988185
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+rsi_14d:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -4.785559
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 6.039749
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.995644
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+rsi_21:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -4.688424
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 5.582986
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.993849
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+macd_12_26:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -17.348470
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 14.904714
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.998730
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+macd_signal_12_26_9:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -18.418668
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 14.904714
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.998730
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+stoch_k:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -5.904659
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 12.368730
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.995858
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+williams_r:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -5.904659
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 12.368730
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.995858
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+tsi:
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Min: -4.605007
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Max: 7.113704
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Std: 0.998730
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:48:24 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:48:24 - Quant_Alpha - INFO - 
+[STEP 6] Sample Data (First 5 rows of each ticker)
+2026-02-11 13:48:24 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:48:25 - Quant_Alpha - INFO - 
+A:
+2026-02-11 13:48:25 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:48:25 - Quant_Alpha - INFO -   Prices: 35.63 - 37.61
+2026-02-11 13:48:25 - Quant_Alpha - INFO - 
+AAPL:
+2026-02-11 13:48:25 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:48:25 - Quant_Alpha - INFO -   Prices: 21.75 - 23.75
+2026-02-11 13:48:25 - Quant_Alpha - INFO - 
+ABBV:
+2026-02-11 13:48:25 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:48:25 - Quant_Alpha - INFO -   Prices: 36.42 - 37.71
+2026-02-11 13:48:25 - Quant_Alpha - INFO - 
+======================================================================
+2026-02-11 13:48:25 - Quant_Alpha - INFO - ✅ ALL TESTS PASSED - Momentum factors are working correctly!
+2026-02-11 13:48:46 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:48:46 - Quant_Alpha - INFO - 🧪 MOMENTUM FACTORS TEST SUITE
+2026-02-11 13:48:46 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:48:46 - Quant_Alpha - INFO - 
+[STEP 1] Loading Price Data...
+2026-02-11 13:48:46 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-11 13:48:47 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-11 13:48:47 - Quant_Alpha - INFO - ✅ Data is clean (0 NaNs).
+2026-02-11 13:48:47 - Quant_Alpha - INFO - ✅ Data Loaded Successfully
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    📊 Total Rows: 976,019
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    📈 Unique Tickers: 499
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    📅 Date Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    📋 Columns: date, ticker, open, high, low, close, volume
+2026-02-11 13:48:47 - Quant_Alpha - INFO - 
+[STEP 2] Initializing Factor Registry...
+2026-02-11 13:48:47 - Quant_Alpha - INFO - ✅ FactorRegistry initialized with 15 factors.
+2026-02-11 13:48:47 - Quant_Alpha - INFO - ✅ Registry Initialized
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    📦 Registered Factors: 15
+2026-02-11 13:48:47 - Quant_Alpha - INFO - 
+[STEP 3] Testing Individual Momentum Factors...
+2026-02-11 13:48:47 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:48:47 - Quant_Alpha - INFO - 📦 Found 15 registered factors:
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - return_5d
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - return_10d
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - return_21d
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - return_63d
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - return_126d
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - return_252d
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - mom_accel_10d
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - mom_accel_21d
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - rsi_14d
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - rsi_21
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - macd_12_26
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - macd_signal_12_26_9
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - stoch_k
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - williams_r
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    - tsi
+2026-02-11 13:48:47 - Quant_Alpha - INFO - 
+Testing factors...
+2026-02-11 13:48:47 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:48:47 - Quant_Alpha - INFO - 
+▶️  Testing: return_5d
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    Description: 5-day return
+2026-02-11 13:48:47 - Quant_Alpha - INFO -    Lookback Period: 6
+2026-02-11 13:48:48 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:48 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:48 - Quant_Alpha - INFO -       Range: [-7.1468, 11.1825]
+2026-02-11 13:48:48 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9977
+2026-02-11 13:48:48 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:48 - Quant_Alpha - INFO - 
+▶️  Testing: return_10d
+2026-02-11 13:48:48 - Quant_Alpha - INFO -    Description: 10-day return
+2026-02-11 13:48:48 - Quant_Alpha - INFO -    Lookback Period: 11
+2026-02-11 13:48:49 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:49 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:49 - Quant_Alpha - INFO -       Range: [-6.0014, 8.9205]
+2026-02-11 13:48:49 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9964
+2026-02-11 13:48:49 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:49 - Quant_Alpha - INFO - 
+▶️  Testing: return_21d
+2026-02-11 13:48:49 - Quant_Alpha - INFO -    Description: 21-day return
+2026-02-11 13:48:49 - Quant_Alpha - INFO -    Lookback Period: 22
+2026-02-11 13:48:50 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:50 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:50 - Quant_Alpha - INFO -       Range: [-5.5824, 10.6965]
+2026-02-11 13:48:50 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9936
+2026-02-11 13:48:50 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:50 - Quant_Alpha - INFO - 
+▶️  Testing: return_63d
+2026-02-11 13:48:50 - Quant_Alpha - INFO -    Description: 63-day return
+2026-02-11 13:48:50 - Quant_Alpha - INFO -    Lookback Period: 64
+2026-02-11 13:48:51 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:51 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:51 - Quant_Alpha - INFO -       Range: [-4.5366, 6.7554]
+2026-02-11 13:48:51 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9827
+2026-02-11 13:48:51 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:51 - Quant_Alpha - INFO - 
+▶️  Testing: return_126d
+2026-02-11 13:48:51 - Quant_Alpha - INFO -    Description: 126-day return
+2026-02-11 13:48:51 - Quant_Alpha - INFO -    Lookback Period: 127
+2026-02-11 13:48:53 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:53 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:53 - Quant_Alpha - INFO -       Range: [-3.6185, 6.8086]
+2026-02-11 13:48:53 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9663
+2026-02-11 13:48:53 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:53 - Quant_Alpha - INFO - 
+▶️  Testing: return_252d
+2026-02-11 13:48:53 - Quant_Alpha - INFO -    Description: 252-day return
+2026-02-11 13:48:53 - Quant_Alpha - INFO -    Lookback Period: 253
+2026-02-11 13:48:54 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:54 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:54 - Quant_Alpha - INFO -       Range: [-3.1803, 6.6609]
+2026-02-11 13:48:54 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9325
+2026-02-11 13:48:54 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:54 - Quant_Alpha - INFO - 
+▶️  Testing: mom_accel_10d
+2026-02-11 13:48:54 - Quant_Alpha - INFO -    Description: 10-day momentum acceleration
+2026-02-11 13:48:54 - Quant_Alpha - INFO -    Lookback Period: 20
+2026-02-11 13:48:55 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:55 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:55 - Quant_Alpha - INFO -       Range: [-9.0181, 6.4273]
+2026-02-11 13:48:55 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9938
+2026-02-11 13:48:55 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:55 - Quant_Alpha - INFO - 
+▶️  Testing: mom_accel_21d
+2026-02-11 13:48:55 - Quant_Alpha - INFO -    Description: 21-day momentum acceleration
+2026-02-11 13:48:55 - Quant_Alpha - INFO -    Lookback Period: 42
+2026-02-11 13:48:57 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:57 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:57 - Quant_Alpha - INFO -       Range: [-8.6743, 8.1526]
+2026-02-11 13:48:57 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9882
+2026-02-11 13:48:57 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:57 - Quant_Alpha - INFO - 
+▶️  Testing: rsi_14d
+2026-02-11 13:48:57 - Quant_Alpha - INFO -    Description: RSI 14
+2026-02-11 13:48:57 - Quant_Alpha - INFO -    Lookback Period: 42
+2026-02-11 13:48:59 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:48:59 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:48:59 - Quant_Alpha - INFO -       Range: [-4.7856, 6.0397]
+2026-02-11 13:48:59 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9956
+2026-02-11 13:48:59 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:48:59 - Quant_Alpha - INFO - 
+▶️  Testing: rsi_21
+2026-02-11 13:48:59 - Quant_Alpha - INFO -    Description: RSI 21
+2026-02-11 13:48:59 - Quant_Alpha - INFO -    Lookback Period: 63
+2026-02-11 13:49:00 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:49:00 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:49:00 - Quant_Alpha - INFO -       Range: [-4.6884, 5.5830]
+2026-02-11 13:49:00 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9938
+2026-02-11 13:49:00 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:49:00 - Quant_Alpha - INFO - 
+▶️  Testing: macd_12_26
+2026-02-11 13:49:00 - Quant_Alpha - INFO -    Description: MACD Main Line
+2026-02-11 13:49:00 - Quant_Alpha - INFO -    Lookback Period: 36
+2026-02-11 13:49:02 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:49:02 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:49:02 - Quant_Alpha - INFO -       Range: [-17.3485, 14.9047]
+2026-02-11 13:49:02 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9987
+2026-02-11 13:49:02 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:49:02 - Quant_Alpha - INFO - 
+▶️  Testing: macd_signal_12_26_9
+2026-02-11 13:49:02 - Quant_Alpha - INFO -    Description: MACD Signal Line
+2026-02-11 13:49:02 - Quant_Alpha - INFO -    Lookback Period: 45
+2026-02-11 13:49:03 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:49:03 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:49:03 - Quant_Alpha - INFO -       Range: [-18.4187, 14.9047]
+2026-02-11 13:49:03 - Quant_Alpha - INFO -       Mean ± Std: -0.0000 ± 0.9987
+2026-02-11 13:49:03 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:49:03 - Quant_Alpha - INFO - 
+▶️  Testing: stoch_k
+2026-02-11 13:49:03 - Quant_Alpha - INFO -    Description: Stochastic Oscillator %K
+2026-02-11 13:49:03 - Quant_Alpha - INFO -    Lookback Period: 14
+2026-02-11 13:49:05 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:49:05 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:49:05 - Quant_Alpha - INFO -       Range: [-5.9047, 12.3687]
+2026-02-11 13:49:05 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9959
+2026-02-11 13:49:05 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:49:05 - Quant_Alpha - INFO - 
+▶️  Testing: williams_r
+2026-02-11 13:49:05 - Quant_Alpha - INFO -    Description: Williams %R
+2026-02-11 13:49:05 - Quant_Alpha - INFO -    Lookback Period: 14
+2026-02-11 13:49:06 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:49:06 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:49:06 - Quant_Alpha - INFO -       Range: [-5.9047, 12.3687]
+2026-02-11 13:49:06 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9959
+2026-02-11 13:49:06 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:49:06 - Quant_Alpha - INFO - 
+▶️  Testing: tsi
+2026-02-11 13:49:06 - Quant_Alpha - INFO -    Description: True Strength Index
+2026-02-11 13:49:06 - Quant_Alpha - INFO -    Lookback Period: 38
+2026-02-11 13:49:08 - Quant_Alpha - INFO -    ✅ Calculation Successful
+2026-02-11 13:49:08 - Quant_Alpha - INFO -       Non-Null Values: 976,019 / 976,019 (100.0%)
+2026-02-11 13:49:08 - Quant_Alpha - INFO -       Range: [-4.6050, 7.1137]
+2026-02-11 13:49:08 - Quant_Alpha - INFO -       Mean ± Std: 0.0000 ± 0.9987
+2026-02-11 13:49:08 - Quant_Alpha - INFO -       Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+======================================================================
+2026-02-11 13:49:08 - Quant_Alpha - INFO - [STEP 4] TEST SUMMARY
+2026-02-11 13:49:08 - Quant_Alpha - INFO - ======================================================================
+2026-02-11 13:49:08 - Quant_Alpha - INFO - ✅ Successful: 15
+2026-02-11 13:49:08 - Quant_Alpha - INFO - ❌ Failed: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 📊 Success Rate: 100.0%
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+[STEP 5] Detailed Results Table
+2026-02-11 13:49:08 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+Factor Statistics Summary:
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+return_5d:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -7.146762
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 11.182500
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.997692
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+return_10d:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -6.001447
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 8.920486
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.996412
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+return_21d:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -5.582381
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 10.696542
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.993592
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+return_63d:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -4.536571
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 6.755369
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.982750
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+return_126d:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -3.618490
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 6.808577
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.966290
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+return_252d:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -3.180279
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 6.660942
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.932547
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+mom_accel_10d:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -9.018077
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 6.427336
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.993849
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+mom_accel_21d:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -8.674262
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 8.152592
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.988185
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+rsi_14d:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -4.785559
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 6.039749
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.995644
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+rsi_21:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -4.688424
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 5.582986
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.993849
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+macd_12_26:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -17.348470
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 14.904714
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.998730
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+macd_signal_12_26_9:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -18.418668
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 14.904714
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: -0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.998730
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+stoch_k:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -5.904659
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 12.368730
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.995858
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+williams_r:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -5.904659
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 12.368730
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.995858
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+tsi:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Min: -4.605007
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Max: 7.113704
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Mean: 0.000000
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Std: 0.998730
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Non-Null: 976,019
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Inf Values: 0
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+[STEP 6] Sample Data (First 5 rows of each ticker)
+2026-02-11 13:49:08 - Quant_Alpha - INFO - ----------------------------------------------------------------------
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+A:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Prices: 35.63 - 37.61
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+AAPL:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Prices: 21.75 - 23.75
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+ABBV:
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Dates: 2016-01-04 00:00:00 to 2016-01-08 00:00:00
+2026-02-11 13:49:08 - Quant_Alpha - INFO -   Prices: 36.42 - 37.71
+2026-02-11 13:49:08 - Quant_Alpha - INFO - 
+======================================================================
+2026-02-11 13:49:08 - Quant_Alpha - INFO - ✅ ALL TESTS PASSED - Momentum factors are working correctly!
