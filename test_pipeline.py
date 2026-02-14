@@ -32,8 +32,10 @@ import quant_alpha.features.technical.mean_reversion
 # --- IMPORT ALL FUNDAMENTAL FACTORS ---
 import quant_alpha.features.fundamental.value
 import quant_alpha.features.fundamental.quality
+import quant_alpha.features.fundamental.growth
 
 warnings.filterwarnings('ignore')
+
 
 
 class FactorTestSuite:
@@ -131,7 +133,7 @@ class FactorTestSuite:
     def test_fundamental_factors(self):
         """Test value factors with fundamental data"""
         logger.info("\n" + "="*80)
-        logger.info("TEST 2: FUNDAMENTAL FACTORS (Value & Quality)")
+        logger.info("TEST 2: FUNDAMENTAL FACTORS (Value, Quality, Growth)")
         logger.info("="*80)
         
         # Load fundamental data
@@ -361,7 +363,14 @@ class FactorTestSuite:
             logger.info(f"   Total Factors Tested: {len(results_df)}")
             logger.info(f"   All Non-Null: {len(results_df[results_df['non_null_pct'] == 100.0])}")
             logger.info(f"   Partial Data: {len(results_df[(results_df['non_null_pct'] > 0) & (results_df['non_null_pct'] < 100)])}")
-            logger.info(f"   All NaN: {len(results_df[results_df['non_null_pct'] == 0])}")
+            
+            all_nan_df = results_df[results_df['non_null_pct'] == 0]
+            logger.info(f"   All NaN: {len(all_nan_df)}")
+            if not all_nan_df.empty:
+                logger.info("\n   🔴 FAILED FACTORS (100% NaN) - CHECK MAPPINGS:")
+                for name in all_nan_df['factor'].tolist():
+                    logger.info(f"      - {name}")
+            
             logger.info(f"   Average Computation Time: {results_df['time_seconds'].mean():.4f}s")
             logger.info(f"   Total Time: {results_df['time_seconds'].sum():.2f}s")
             

@@ -228,6 +228,86 @@ class TSI(TechnicalFactor):
             return 100 * (smooth2 / denom)
         
         return df.groupby('ticker')['close'].transform(calc_tsi_transform).fillna(0)
+
+
+# ==================== 4. RATE OF CHANGE (ROC) ====================
+@FactorRegistry.register()
+class RateOfChange12D(TechnicalFactor):
+    """
+    Rate of Change (ROC) - Momentum oscillator
+    Formula: (Close - Close[n periods ago]) / Close[n periods ago]
+    """
+    def __init__(self, period=12):
+        super().__init__(name='roc_12d', description='Rate of Change 12D', lookback_period=period + 1)
+        self.period = period
+    
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        return df.groupby('ticker')['close'].pct_change(self.period)
+
+@FactorRegistry.register()
+class RateOfChange20D(TechnicalFactor):
+    """Rate of Change 20D"""
+    def __init__(self, period=20):
+        super().__init__(name='roc_20d', description='Rate of Change 20D', lookback_period=period + 1)
+        self.period = period
+    
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        return df.groupby('ticker')['close'].pct_change(self.period)
+
+
+# ==================== 5. AVERAGE DIRECTIONAL INDEX (ADX) ====================
+@FactorRegistry.register()
+class ADX14(TechnicalFactor):
+    """
+    Average Directional Index (ADX) - Measures trend strength (not direction)
+    Simplified version using rolling calculations
+    Range: 0-100 (higher = stronger trend)
+    """
+    def __init__(self, period=14):
+        super().__init__(name='adx_14', description='Average Directional Index 14', lookback_period=period * 2)
+        self.period = period
+    
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        def calc_adx_group(group):
+            # Work with the group data
+            high = group['high']
+            low = group['low']
+            close = group['close']
+            
+            # True Range
+            tr1 = high - low
+            tr2 = (high - close.shift()).abs()
+            tr3 = (low - close.shift()).abs()
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            
+            # Directional Movement
+            up = high.diff()
+            down = -low.diff()
+            
+            plus_dm = pd.Series(np.where((up > down) & (up > 0), up, 0), index=high.index)
+            minus_dm = pd.Series(np.where((down > up) & (down > 0), down, 0), index=high.index)
+            
+            # Smoothed values (SMA)
+            tr_sum = tr.rolling(self.period).sum()
+            plus_sum = plus_dm.rolling(self.period).sum()
+            minus_sum = minus_dm.rolling(self.period).sum()
+            
+            # DI values
+            plus_di = 100 * plus_sum / (tr_sum + EPS)
+            minus_di = 100 * minus_sum / (tr_sum + EPS)
+            
+            # DX
+            di_diff = (plus_di - minus_di).abs()
+            di_total = plus_di + minus_di
+            dx = 100 * di_diff / (di_total + EPS)
+            
+            # ADX (EMA of DX)
+            adx = dx.ewm(span=self.period, adjust=False).mean()
+            
+            return adx
         
+        return df.groupby('ticker', group_keys=False).apply(calc_adx_group)
+
+
 
      

@@ -256,3 +256,50 @@ class MoneyFlowIndex14(TechnicalFactor):
             return mfi
 
         return df.groupby('ticker', group_keys=False).apply(calc_mfi)
+
+
+# ==================== 8. ACCUMULATION/DISTRIBUTION LINE ====================
+
+@FactorRegistry.register()
+class AccumulationDistribution(TechnicalFactor):
+    """
+    Accumulation/Distribution Line (A/D Line)
+    Combines price position within bar + volume
+    More robust than OBV for catch reversals
+    
+    Formula:
+    1. Money Flow Multiplier (MFM) = [(Close - Low) - (High - Close)] / (High - Low)
+    2. Money Flow Volume (MFV) = MFM * Volume
+    3. A/D Line = Cumulative sum of MFV
+    """
+    def __init__(self):
+        super().__init__(name='ad_line', description='Accumulation/Distribution Line', lookback_period=2)
+    
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        def calc_ad(group):
+            high = group['high']
+            low = group['low']
+            close = group['close']
+            volume = group['volume']
+            
+            # 1. Money Flow Multiplier (MFM)
+            # Handles division by zero: if High = Low, MFM = 0
+            range_hl = high - low
+            mfm = np.where(
+                range_hl != 0,
+                ((close - low) - (high - close)) / range_hl,
+                0
+            )
+            
+            # 2. Money Flow Volume (MFV)
+            mfv = mfm * volume
+            
+            # 3. Cumulative A/D Line
+            ad_line = pd.Series(mfv).cumsum()
+            
+            # Normalize by dividing by volume scaling
+            ad_normalized = ad_line / (volume.sum() + EPS)
+            
+            return ad_normalized
+        
+        return df.groupby('ticker', group_keys=False).apply(calc_ad)

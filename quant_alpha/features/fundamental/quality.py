@@ -2,7 +2,7 @@
 Quality Factors (Production Grade - Verified Data Edition)
 Focus: Only factors supported by 'fundamentals.parquet'.
 
-Active Factors (11):
+Active Factors (10):
 1. ROE (Profitability)
 2. ROA (Profitability)
 3. Gross Margin (Profitability)
@@ -11,59 +11,16 @@ Active Factors (11):
 6. Current Ratio (Liquidity)
 7. Quick Ratio (Liquidity)
 8. Low Beta (Stability)
-9. Earnings Growth (Growth Quality)  
-10. Revenue Growth (Growth Quality)  
-11. FCF Conversion (Efficiency)      
+9. FCF Conversion (Efficiency)      
+10. Accruals Ratio (Earnings Quality)
 """
 
-import numpy as np
-import pandas as pd
-from typing import Optional
-from config.logging_config import logger
 from ..registry import FactorRegistry
+from .utils import SingleColumnFactor, RatioFactor, FundamentalColumnValidator
 from ..base import FundamentalFactor, EPS
-from .utils import FundamentalColumnValidator
-
-# ==================== SMART BASE CLASSES (The Engine) ====================
-
-class SingleColumnFactor(FundamentalFactor):
-    """
-    Parent class for factors that just retrieve 1 column.
-    Handles lookup, optional inversion (for Risk metrics), and logging.
-    """
-    def __init__(self, name: str, col_key: str, invert: bool = False, description: str = ""):
-        super().__init__(name=name, description=description)
-        self.col_key = col_key
-        self.invert = invert
-
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        col = FundamentalColumnValidator.find_column(df, self.col_key)
-        if col:
-            val = df[col]
-            return -1.0 * val if self.invert else val
-        
-        logger.warning(f"⚠️  {self.name}: Missing '{self.col_key}' column")
-        return pd.Series(np.nan, index=df.index)
-
-class RatioFactor(FundamentalFactor):
-    """
-    Parent class for factors calculated as A / B.
-    """
-    def __init__(self, name: str, num_key: str, den_key: str, description: str = ""):
-        super().__init__(name=name, description=description)
-        self.num_key = num_key
-        self.den_key = den_key
-
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        num = FundamentalColumnValidator.find_column(df, self.num_key)
-        den = FundamentalColumnValidator.find_column(df, self.den_key)
-        
-        if num and den:
-            # Handle division by zero safely using EPS (consistent with value.py)
-            return df[num] / (df[den] + EPS)
-            
-        logger.warning(f"⚠️  {self.name}: Missing {self.num_key} or {self.den_key}")
-        return pd.Series(np.nan, index=df.index)
+import pandas as pd
+import numpy as np
+from config.logging_config import logger
 
 # ==================== 1. PROFITABILITY ====================
 
@@ -82,6 +39,14 @@ class GrossMargin(SingleColumnFactor):
 @FactorRegistry.register()
 class OperatingMargin(SingleColumnFactor):
     def __init__(self): super().__init__('qual_op_margin', 'op_margin', description='Operating Margin')
+
+@FactorRegistry.register()
+class EBITDAMargin(SingleColumnFactor):
+    def __init__(self): super().__init__('qual_ebitda_margin', 'ebitda_margin', description='EBITDA Margin')
+
+@FactorRegistry.register()
+class ProfitMargin(SingleColumnFactor):
+    def __init__(self): super().__init__('qual_profit_margin', 'profit_margin', description='Net Profit Margin')
    
 # ==================== 2. SAFETY & LIQUIDITY ====================
 
@@ -105,20 +70,44 @@ class LowBeta(SingleColumnFactor):
     def __init__(self): 
         super().__init__('qual_low_beta', 'beta', invert=True, description='Inverted Beta')
 
-@FactorRegistry.register()
-class EarningsGrowth(SingleColumnFactor):
-    def __init__(self): super().__init__('qual_earnings_growth', 'earnings_growth', description='Earnings Growth')
-
-@FactorRegistry.register()
-class RevenueGrowth(SingleColumnFactor):
-    def __init__(self): super().__init__('qual_rev_growth', 'rev_growth', description='Revenue Growth')
-    
 # ==================== 4. EFFICIENCY (Derived) ====================
 
 @FactorRegistry.register()
 class FCFConversion(RatioFactor):
     def __init__(self): 
         super().__init__('qual_fcf_conversion', num_key='fcf', den_key='ocf', description='FCF / OCF')
+
+@FactorRegistry.register()
+class AccrualsRatio(FundamentalFactor):
+    """
+    Sloan Accruals Ratio = (Net Income - OCF) / Total Assets
+    Lower is Better (High Accruals = Low Quality Earnings).
+    We invert it so Higher Score = Better Quality.
+    """
+    def __init__(self):
+        super().__init__(name='qual_accruals', description='Inverted Accruals Ratio')
+
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        ocf_col = FundamentalColumnValidator.find_column(df, 'ocf')
+        roa_col = FundamentalColumnValidator.find_column(df, 'roa')
+        mc_col = FundamentalColumnValidator.find_column(df, 'market_cap')
+        pe_col = FundamentalColumnValidator.find_column(df, 'pe_ratio')
+        
+        if ocf_col and roa_col and mc_col and pe_col:
+            # 1. Derive Net Income = Market Cap / PE
+            net_income = df[mc_col] / (df[pe_col] + EPS)
+            
+            # 2. Derive Total Assets = Net Income / ROA
+            total_assets = net_income / (df[roa_col] + EPS)
+            
+            # 3. Accruals = (Net Income - OCF) / Assets
+            accruals_ratio = (net_income - df[ocf_col]) / (total_assets + EPS)
+            
+            # 4. Invert because Lower Accruals is Better
+            return -1.0 * accruals_ratio
+            
+        logger.warning(f"⚠️  {self.name}: Missing columns for Accruals")
+        return pd.Series(np.nan, index=df.index)
 
 
 
