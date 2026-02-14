@@ -17,6 +17,7 @@ COLUMN_MAPPINGS = {
     # Cash Flow
     'fcf':           ['fcf', 'free_cashflow', 'freeCashflow'],
     'ocf':           ['op_cashflow', 'operating_cashflow', 'ocf', 'totalCashFromOperatingActivities', 'operatingCashflow'],
+    'cash_equivalents': ['cashAndCashEquivalents', 'cash_and_cash_equivalents', 'cash', 'cash_equivalents'],
     
     # Dividends & Payouts
     'dividend':      ['dividend_yield', 'dividendYield', 'trailingAnnualDividendYield', 'dividendRate'],
@@ -41,6 +42,9 @@ COLUMN_MAPPINGS = {
     # Safety / Leverage
     'debt_equity':   ['debt_to_equity', 'debtToEquity'],
     'total_debt':    ['totalDebt', 'shortLongTermDebtTotal', 'total_debt'],
+    'total_cash':    ['totalCash', 'cash_and_cash_equivalents', 'total_cash', 'cashAndCashEquivalents'],
+    'interest_expense': ['interestExpense', 'interest_expense'],
+    'ebitda':        ['ebitda', 'earningsBeforeInterestTaxesDepreciationAmortization'],
     'current_ratio': ['current_ratio', 'currentRatio'],
     'quick_ratio':   ['quick_ratio', 'quickRatio'],
     

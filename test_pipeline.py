@@ -33,6 +33,7 @@ import quant_alpha.features.technical.mean_reversion
 import quant_alpha.features.fundamental.value
 import quant_alpha.features.fundamental.quality
 import quant_alpha.features.fundamental.growth
+import quant_alpha.features.fundamental.financial_health
 
 warnings.filterwarnings('ignore')
 
@@ -133,7 +134,7 @@ class FactorTestSuite:
     def test_fundamental_factors(self):
         """Test value factors with fundamental data"""
         logger.info("\n" + "="*80)
-        logger.info("TEST 2: FUNDAMENTAL FACTORS (Value, Quality, Growth)")
+        logger.info("TEST 2: FUNDAMENTAL FACTORS (Value, Quality, Growth, Health)")
         logger.info("="*80)
         
         # Load fundamental data
