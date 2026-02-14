@@ -11,6 +11,8 @@ import numpy as np
 from datetime import datetime
 from config.logging_config import logger
 
+EPS = 1e-9  # Centralized small epsilon to prevent division by zero
+
 class BaseFactor(ABC):
     """
     Abstract base class for all factors with built-in:
@@ -67,8 +69,11 @@ class BaseFactor(ABC):
             # logger.debug(f"Computing factor: {self.name}")
             factor_values = self.compute(data)
             
-            # Create Result DataFrame
-            result = data.copy()
+            # Create Result DataFrame (Optimized)
+            # Instead of copying the whole dataframe (data.copy()), we only keep 
+            # metadata columns needed for alignment.
+            meta_cols = [c for c in ['date', 'ticker'] if c in data.columns]
+            result = data[meta_cols].copy()
             
             # Handle if compute returns Series or DataFrame
             if isinstance(factor_values, pd.Series):
@@ -85,6 +90,11 @@ class BaseFactor(ABC):
                 result[self.name] = factor_values
             
             # Step 3: Apply transformations
+            # 3.0: Sanitize (Inf -> NaN) BEFORE processing to prevent corruption
+            if np.isinf(result[self.name]).any():
+                 # Optimization: Boolean indexing is faster than replace()
+                 result.loc[np.isinf(result[self.name]), self.name] = np.nan
+
             if self.winsorize_flag:
                 result[self.name] = self._winsorize(result[self.name])
             
@@ -98,7 +108,7 @@ class BaseFactor(ABC):
             self._validate_output(result)
             
             # Update statistics
-            self.computation_time = time.time() - start_time
+            self.computation_time = time.perf_counter() - start_time
             self.last_computed = datetime.now()
             self.num_computations += 1
             
@@ -146,33 +156,30 @@ class BaseFactor(ABC):
     
     def _cross_sectional_normalize(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Robust Z-Score Normalization per DATE.
-        Handles edge cases:
-        - Less than 3 stocks on a given date (return 0)
-        - Zero Variance (std=0) (return 0)
-        - NaN handling
+        Robust Z-Score Normalization per DATE (Vectorized).
+        Performance optimized: Avoids groupby().apply() or .transform(func).
         """
+        # Group by date
+        grouper = data.groupby('date')[self.name]
         
-        def robust_zscore(x):
-            # 1. Safety Check: Need at least 3 stocks to calculate meaningful stats
-            if len(x.dropna()) < 3:
-                return 0.0 
-            
-            std = x.std()
-            
-            # 2. Safety Check: Zero Variance or NaN Std
-            if std == 0 or pd.isna(std):
-                return 0.0
-                
-            # 3. Standard Z-Score
-            return (x - x.mean()) / std
-
-        # Apply robust transformation
-        # transform() keeps the index aligned, which is crucial
-        data[self.name] = data.groupby('date')[self.name].transform(robust_zscore)
+        # Calculate stats vectorized (aligned with original index)
+        means = grouper.transform('mean')
+        stds = grouper.transform('std')
+        counts = grouper.transform('count')
         
-        # Final cleanup ensures no NaNs slip through from the transform
-        data[self.name] = data[self.name].fillna(0.0)
+        # Create mask for valid calculations:
+        # 1. At least 3 items per date
+        # 2. Std deviation is not 0
+        valid_mask = (counts >= 3) & (stds > 0)
+        
+        # Initialize result with 0.0
+        z_scores = pd.Series(0.0, index=data.index, dtype='float64')
+        
+        # Compute Z-Score only for valid indices
+        if valid_mask.any():
+            z_scores.loc[valid_mask] = (data.loc[valid_mask, self.name] - means.loc[valid_mask]) / stds.loc[valid_mask]
+            
+        data[self.name] = z_scores
         
         return data
 
@@ -184,7 +191,15 @@ class TechnicalFactor(BaseFactor):
 
 class FundamentalFactor(BaseFactor):
     def __init__(self, name: str, description: str, **kwargs):
-        super().__init__(name, 'fundamental', description, lookback_period=None, **kwargs)
+        super().__init__(name, 'fundamental', description, lookback_period=None, normalize=False, winsorize=False, fill_na=False, **kwargs)
+    
+    def _validate_input(self, data: pd.DataFrame):
+        """
+        Override validation for fundamental factors.
+        Fundamental data is static (no date/ticker index required).
+        """
+        if data.empty:
+            raise ValueError(f"Empty DataFrame provided to {self.name}")
 
 class EarningsFactor(BaseFactor):
     def __init__(self, name: str, description: str, **kwargs):
