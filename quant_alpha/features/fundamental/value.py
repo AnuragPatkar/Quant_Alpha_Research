@@ -4,29 +4,7 @@ from typing import Optional, List
 from config.logging_config import logger
 from ..registry import FactorRegistry
 from ..base import FundamentalFactor, EPS
-from config.mappings import COLUMN_MAPPINGS
-
-# ==================== UTILITY: SMART COLUMN VALIDATOR ====================
-
-class ColumnValidator:
-    """
-    Centralized Knowledge Base for Column Mapping.
-    Matches 'fundamentals.parquet' schema.
-    """
-    # Mappings imported from config.mappings.py
-    
-    @classmethod
-    def find_column(cls, df: pd.DataFrame, key: str) -> Optional[str]:
-        # 1. Direct Check
-        if key in df.columns: return key
-        # 2. Mapping Check
-        if key in COLUMN_MAPPINGS:
-            for variant in COLUMN_MAPPINGS[key]:
-                if variant in df.columns: return variant
-        # 3. Case-Insensitive
-        col_map_lower = {c.lower(): c for c in df.columns}
-        if key.lower() in col_map_lower: return col_map_lower[key.lower()]
-        return None
+from .utils import FundamentalColumnValidator
     
 # ==================== PRICE YIELDS (Clean & Robust) ====================
 
@@ -37,13 +15,13 @@ class EarningsYield(FundamentalFactor):
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
         # Step 1: Try Direct Ratio (1/PE)
-        pe_col = ColumnValidator.find_column(df, 'pe_ratio')
+        pe_col = FundamentalColumnValidator.find_column(df, 'pe_ratio')
         if pe_col:
             return 1.0 / (df[pe_col] + EPS)
         
         # Step 2: Try Components (EPS / Price)
-        eps_col = ColumnValidator.find_column(df, 'eps')
-        price_col = ColumnValidator.find_column(df, 'price')
+        eps_col = FundamentalColumnValidator.find_column(df, 'eps')
+        price_col = FundamentalColumnValidator.find_column(df, 'price')
         
         if eps_col and price_col:
             return df[eps_col] / (df[price_col] + EPS)
@@ -58,7 +36,7 @@ class ForwardEarningsYield(FundamentalFactor):
         super().__init__(name='val_forward_earnings_yield', description='Forward Earnings Yield')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        pe_col = ColumnValidator.find_column(df, 'forward_pe')
+        pe_col = FundamentalColumnValidator.find_column(df, 'forward_pe')
         if pe_col:
             return 1.0 / (df[pe_col] + EPS)
             
@@ -71,12 +49,12 @@ class BookYield(FundamentalFactor):
         super().__init__(name='val_book_yield', description='Book Yield (1/PB)')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        pb_col = ColumnValidator.find_column(df, 'price_to_book')
+        pb_col = FundamentalColumnValidator.find_column(df, 'price_to_book')
         if pb_col:
             return 1.0 / (df[pb_col] + EPS)
             
-        bv_col = ColumnValidator.find_column(df, 'book_value')
-        price_col = ColumnValidator.find_column(df, 'price')
+        bv_col = FundamentalColumnValidator.find_column(df, 'book_value')
+        price_col = FundamentalColumnValidator.find_column(df, 'price')
         if bv_col and price_col:
              return df[bv_col] / (df[price_col] + EPS)
 
@@ -94,8 +72,8 @@ class FCFYield(FundamentalFactor):
         if 'freeCashFlowYield' in df.columns:
             return df['freeCashFlowYield']
 
-        fcf_col = ColumnValidator.find_column(df, 'fcf')
-        mkt_cap_col = ColumnValidator.find_column(df, 'market_cap')
+        fcf_col = FundamentalColumnValidator.find_column(df, 'fcf')
+        mkt_cap_col = FundamentalColumnValidator.find_column(df, 'market_cap')
         
         if fcf_col and mkt_cap_col:
             return df[fcf_col] / (df[mkt_cap_col] + EPS)
@@ -109,8 +87,8 @@ class OperatingCashFlowYield(FundamentalFactor):
         super().__init__(name='val_ocf_yield', description='OCF Yield')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        ocf_col = ColumnValidator.find_column(df, 'ocf')
-        mkt_cap_col = ColumnValidator.find_column(df, 'market_cap')
+        ocf_col = FundamentalColumnValidator.find_column(df, 'ocf')
+        mkt_cap_col = FundamentalColumnValidator.find_column(df, 'market_cap')
         
         if ocf_col and mkt_cap_col:
             return df[ocf_col] / (df[mkt_cap_col] + EPS)
@@ -124,7 +102,7 @@ class DividendYield(FundamentalFactor):
         super().__init__(name='val_div_yield', description='Dividend Yield')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        div_col = ColumnValidator.find_column(df, 'dividend')
+        div_col = FundamentalColumnValidator.find_column(df, 'dividend')
         if div_col:
             return df[div_col]
         return pd.Series(0.0, index=df.index)
@@ -137,7 +115,7 @@ class ShareholderYield(FundamentalFactor):
         super().__init__(name='val_shareholder_yield', description='Shareholder Yield')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        mkt_cap_col = ColumnValidator.find_column(df, 'market_cap')
+        mkt_cap_col = FundamentalColumnValidator.find_column(df, 'market_cap')
         
         if not mkt_cap_col:
             logger.warning(f"⚠️  {self.name}: Missing Market Cap")
@@ -145,11 +123,11 @@ class ShareholderYield(FundamentalFactor):
         
         total_payout = pd.Series(0.0, index=df.index)
         
-        buyback_col = ColumnValidator.find_column(df, 'buyback')
+        buyback_col = FundamentalColumnValidator.find_column(df, 'buyback')
         if buyback_col:
             total_payout += df[buyback_col].abs()
         
-        div_paid_col = ColumnValidator.find_column(df, 'dividends_paid')
+        div_paid_col = FundamentalColumnValidator.find_column(df, 'dividends_paid')
         if div_paid_col:
             total_payout += df[div_paid_col].abs()
         

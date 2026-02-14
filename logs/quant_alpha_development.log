@@ -7351,3 +7351,431 @@ SEVERITY BREAKDOWN:
 2026-02-14 14:11:51 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
 2026-02-14 14:11:51 - Quant_Alpha - INFO - ✅ Data is clean (0 NaNs).
 2026-02-14 14:11:51 - Quant_Alpha - INFO - ✅ Report saved to: data_columns.txt
+2026-02-14 14:54:42 - Quant_Alpha - INFO - ✅ FactorRegistry initialized with 70 factors.
+2026-02-14 14:54:42 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 14:54:42 - Quant_Alpha - INFO - TEST 1: PRICE-BASED TECHNICAL FACTORS
+2026-02-14 14:54:42 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 14:54:42 - Quant_Alpha - INFO - 
+[LOADING] Price Data...
+2026-02-14 14:54:43 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-14 14:54:43 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-14 14:54:43 - Quant_Alpha - INFO - ✅ Data is clean (0 NaNs).
+2026-02-14 14:54:43 - Quant_Alpha - INFO - ✅ Loaded 976,019 price records
+2026-02-14 14:54:43 - Quant_Alpha - INFO -    Tickers: 499
+2026-02-14 14:54:43 - Quant_Alpha - INFO -    Date Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-14 14:54:43 - Quant_Alpha - INFO - 
+[TESTING] 52 Technical Factors...
+2026-02-14 14:54:43 - Quant_Alpha - INFO - --------------------------------------------------------------------------------
+2026-02-14 14:54:44 - Quant_Alpha - INFO - ✅ return_21d                     | Mean:  0.0000 | Std:  0.9936 | Non-Null:100.00% | Time:  0.38s
+2026-02-14 14:54:44 - Quant_Alpha - INFO - ✅ return_5d                      | Mean:  0.0000 | Std:  0.9977 | Non-Null:100.00% | Time:  0.42s
+2026-02-14 14:54:44 - Quant_Alpha - INFO - ✅ return_63d                     | Mean:  0.0000 | Std:  0.9827 | Non-Null:100.00% | Time:  0.44s
+2026-02-14 14:54:44 - Quant_Alpha - INFO - ✅ return_10d                     | Mean:  0.0000 | Std:  0.9964 | Non-Null:100.00% | Time:  0.46s
+2026-02-14 14:54:45 - Quant_Alpha - INFO - ✅ return_126d                    | Mean:  0.0000 | Std:  0.9663 | Non-Null:100.00% | Time:  0.47s
+2026-02-14 14:54:45 - Quant_Alpha - INFO - ✅ return_252d                    | Mean:  0.0000 | Std:  0.9325 | Non-Null:100.00% | Time:  0.50s
+2026-02-14 14:54:45 - Quant_Alpha - INFO - ✅ mom_accel_21d                  | Mean:  0.0000 | Std:  0.9882 | Non-Null:100.00% | Time:  0.56s
+2026-02-14 14:54:45 - Quant_Alpha - INFO - ✅ mom_accel_10d                  | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  0.60s
+2026-02-14 14:54:47 - Quant_Alpha - INFO - ✅ macd_12_26                     | Mean:  0.0000 | Std:  0.9987 | Non-Null:100.00% | Time:  2.87s
+2026-02-14 14:54:48 - Quant_Alpha - INFO - ✅ rsi_14d                        | Mean:  0.0000 | Std:  0.9956 | Non-Null:100.00% | Time:  3.71s
+2026-02-14 14:54:48 - Quant_Alpha - INFO - ✅ rsi_21                         | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  3.74s
+2026-02-14 14:54:48 - Quant_Alpha - INFO - ✅ macd_signal_12_26_9            | Mean:  0.0000 | Std:  0.9987 | Non-Null:100.00% | Time:  3.64s
+2026-02-14 14:54:49 - Quant_Alpha - INFO - ✅ stoch_k                        | Mean:  0.0000 | Std:  0.9959 | Non-Null:100.00% | Time:  2.31s
+2026-02-14 14:54:49 - Quant_Alpha - INFO - ✅ volatility_5d                  | Mean:  0.0000 | Std:  0.9977 | Non-Null:100.00% | Time:  1.75s
+2026-02-14 14:54:50 - Quant_Alpha - INFO - ✅ williams_r                     | Mean:  0.0000 | Std:  0.9959 | Non-Null:100.00% | Time:  2.78s
+2026-02-14 14:54:51 - Quant_Alpha - INFO - ✅ tsi                            | Mean:  0.0000 | Std:  0.9987 | Non-Null:100.00% | Time:  3.44s
+2026-02-14 14:54:51 - Quant_Alpha - INFO - ✅ volatility_21d                 | Mean:  0.0000 | Std:  0.9936 | Non-Null:100.00% | Time:  1.82s
+2026-02-14 14:54:52 - Quant_Alpha - INFO - ✅ volatility_10d                 | Mean:  0.0000 | Std:  0.9964 | Non-Null:100.00% | Time:  2.06s
+2026-02-14 14:54:52 - Quant_Alpha - INFO - ✅ volatility_63d                 | Mean:  0.0000 | Std:  0.9827 | Non-Null:100.00% | Time:  1.73s
+2026-02-14 14:54:53 - Quant_Alpha - INFO - ✅ volatility_126d                | Mean:  0.0000 | Std:  0.9663 | Non-Null:100.00% | Time:  2.08s
+2026-02-14 14:54:53 - Quant_Alpha - INFO - ✅ gk_vol_21                      | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  1.95s
+2026-02-14 14:54:54 - Quant_Alpha - INFO - ✅ gk_val_63                      | Mean:  0.0000 | Std:  0.9830 | Non-Null:100.00% | Time:  1.95s
+2026-02-14 14:54:54 - Quant_Alpha - INFO - ✅ atr_14                         | Mean:  0.0000 | Std:  0.9956 | Non-Null:100.00% | Time:  1.52s
+2026-02-14 14:54:55 - Quant_Alpha - INFO - ✅ atr_21                         | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  2.00s
+2026-02-14 14:54:55 - Quant_Alpha - INFO - ✅ skew_21d                       | Mean:  0.0000 | Std:  0.9939 | Non-Null:100.00% | Time:  1.97s
+2026-02-14 14:54:56 - Quant_Alpha - INFO - ✅ kurt_21d                       | Mean:  0.0000 | Std:  0.9939 | Non-Null:100.00% | Time:  1.71s
+2026-02-14 14:54:56 - Quant_Alpha - INFO - ✅ vol_ratio_5_21                 | Mean:  0.0000 | Std:  0.9936 | Non-Null:100.00% | Time:  3.15s
+2026-02-14 14:54:57 - Quant_Alpha - INFO - ✅ dist_sma_10d                   | Mean:  0.0000 | Std:  0.9967 | Non-Null:100.00% | Time:  1.59s
+2026-02-14 14:54:57 - Quant_Alpha - INFO - ✅ dist_sma_50d                   | Mean:  0.0000 | Std:  0.9864 | Non-Null:100.00% | Time:  1.50s
+2026-02-14 14:54:57 - Quant_Alpha - INFO - ✅ dist_sma_21d                   | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  1.62s
+2026-02-14 14:54:57 - Quant_Alpha - INFO - ✅ dist_sma_200d                  | Mean:  0.0000 | Std:  0.9469 | Non-Null:100.00% | Time:  1.15s
+2026-02-14 14:54:59 - Quant_Alpha - INFO - ✅ zscore_10d                     | Mean:  0.0000 | Std:  0.9967 | Non-Null:100.00% | Time:  2.52s
+2026-02-14 14:55:00 - Quant_Alpha - INFO - ✅ zscore_63d                     | Mean:  0.0000 | Std:  0.9830 | Non-Null:100.00% | Time:  2.47s
+2026-02-14 14:55:00 - Quant_Alpha - INFO - ✅ zscore_21d                     | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  2.50s
+2026-02-14 14:55:00 - Quant_Alpha - INFO - ✅ mr_bb_pos                      | Mean:  0.0000 | Std:  0.9941 | Non-Null:100.00% | Time:  2.15s
+2026-02-14 14:55:02 - Quant_Alpha - INFO - ✅ mr_bb_width                    | Mean:  0.0000 | Std:  0.9941 | Non-Null:100.00% | Time:  2.51s
+2026-02-14 14:55:03 - Quant_Alpha - INFO - ✅ ma_cross_5_21                  | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  2.60s
+2026-02-14 14:55:04 - Quant_Alpha - INFO - ✅ price_pos_52w                  | Mean:  0.0000 | Std:  0.9368 | Non-Null:100.00% | Time:  2.36s
+2026-02-14 14:55:04 - Quant_Alpha - INFO - ✅ ma_cross_21_63                 | Mean:  0.0000 | Std:  0.9830 | Non-Null:100.00% | Time:  2.87s
+2026-02-14 14:55:07 - Quant_Alpha - INFO - ✅ vol_ma20_ratio                 | Mean:  0.0000 | Std:  0.9941 | Non-Null:100.00% | Time:  4.60s
+2026-02-14 14:55:12 - Quant_Alpha - INFO - ✅ vol_zscore_5d                  | Mean:  0.0000 | Std:  0.9979 | Non-Null:100.00% | Time:  9.39s
+2026-02-14 14:55:12 - Quant_Alpha - INFO - ✅ vol_zscore_21d                 | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  9.40s
+2026-02-14 14:55:13 - Quant_Alpha - INFO - ✅ turnover_rate                  | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  5.79s
+2026-02-14 14:55:17 - Quant_Alpha - INFO - ✅ amihud_63d                     | Mean:  0.0000 | Std:  0.9830 | Non-Null:100.00% | Time:  5.51s
+2026-02-14 14:55:18 - Quant_Alpha - INFO - ✅ cci_20                         | Mean:  0.0000 | Std:  0.9941 | Non-Null:100.00% | Time: 15.94s
+2026-02-14 14:55:18 - Quant_Alpha - INFO - ✅ obv_slope_10d                  | Mean:  0.0000 | Std:  0.9964 | Non-Null:100.00% | Time:  5.89s
+2026-02-14 14:55:19 - Quant_Alpha - INFO - ✅ vwap_dist_21d                  | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  7.07s
+2026-02-14 14:55:20 - Quant_Alpha - INFO - ✅ force_index_14d                | Mean:  0.0000 | Std:  0.9956 | Non-Null:100.00% | Time:  2.63s
+2026-02-14 14:55:21 - Quant_Alpha - INFO - ✅ emv_14                         | Mean:  0.0000 | Std:  0.9954 | Non-Null:100.00% | Time:  2.18s
+2026-02-14 14:55:21 - Quant_Alpha - INFO - ✅ cmf_21d                        | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  2.88s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ price_vol_corr_21d             | Mean:  0.0000 | Std:  0.9942 | Non-Null:100.00% | Time:  5.05s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ mfi_14                         | Mean:  0.0000 | Std:  0.9956 | Non-Null:100.00% | Time:  1.89s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - --------------------------------------------------------------------------------
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+📊 Technical Factors: 52/52 passed (100.0%)
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+================================================================================
+2026-02-14 14:55:22 - Quant_Alpha - INFO - TEST 2: FUNDAMENTAL FACTORS (Value & Quality)
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+[LOADING] Fundamental Data...
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 🚀 Loading from cache: fundamentals.parquet
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-14 14:55:22 - Quant_Alpha - WARNING - ⚠️ Data contains NaNs (Total Rows: 499):
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - beta: 9 missing (1.80%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - pe_ratio: 26 missing (5.21%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - peg_ratio: 499 missing (100.00%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - eps: 1 missing (0.20%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - roe: 30 missing (6.01%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - roa: 16 missing (3.21%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - op_margin: 1 missing (0.20%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - gross_margin: 1 missing (0.20%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - debt_to_equity: 53 missing (10.62%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - current_ratio: 35 missing (7.01%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - quick_ratio: 35 missing (7.01%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - fcf: 61 missing (12.22%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - op_cashflow: 56 missing (11.22%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - rev_growth: 3 missing (0.60%)
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    - earnings_growth: 57 missing (11.42%)
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ Loaded 499 fundamental records
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    Columns: ['sector', 'industry', 'market_cap', 'beta', 'pe_ratio']...
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+[TESTING] 18 Fundamental Factors...
+2026-02-14 14:55:22 - Quant_Alpha - INFO - --------------------------------------------------------------------------------
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ val_book_yield                 | Mean:  2.2803 | Std: 43.9855 | Non-Null:100.00% | Time:  0.00s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ val_earnings_yield             | Mean:  0.0439 | Std:  0.0251 | Non-Null: 94.79% | Time:  0.01s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ val_forward_earnings_yield     | Mean:  0.0616 | Std:  0.0326 | Non-Null:100.00% | Time:  0.00s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ val_ocf_yield                  | Mean:  0.0772 | Std:  0.0644 | Non-Null: 88.78% | Time:  0.00s
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    ⚠️  val_shareholder_yield: All values are identical (no variation)
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ val_shareholder_yield          | Mean:  0.0000 | Std:  0.0000 | Non-Null:100.00% | Time:  0.02s
+2026-02-14 14:55:22 - Quant_Alpha - WARNING -    ⚠️  val_div_yield: All values are identical (no variation)
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ val_div_yield                  | Mean:  0.0000 | Std:  0.0000 | Non-Null:100.00% | Time:  0.02s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_roa                       | Mean:  0.0690 | Std:  0.0541 | Non-Null: 96.79% | Time:  0.00s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ val_fcf_yield                  | Mean:  0.0373 | Std:  0.0866 | Non-Null: 87.78% | Time:  0.02s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_roe                       | Mean:  0.2628 | Std:  0.4042 | Non-Null: 93.99% | Time:  0.02s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_gross_margin              | Mean:  0.4535 | Std:  0.2321 | Non-Null: 99.80% | Time:  0.01s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_quick_ratio               | Mean:  0.9911 | Std:  0.8067 | Non-Null: 92.99% | Time:  0.00s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_low_beta                  | Mean: -0.9849 | Std:  0.4309 | Non-Null: 98.20% | Time:  0.00s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_current_ratio             | Mean:  1.5653 | Std:  1.1845 | Non-Null: 92.99% | Time:  0.01s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_rev_growth                | Mean:  0.1008 | Std:  0.1434 | Non-Null: 99.40% | Time:  0.00s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_op_margin                 | Mean:  0.2199 | Std:  0.1417 | Non-Null: 99.80% | Time:  0.02s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_low_leverage              | Mean:-132.2768 | Std:191.6961 | Non-Null: 89.38% | Time:  0.02s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_fcf_conversion            | Mean:  0.6541 | Std:  2.7007 | Non-Null: 87.78% | Time:  0.00s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ qual_earnings_growth           | Mean:  0.2205 | Std:  0.6744 | Non-Null: 88.58% | Time:  0.01s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - --------------------------------------------------------------------------------
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+📊 Fundamental Factors: 18/18 passed (100.0%)
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+================================================================================
+2026-02-14 14:55:22 - Quant_Alpha - INFO - FINAL TEST SUMMARY REPORT
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+📊 COMPUTATION STATISTICS:
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    Total Factors Tested: 70
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    All Non-Null: 56
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    Partial Data: 14
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    All NaN: 0
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    Average Computation Time: 2.2034s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    Total Time: 154.24s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+⚠️  DATA QUALITY METRICS:
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    Factors with Infinite Values: 0
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    Factors with High Skewness: 19
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    Factors with High Kurtosis: 27
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+⚠️  QUALITY ISSUES (2):
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    1. val_div_yield: All values are identical (no variation)
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    2. val_shareholder_yield: All values are identical (no variation)
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+================================================================================
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ OVERALL STATUS: PASSED (100.0%)
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ================================================================================
+
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+================================================================================
+2026-02-14 14:55:22 - Quant_Alpha - INFO - CODE QUALITY REVIEW - NEGATIVE POINTS
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ✅ No Critical Runtime Errors Detected.
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+🟡 DATA QUALITY WARNINGS:
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - val_div_yield: All values are identical (no variation)
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - val_shareholder_yield: All values are identical (no variation)
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+🟠 PERFORMANCE WARNINGS (Slow Factors > 1.0s):
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - macd_12_26: 2.87s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - rsi_14d: 3.71s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - rsi_21: 3.74s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - macd_signal_12_26_9: 3.64s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - stoch_k: 2.31s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - volatility_5d: 1.75s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - williams_r: 2.78s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - tsi: 3.44s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - volatility_21d: 1.82s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - volatility_10d: 2.06s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - volatility_63d: 1.73s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - volatility_126d: 2.08s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - gk_vol_21: 1.95s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - gk_val_63: 1.95s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - atr_14: 1.52s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - atr_21: 2.00s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - skew_21d: 1.97s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - kurt_21d: 1.71s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - vol_ratio_5_21: 3.15s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - dist_sma_10d: 1.59s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - dist_sma_50d: 1.50s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - dist_sma_21d: 1.62s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - dist_sma_200d: 1.15s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - zscore_10d: 2.52s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - zscore_63d: 2.47s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - zscore_21d: 2.50s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - mr_bb_pos: 2.15s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - mr_bb_width: 2.51s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - ma_cross_5_21: 2.60s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - price_pos_52w: 2.36s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - ma_cross_21_63: 2.87s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - vol_ma20_ratio: 4.60s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - vol_zscore_5d: 9.39s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - vol_zscore_21d: 9.40s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - turnover_rate: 5.79s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - amihud_63d: 5.51s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - cci_20: 15.94s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - obv_slope_10d: 5.89s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - vwap_dist_21d: 7.07s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - force_index_14d: 2.63s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - emv_14: 2.18s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - cmf_21d: 2.88s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - price_vol_corr_21d: 5.05s
+2026-02-14 14:55:22 - Quant_Alpha - INFO -    - mfi_14: 1.89s
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+================================================================================
+2026-02-14 14:55:22 - Quant_Alpha - INFO - TOP 5 RECOMMENDATIONS FOR IMPROVEMENT:
+2026-02-14 14:55:22 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 14:55:22 - Quant_Alpha - INFO - 
+1. Integration Testing: Update pipeline to use 'FactorRegistry.compute_all()' to verify parallel execution.
+2. Unit Testing: Add granular pytest cases for edge cases (empty data, single row).
+3. Config Management: Move 'COLUMN_MAPPINGS' from value.py to a central YAML config.
+4. Advanced Caching: Implement caching for shared rolling window calculations.
+5. CI/CD: Integrate this test suite into automated build pipelines.
+        
+2026-02-14 15:00:37 - Quant_Alpha - INFO - ✅ FactorRegistry initialized with 70 factors.
+2026-02-14 15:00:37 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 15:00:37 - Quant_Alpha - INFO - TEST 1: PRICE-BASED TECHNICAL FACTORS
+2026-02-14 15:00:37 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 15:00:37 - Quant_Alpha - INFO - 
+[LOADING] Price Data...
+2026-02-14 15:00:37 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-14 15:00:37 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-14 15:00:37 - Quant_Alpha - INFO - ✅ Data is clean (0 NaNs).
+2026-02-14 15:00:37 - Quant_Alpha - INFO - ✅ Loaded 976,019 price records
+2026-02-14 15:00:37 - Quant_Alpha - INFO -    Tickers: 499
+2026-02-14 15:00:37 - Quant_Alpha - INFO -    Date Range: 2016-01-04 00:00:00 to 2023-12-29 00:00:00
+2026-02-14 15:00:37 - Quant_Alpha - INFO - 
+[TESTING] 52 Technical Factors...
+2026-02-14 15:00:37 - Quant_Alpha - INFO - --------------------------------------------------------------------------------
+2026-02-14 15:00:38 - Quant_Alpha - INFO - ✅ return_5d                      | Mean:  0.0000 | Std:  0.9977 | Non-Null:100.00% | Time:  0.36s
+2026-02-14 15:00:38 - Quant_Alpha - INFO - ✅ return_21d                     | Mean:  0.0000 | Std:  0.9936 | Non-Null:100.00% | Time:  0.37s
+2026-02-14 15:00:38 - Quant_Alpha - INFO - ✅ return_63d                     | Mean:  0.0000 | Std:  0.9827 | Non-Null:100.00% | Time:  0.37s
+2026-02-14 15:00:39 - Quant_Alpha - INFO - ✅ return_10d                     | Mean:  0.0000 | Std:  0.9964 | Non-Null:100.00% | Time:  0.39s
+2026-02-14 15:00:39 - Quant_Alpha - INFO - ✅ return_126d                    | Mean:  0.0000 | Std:  0.9663 | Non-Null:100.00% | Time:  0.38s
+2026-02-14 15:00:39 - Quant_Alpha - INFO - ✅ return_252d                    | Mean:  0.0000 | Std:  0.9325 | Non-Null:100.00% | Time:  0.38s
+2026-02-14 15:00:40 - Quant_Alpha - INFO - ✅ mom_accel_21d                  | Mean:  0.0000 | Std:  0.9882 | Non-Null:100.00% | Time:  0.46s
+2026-02-14 15:00:40 - Quant_Alpha - INFO - ✅ mom_accel_10d                  | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  0.49s
+2026-02-14 15:00:41 - Quant_Alpha - INFO - ✅ macd_12_26                     | Mean:  0.0000 | Std:  0.9987 | Non-Null:100.00% | Time:  3.08s
+2026-02-14 15:00:42 - Quant_Alpha - INFO - ✅ rsi_14d                        | Mean:  0.0000 | Std:  0.9956 | Non-Null:100.00% | Time:  3.51s
+2026-02-14 15:00:42 - Quant_Alpha - INFO - ✅ rsi_21                         | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  3.52s
+2026-02-14 15:00:42 - Quant_Alpha - INFO - ✅ macd_signal_12_26_9            | Mean:  0.0000 | Std:  0.9987 | Non-Null:100.00% | Time:  3.85s
+2026-02-14 15:00:44 - Quant_Alpha - INFO - ✅ stoch_k                        | Mean:  0.0000 | Std:  0.9959 | Non-Null:100.00% | Time:  2.47s
+2026-02-14 15:00:44 - Quant_Alpha - INFO - ✅ volatility_5d                  | Mean:  0.0000 | Std:  0.9977 | Non-Null:100.00% | Time:  1.69s
+2026-02-14 15:00:44 - Quant_Alpha - INFO - ✅ williams_r                     | Mean:  0.0000 | Std:  0.9959 | Non-Null:100.00% | Time:  2.36s
+2026-02-14 15:00:45 - Quant_Alpha - INFO - ✅ tsi                            | Mean:  0.0000 | Std:  0.9987 | Non-Null:100.00% | Time:  2.89s
+2026-02-14 15:00:46 - Quant_Alpha - INFO - ✅ volatility_63d                 | Mean:  0.0000 | Std:  0.9827 | Non-Null:100.00% | Time:  1.88s
+2026-02-14 15:00:46 - Quant_Alpha - INFO - ✅ volatility_21d                 | Mean:  0.0000 | Std:  0.9936 | Non-Null:100.00% | Time:  2.09s
+2026-02-14 15:00:47 - Quant_Alpha - INFO - ✅ volatility_10d                 | Mean:  0.0000 | Std:  0.9964 | Non-Null:100.00% | Time:  2.14s
+2026-02-14 15:00:47 - Quant_Alpha - INFO - ✅ volatility_126d                | Mean:  0.0000 | Std:  0.9663 | Non-Null:100.00% | Time:  1.75s
+2026-02-14 15:00:48 - Quant_Alpha - INFO - ✅ gk_vol_21                      | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  1.74s
+2026-02-14 15:00:48 - Quant_Alpha - INFO - ✅ gk_val_63                      | Mean:  0.0000 | Std:  0.9830 | Non-Null:100.00% | Time:  1.79s
+2026-02-14 15:00:48 - Quant_Alpha - INFO - ✅ atr_14                         | Mean:  0.0000 | Std:  0.9956 | Non-Null:100.00% | Time:  1.84s
+2026-02-14 15:00:48 - Quant_Alpha - INFO - ✅ atr_21                         | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  1.64s
+2026-02-14 15:00:49 - Quant_Alpha - INFO - ✅ skew_21d                       | Mean:  0.0000 | Std:  0.9939 | Non-Null:100.00% | Time:  1.63s
+2026-02-14 15:00:50 - Quant_Alpha - INFO - ✅ dist_sma_10d                   | Mean:  0.0000 | Std:  0.9967 | Non-Null:100.00% | Time:  1.52s
+2026-02-14 15:00:50 - Quant_Alpha - INFO - ✅ kurt_21d                       | Mean:  0.0000 | Std:  0.9939 | Non-Null:100.00% | Time:  1.71s
+2026-02-14 15:00:51 - Quant_Alpha - INFO - ✅ vol_ratio_5_21                 | Mean:  0.0000 | Std:  0.9936 | Non-Null:100.00% | Time:  2.93s
+2026-02-14 15:00:51 - Quant_Alpha - INFO - ✅ dist_sma_200d                  | Mean:  0.0000 | Std:  0.9469 | Non-Null:100.00% | Time:  1.35s
+2026-02-14 15:00:51 - Quant_Alpha - INFO - ✅ dist_sma_50d                   | Mean:  0.0000 | Std:  0.9864 | Non-Null:100.00% | Time:  1.40s
+2026-02-14 15:00:51 - Quant_Alpha - INFO - ✅ dist_sma_21d                   | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  1.52s
+2026-02-14 15:00:53 - Quant_Alpha - INFO - ✅ zscore_10d                     | Mean:  0.0000 | Std:  0.9967 | Non-Null:100.00% | Time:  2.17s
+2026-02-14 15:00:53 - Quant_Alpha - INFO - ✅ zscore_63d                     | Mean:  0.0000 | Std:  0.9830 | Non-Null:100.00% | Time:  2.43s
+2026-02-14 15:00:54 - Quant_Alpha - INFO - ✅ mr_bb_pos                      | Mean:  0.0000 | Std:  0.9941 | Non-Null:100.00% | Time:  2.45s
+2026-02-14 15:00:54 - Quant_Alpha - INFO - ✅ zscore_21d                     | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  2.48s
+2026-02-14 15:00:55 - Quant_Alpha - INFO - ✅ mr_bb_width                    | Mean:  0.0000 | Std:  0.9941 | Non-Null:100.00% | Time:  2.16s
+2026-02-14 15:00:59 - Quant_Alpha - INFO - ✅ price_pos_52w                  | Mean:  0.0000 | Std:  0.9368 | Non-Null:100.00% | Time:  4.78s
+2026-02-14 15:00:59 - Quant_Alpha - INFO - ✅ ma_cross_21_63                 | Mean:  0.0000 | Std:  0.9830 | Non-Null:100.00% | Time:  4.80s
+2026-02-14 15:01:00 - Quant_Alpha - INFO - ✅ ma_cross_5_21                  | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  4.96s
+2026-02-14 15:01:04 - Quant_Alpha - INFO - ✅ vol_ma20_ratio                 | Mean:  0.0000 | Std:  0.9941 | Non-Null:100.00% | Time:  5.09s
+2026-02-14 15:01:08 - Quant_Alpha - INFO - ✅ vol_zscore_5d                  | Mean:  0.0000 | Std:  0.9979 | Non-Null:100.00% | Time:  9.24s
+2026-02-14 15:01:09 - Quant_Alpha - INFO - ✅ vol_zscore_21d                 | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  9.26s
+2026-02-14 15:01:10 - Quant_Alpha - INFO - ✅ turnover_rate                  | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  6.65s
+2026-02-14 15:01:11 - Quant_Alpha - INFO - ✅ cci_20                         | Mean:  0.0000 | Std:  0.9941 | Non-Null:100.00% | Time: 15.80s
+2026-02-14 15:01:12 - Quant_Alpha - INFO - ✅ amihud_63d                     | Mean:  0.0000 | Std:  0.9830 | Non-Null:100.00% | Time:  4.06s
+2026-02-14 15:01:13 - Quant_Alpha - INFO - ✅ obv_slope_10d                  | Mean:  0.0000 | Std:  0.9964 | Non-Null:100.00% | Time:  2.77s
+2026-02-14 15:01:13 - Quant_Alpha - INFO - ✅ vwap_dist_21d                  | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  5.40s
+2026-02-14 15:01:14 - Quant_Alpha - INFO - ✅ force_index_14d                | Mean:  0.0000 | Std:  0.9956 | Non-Null:100.00% | Time:  2.76s
+2026-02-14 15:01:15 - Quant_Alpha - INFO - ✅ emv_14                         | Mean:  0.0000 | Std:  0.9954 | Non-Null:100.00% | Time:  2.40s
+2026-02-14 15:01:16 - Quant_Alpha - INFO - ✅ cmf_21d                        | Mean:  0.0000 | Std:  0.9938 | Non-Null:100.00% | Time:  2.97s
+2026-02-14 15:01:16 - Quant_Alpha - INFO - ✅ price_vol_corr_21d             | Mean:  0.0000 | Std:  0.9942 | Non-Null:100.00% | Time:  5.62s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ mfi_14                         | Mean:  0.0000 | Std:  0.9956 | Non-Null:100.00% | Time:  2.40s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - --------------------------------------------------------------------------------
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+📊 Technical Factors: 52/52 passed (100.0%)
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+================================================================================
+2026-02-14 15:01:17 - Quant_Alpha - INFO - TEST 2: FUNDAMENTAL FACTORS (Value & Quality)
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+[LOADING] Fundamental Data...
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 🚀 Loading from cache: fundamentals.parquet
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-14 15:01:17 - Quant_Alpha - WARNING - ⚠️ Data contains NaNs (Total Rows: 499):
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - beta: 9 missing (1.80%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - pe_ratio: 26 missing (5.21%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - peg_ratio: 499 missing (100.00%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - eps: 1 missing (0.20%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - roe: 30 missing (6.01%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - roa: 16 missing (3.21%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - op_margin: 1 missing (0.20%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - gross_margin: 1 missing (0.20%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - debt_to_equity: 53 missing (10.62%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - current_ratio: 35 missing (7.01%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - quick_ratio: 35 missing (7.01%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - fcf: 61 missing (12.22%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - op_cashflow: 56 missing (11.22%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - rev_growth: 3 missing (0.60%)
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    - earnings_growth: 57 missing (11.42%)
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ Loaded 499 fundamental records
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    Columns: ['sector', 'industry', 'market_cap', 'beta', 'pe_ratio']...
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+[TESTING] 18 Fundamental Factors...
+2026-02-14 15:01:17 - Quant_Alpha - INFO - --------------------------------------------------------------------------------
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ val_earnings_yield             | Mean:  0.0439 | Std:  0.0251 | Non-Null: 94.79% | Time:  0.01s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ val_forward_earnings_yield     | Mean:  0.0616 | Std:  0.0326 | Non-Null:100.00% | Time:  0.01s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ val_book_yield                 | Mean:  2.2803 | Std: 43.9855 | Non-Null:100.00% | Time:  0.02s
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    ⚠️  val_div_yield: All values are identical (no variation)
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ val_div_yield                  | Mean:  0.0000 | Std:  0.0000 | Non-Null:100.00% | Time:  0.02s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ val_ocf_yield                  | Mean:  0.0772 | Std:  0.0644 | Non-Null: 88.78% | Time:  0.02s
+2026-02-14 15:01:17 - Quant_Alpha - WARNING -    ⚠️  val_shareholder_yield: All values are identical (no variation)
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ val_shareholder_yield          | Mean:  0.0000 | Std:  0.0000 | Non-Null:100.00% | Time:  0.01s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_roe                       | Mean:  0.2628 | Std:  0.4042 | Non-Null: 93.99% | Time:  0.01s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ val_fcf_yield                  | Mean:  0.0373 | Std:  0.0866 | Non-Null: 87.78% | Time:  0.03s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_roa                       | Mean:  0.0690 | Std:  0.0541 | Non-Null: 96.79% | Time:  0.01s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_current_ratio             | Mean:  1.5653 | Std:  1.1845 | Non-Null: 92.99% | Time:  0.01s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_gross_margin              | Mean:  0.4535 | Std:  0.2321 | Non-Null: 99.80% | Time:  0.02s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_low_leverage              | Mean:-132.2768 | Std:191.6961 | Non-Null: 89.38% | Time:  0.02s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_op_margin                 | Mean:  0.2199 | Std:  0.1417 | Non-Null: 99.80% | Time:  0.03s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_low_beta                  | Mean: -0.9849 | Std:  0.4309 | Non-Null: 98.20% | Time:  0.02s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_earnings_growth           | Mean:  0.2205 | Std:  0.6744 | Non-Null: 88.58% | Time:  0.02s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_quick_ratio               | Mean:  0.9911 | Std:  0.8067 | Non-Null: 92.99% | Time:  0.03s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_rev_growth                | Mean:  0.1008 | Std:  0.1434 | Non-Null: 99.40% | Time:  0.01s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ qual_fcf_conversion            | Mean:  0.6541 | Std:  2.7007 | Non-Null: 87.78% | Time:  0.01s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - --------------------------------------------------------------------------------
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+📊 Fundamental Factors: 18/18 passed (100.0%)
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+================================================================================
+2026-02-14 15:01:17 - Quant_Alpha - INFO - FINAL TEST SUMMARY REPORT
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+📊 COMPUTATION STATISTICS:
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    Total Factors Tested: 70
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    All Non-Null: 56
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    Partial Data: 14
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    All NaN: 0
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    Average Computation Time: 2.2058s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    Total Time: 154.41s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+⚠️  DATA QUALITY METRICS:
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    Factors with Infinite Values: 0
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    Factors with High Skewness: 19
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    Factors with High Kurtosis: 27
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+⚠️  QUALITY ISSUES (2):
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    1. val_shareholder_yield: All values are identical (no variation)
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    2. val_div_yield: All values are identical (no variation)
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+================================================================================
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ OVERALL STATUS: PASSED (100.0%)
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ================================================================================
+
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+================================================================================
+2026-02-14 15:01:17 - Quant_Alpha - INFO - CODE QUALITY REVIEW - NEGATIVE POINTS
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ✅ No Critical Runtime Errors Detected.
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+🟡 DATA QUALITY WARNINGS:
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - val_shareholder_yield: All values are identical (no variation)
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - val_div_yield: All values are identical (no variation)
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+🟠 PERFORMANCE WARNINGS (Slow Factors > 1.0s):
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - macd_12_26: 3.08s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - rsi_14d: 3.51s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - rsi_21: 3.52s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - macd_signal_12_26_9: 3.85s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - stoch_k: 2.47s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - volatility_5d: 1.69s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - williams_r: 2.36s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - tsi: 2.89s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - volatility_63d: 1.88s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - volatility_21d: 2.09s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - volatility_10d: 2.14s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - volatility_126d: 1.75s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - gk_vol_21: 1.74s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - gk_val_63: 1.79s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - atr_14: 1.84s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - atr_21: 1.64s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - skew_21d: 1.63s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - dist_sma_10d: 1.52s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - kurt_21d: 1.71s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - vol_ratio_5_21: 2.93s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - dist_sma_200d: 1.35s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - dist_sma_50d: 1.40s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - dist_sma_21d: 1.52s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - zscore_10d: 2.17s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - zscore_63d: 2.43s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - mr_bb_pos: 2.45s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - zscore_21d: 2.48s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - mr_bb_width: 2.16s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - price_pos_52w: 4.78s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - ma_cross_21_63: 4.80s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - ma_cross_5_21: 4.96s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - vol_ma20_ratio: 5.09s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - vol_zscore_5d: 9.24s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - vol_zscore_21d: 9.26s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - turnover_rate: 6.65s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - cci_20: 15.80s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - amihud_63d: 4.06s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - obv_slope_10d: 2.77s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - vwap_dist_21d: 5.40s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - force_index_14d: 2.76s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - emv_14: 2.40s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - cmf_21d: 2.97s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - price_vol_corr_21d: 5.62s
+2026-02-14 15:01:17 - Quant_Alpha - INFO -    - mfi_14: 2.40s
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+================================================================================
+2026-02-14 15:01:17 - Quant_Alpha - INFO - TOP 5 RECOMMENDATIONS FOR IMPROVEMENT:
+2026-02-14 15:01:17 - Quant_Alpha - INFO - ================================================================================
+2026-02-14 15:01:17 - Quant_Alpha - INFO - 
+1. Integration Testing: Update pipeline to use 'FactorRegistry.compute_all()' to verify parallel execution.
+2. Unit Testing: Add granular pytest cases for edge cases (empty data, single row).
+3. Config Management: Move 'COLUMN_MAPPINGS' from value.py to a central YAML config.
+4. Advanced Caching: Implement caching for shared rolling window calculations.
+5. CI/CD: Integrate this test suite into automated build pipelines.
+        
