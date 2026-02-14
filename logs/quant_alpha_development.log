@@ -7328,3 +7328,26 @@ SEVERITY BREAKDOWN:
 4. Advanced Caching: Implement caching for shared rolling window calculations.
 5. CI/CD: Integrate this test suite into automated build pipelines.
         
+2026-02-14 14:11:51 - Quant_Alpha - INFO - 🔍 INSPECTING DATA COLUMNS...
+2026-02-14 14:11:51 - Quant_Alpha - INFO - 🚀 Loading from cache: fundamentals.parquet
+2026-02-14 14:11:51 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-14 14:11:51 - Quant_Alpha - WARNING - ⚠️ Data contains NaNs (Total Rows: 499):
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - beta: 9 missing (1.80%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - pe_ratio: 26 missing (5.21%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - peg_ratio: 499 missing (100.00%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - eps: 1 missing (0.20%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - roe: 30 missing (6.01%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - roa: 16 missing (3.21%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - op_margin: 1 missing (0.20%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - gross_margin: 1 missing (0.20%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - debt_to_equity: 53 missing (10.62%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - current_ratio: 35 missing (7.01%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - quick_ratio: 35 missing (7.01%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - fcf: 61 missing (12.22%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - op_cashflow: 56 missing (11.22%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - rev_growth: 3 missing (0.60%)
+2026-02-14 14:11:51 - Quant_Alpha - WARNING -    - earnings_growth: 57 missing (11.42%)
+2026-02-14 14:11:51 - Quant_Alpha - INFO - 🚀 Loading from cache: sp500_prices.parquet
+2026-02-14 14:11:51 - Quant_Alpha - INFO - 🧐 Auditing Data Integrity...
+2026-02-14 14:11:51 - Quant_Alpha - INFO - ✅ Data is clean (0 NaNs).
+2026-02-14 14:11:51 - Quant_Alpha - INFO - ✅ Report saved to: data_columns.txt

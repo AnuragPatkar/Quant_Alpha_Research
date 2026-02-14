@@ -25,5 +25,26 @@ COLUMN_MAPPINGS = {
     
     # Misc
     'market_cap':    ['market_cap', 'marketCap', 'mkt_cap'],
-    'price':         ['currentPrice', 'close', 'adj_close']
+    'price':         ['currentPrice', 'close', 'adj_close'],
+
+    # ==================== QUALITY & SAFETY FACTORS ====================
+    # Returns (Profitability)
+    'roe':           ['roe', 'returnOnEquity'],
+    'roa':           ['roa', 'returnOnAssets'],
+    
+    # Margins
+    'gross_margin':  ['gross_margin', 'grossMargins'],
+    'op_margin':     ['op_margin', 'operatingMargins'],
+    
+    # Safety / Leverage
+    'debt_equity':   ['debt_to_equity', 'debtToEquity'],
+    'current_ratio': ['current_ratio', 'currentRatio'],
+    'quick_ratio':   ['quick_ratio', 'quickRatio'],
+    
+    # Stability / Risk
+    'beta':          ['beta', 'beta_5y'],
+    
+    # Growth (Bonus)
+    'earnings_growth': ['earnings_growth'],
+    'rev_growth':      ['rev_growth'],
 }
