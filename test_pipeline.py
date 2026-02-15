@@ -21,6 +21,7 @@ from config.logging_config import logger
 from config.settings import config
 from quant_alpha.data.price_loader import PriceLoader
 from quant_alpha.data.fundamental_loader import FundamentalLoader
+from quant_alpha.data.earnings_loader import EarningsLoader
 from quant_alpha.features.registry import FactorRegistry
 
 # --- IMPORT ALL TECHNICAL FACTORS (triggers @FactorRegistry.register decorators) ---
@@ -34,6 +35,8 @@ import quant_alpha.features.fundamental.value
 import quant_alpha.features.fundamental.quality
 import quant_alpha.features.fundamental.growth
 import quant_alpha.features.fundamental.financial_health
+import quant_alpha.features.earnings.surprises
+import quant_alpha.features.earnings.revision
 
 warnings.filterwarnings('ignore')
 
@@ -45,6 +48,7 @@ class FactorTestSuite:
     def __init__(self):
         self.price_df = None
         self.fundamental_df = None
+        self.earnings_df = None
         self.registry = FactorRegistry()
         self.results = []
         self.errors = []
@@ -221,6 +225,89 @@ class FactorTestSuite:
         if len(fund_factors) > 0:
             logger.info(f"\n📊 Fundamental Factors: {success}/{len(fund_factors)} passed ({success/len(fund_factors)*100:.1f}%)")
         return success == len(fund_factors) if fund_factors else True
+
+    def test_earnings_factors(self):
+        """Test earnings surprise factors"""
+        logger.info("\n" + "="*80)
+        logger.info("TEST 3: EARNINGS FACTORS (Surprise, Streak)")
+        logger.info("="*80)
+        
+        # Load earnings data
+        logger.info("\n[LOADING] Earnings Data...")
+        try:
+            earn_loader = EarningsLoader()
+            self.earnings_df = earn_loader.get_data()
+            
+            if self.earnings_df.empty:
+                logger.warning("⚠️  Earnings data is empty - earnings factors will be skipped")
+                return True
+            
+            logger.info(f"✅ Loaded {len(self.earnings_df):,} earnings records")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load earnings data: {e}")
+            self.errors.append(f"Earnings Loading: {str(e)}")
+            return False
+        
+        # Get earnings factors
+        earn_factors = {
+            k: v for k, v in self.registry.factors.items() 
+            if v.category == 'earnings'
+        }
+        
+        if not earn_factors:
+            logger.warning("⚠️  No earnings factors registered")
+            return True
+            
+        logger.info(f"\n[TESTING] {len(earn_factors)} Earnings Factors...")
+        logger.info("-"*80)
+        
+        def _test_single_earn(factor_name, factor, data):
+            try:
+                start = time.time()
+                result_df = factor.calculate(data)
+                elapsed = time.time() - start
+                return {'status': 'success', 'name': factor_name, 'factor': factor, 'df': result_df, 'elapsed': elapsed}
+            except Exception as e:
+                return {'status': 'error', 'name': factor_name, 'error': str(e)}
+
+        success = 0
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(_test_single_earn, k, v, self.earnings_df): k for k, v in earn_factors.items()}
+            
+            for future in as_completed(futures):
+                res = future.result()
+                factor_name = res['name']
+                
+                if res['status'] == 'success':
+                    try:
+                        factor = res['factor']
+                        result_df = res['df']
+                        elapsed = res['elapsed']
+                        
+                        factor_col = factor.name
+                        if factor_col not in result_df.columns:
+                            raise ValueError(f"Factor column '{factor_col}' not found")
+                        
+                        factor_series = result_df[factor_col]
+                        stats = self._calculate_stats(factor_series, factor_name, elapsed)
+                        self.results.append(stats)
+                        success += 1
+                        
+                        # Quality checks
+                        self._check_factor_quality(factor_series, factor_name)
+                        
+                        logger.info(f"✅ {factor_name:30s} | Mean:{stats['mean']:8.4f} | Std:{stats['std']:8.4f} | Non-Null:{stats['non_null_pct']:6.2f}% | Time:{elapsed:6.2f}s")
+                    except Exception as e:
+                        logger.error(f"❌ {factor_name:30s} | Error processing results: {str(e)[:60]}")
+                        self.errors.append(f"{factor_name}: {str(e)}")
+                else:
+                    logger.error(f"❌ {factor_name:30s} | Error: {res['error'][:60]}")
+                    self.errors.append(f"{factor_name}: {res['error']}")
+        
+        logger.info("-"*80)
+        logger.info(f"\n📊 Earnings Factors: {success}/{len(earn_factors)} passed ({success/len(earn_factors)*100:.1f}%)")
+        return success == len(earn_factors)
     
     def _calculate_stats(self, series: pd.Series, factor_name: str, elapsed_time: float) -> dict:
         """Calculate comprehensive statistics for a factor"""
@@ -413,12 +500,13 @@ def run_all_tests():
     # Run tests
     test1_passed = suite.test_price_factors()
     test2_passed = suite.test_fundamental_factors()
+    test3_passed = suite.test_earnings_factors()
     
     # Generate reports
     suite.generate_summary_report()
     suite.generate_code_review()
     
-    return test1_passed and test2_passed
+    return test1_passed and test2_passed and test3_passed
 
 
 if __name__ == "__main__":
