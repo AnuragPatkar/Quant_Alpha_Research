@@ -18,23 +18,25 @@ EPS = 1e-9
 # ==================== 1. STANDARD HISTORICAL VOLATILITY ====================
 # Logic: Rolling Standard Deviation of Returns * Sqrt(252)
 
-@FactorRegistry.register()
-class Volatility5D(TechnicalFactor):
-    def __init__(self, period=5):
-        super().__init__(name='volatility_5d', description='1 Week volatility', lookback_period=period + 1)
-        self.period = period
-    
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        return df.groupby('ticker')['close'].transform(lambda x: x.pct_change().rolling(window=self.period).std() * np.sqrt(252))
+# REMOVED: Volatility5D (too short-term noise)
+# @FactorRegistry.register()
+# class Volatility5D(TechnicalFactor):
+#     def __init__(self, period=5):
+#         super().__init__(name='volatility_5d', description='1 Week volatility', lookback_period=period + 1)
+#         self.period = period
+#     
+#     def compute(self, df: pd.DataFrame) -> pd.Series:
+#         return df.groupby('ticker')['close'].transform(lambda x: x.pct_change().rolling(window=self.period).std() * np.sqrt(252))
 
-@FactorRegistry.register()
-class Volatility10D(TechnicalFactor):
-    def __init__(self, period=10):
-        super().__init__(name='volatility_10d',description='2 Week volatility',lookback_period=period + 1)
-        self.period = period
-    
-    def compute(self, df: pd.DataFrame) -> pd.Series:       
-        return df.groupby('ticker')['close'].transform(lambda x: x.pct_change().rolling(window=self.period).std() * np.sqrt(252))
+# REMOVED: Volatility10D (redundant with Volatility21D)
+# @FactorRegistry.register()
+# class Volatility10D(TechnicalFactor):
+#     def __init__(self, period=10):
+#         super().__init__(name='volatility_10d',description='2 Week volatility',lookback_period=period + 1)
+#         self.period = period
+#     
+#     def compute(self, df: pd.DataFrame) -> pd.Series:       
+#         return df.groupby('ticker')['close'].transform(lambda x: x.pct_change().rolling(window=self.period).std() * np.sqrt(252))
 
 @FactorRegistry.register()
 class Volatility21D(TechnicalFactor):
@@ -56,15 +58,16 @@ class Volatility63D(TechnicalFactor):
             lambda x: x.pct_change().rolling(window=self.period).std() * np.sqrt(252)
         )
 
-@FactorRegistry.register()
-class Volatility126D(TechnicalFactor):
-    def __init__(self, period=126):
-        super().__init__(name='volatility_126d', description='6 Month Volatility', lookback_period=period + 1)
-        self.period = period
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        return df.groupby('ticker')['close'].transform(
-            lambda x: x.pct_change().rolling(window=self.period).std() * np.sqrt(252)
-        )
+# REMOVED: Volatility126D (less useful, regime-like)
+# @FactorRegistry.register()
+# class Volatility126D(TechnicalFactor):
+#     def __init__(self, period=126):
+#         super().__init__(name='volatility_126d', description='6 Month Volatility', lookback_period=period + 1)
+#         self.period = period
+#     def compute(self, df: pd.DataFrame) -> pd.Series:
+#         return df.groupby('ticker')['close'].transform(
+#             lambda x: x.pct_change().rolling(window=self.period).std() * np.sqrt(252)
+#         )
     
 # ==================== 2. GARMAN-KLASS VOLATILITY ====================
 # More efficient estimator using Open, High, Low, Close

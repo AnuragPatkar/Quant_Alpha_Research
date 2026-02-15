@@ -22,16 +22,17 @@ EPS = 1e-9  # Prevent Division by Zero
 
 # ==================== 1. VOLUME ANOMALIES (Z-SCORE) ====================
 
-@FactorRegistry.register()
-class VolumeZScore5D(TechnicalFactor):
-    def __init__(self, period=5):
-        super().__init__(name='vol_zscore_5d', description='Volume Z-Score 5D', lookback_period=period + 5)
-        self.period = period
-    
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        def calc_z(x):
-            return (x - x.rolling(window=self.period).mean()) / (x.rolling(window=self.period).std() + EPS)
-        return df.groupby('ticker')['volume'].transform(calc_z)
+# REMOVED: VolumeZScore5D (5-day volume z-score extremely noisy, unreliable)
+# @FactorRegistry.register()
+# class VolumeZScore5D(TechnicalFactor):
+#     def __init__(self, period=5):
+#         super().__init__(name='vol_zscore_5d', description='Volume Z-Score 5D', lookback_period=period + 5)
+#         self.period = period
+#     
+#     def compute(self, df: pd.DataFrame) -> pd.Series:
+#         def calc_z(x):
+#             return (x - x.rolling(window=self.period).mean()) / (x.rolling(window=self.period).std() + EPS)
+#         return df.groupby('ticker')['volume'].transform(calc_z)
 
 @FactorRegistry.register()
 class VolumeZScore21D(TechnicalFactor):
@@ -87,42 +88,44 @@ class Amihud63D(TechnicalFactor):
     
 # ==================== 4. SMART MONEY & INSTITUTIONAL ====================
 
-@FactorRegistry.register()
-class VWAPDistance(TechnicalFactor):
-    """Distance from 21-Day Rolling VWAP"""
-    def __init__(self, period=21):
-        super().__init__(name='vwap_dist_21d', description='Distance from 21D VWAP', lookback_period=period + 5)
-        self.period = period
-
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        def calc_vwap_dist(x):
-            pv = x['close'] * x['volume']
-            cum_pv = pv.rolling(window=self.period).sum()
-            cum_vol = x['volume'].rolling(window=self.period).sum()
-            vwap = cum_pv / (cum_vol + EPS)
-            return (x['close'] / vwap) - 1.0
-
-        return df.groupby('ticker', group_keys=False).apply(calc_vwap_dist)
-
-@FactorRegistry.register()
-class OnBalanceVolumeSlope(TechnicalFactor):
-    """OBV Slope (Rate of Change)"""
-    def __init__(self, period=10):
-        super().__init__(name='obv_slope_10d', description='OBV Rate of Change 10D', lookback_period=period + 5)
-        self.period = period
-
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        def calc_obv_slope(x):
-            change = x['close'].diff()
-            direction = np.where(change > 0, 1, -1)
-            direction[change == 0] = 0
-            
-            obv = (direction * x['volume']).cumsum()
-            avg_vol = x['volume'].rolling(window=self.period).mean()
-            slope = obv.diff(self.period) / (avg_vol * self.period + EPS)
-            return slope
-
-        return df.groupby('ticker', group_keys=False).apply(calc_obv_slope)
+# REMOVED: VWAPDistance (redundant with price-based technical signals)
+# @FactorRegistry.register()
+# class VWAPDistance(TechnicalFactor):
+#     """Distance from 21-Day Rolling VWAP"""
+#     def __init__(self, period=21):
+#         super().__init__(name='vwap_dist_21d', description='Distance from 21D VWAP', lookback_period=period + 5)
+#         self.period = period
+# 
+#     def compute(self, df: pd.DataFrame) -> pd.Series:
+#         def calc_vwap_dist(x):
+#             pv = x['close'] * x['volume']
+#             cum_pv = pv.rolling(window=self.period).sum()
+#             cum_vol = x['volume'].rolling(window=self.period).sum()
+#             vwap = cum_pv / (cum_vol + EPS)
+#             return (x['close'] / vwap) - 1.0
+# 
+#         return df.groupby('ticker', group_keys=False).apply(calc_vwap_dist)
+# 
+# REMOVED: OnBalanceVolumeSlope (OBV is lagging indicator, marginal predictive power)
+# @FactorRegistry.register()
+# class OnBalanceVolumeSlope(TechnicalFactor):
+#     """OBV Slope (Rate of Change)"""
+#     def __init__(self, period=10):
+#         super().__init__(name='obv_slope_10d', description='OBV Rate of Change 10D', lookback_period=period + 5)
+#         self.period = period
+# 
+#     def compute(self, df: pd.DataFrame) -> pd.Series:
+#         def calc_obv_slope(x):
+#             change = x['close'].diff()
+#             direction = np.where(change > 0, 1, -1)
+#             direction[change == 0] = 0
+#             
+#             obv = (direction * x['volume']).cumsum()
+#             avg_vol = x['volume'].rolling(window=self.period).mean()
+#             slope = obv.diff(self.period) / (avg_vol * self.period + EPS)
+#             return slope
+# 
+#         return df.groupby('ticker', group_keys=False).apply(calc_obv_slope)
     
 # ==================== 5. CORRELATION ====================
 
@@ -165,32 +168,33 @@ class ForceIndex14D(TechnicalFactor):
 
         return df.groupby('ticker', group_keys=False).apply(calc_force)
 
-@FactorRegistry.register()
-class EaseOfMovement14(TechnicalFactor):
-    """
-    Ease of Movement (EMV)
-    High EMV = Price rising on low volume (Low resistance).
-    """
-    def __init__(self, period=14):
-        super().__init__(name='emv_14', description='Ease of Movement 14D', lookback_period=period + 5)
-        self.period = period
-
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        def calc_emv(x):
-            # Midpoint Move
-            high_low_mid = (x['high'] + x['low']) / 2
-            mid_move = high_low_mid.diff()
-            
-            # Box Ratio: Volume / Range
-            box_ratio = (x['volume'] + EPS) / ((x['high'] - x['low']) + EPS)
-            
-            # Raw EMV
-            emv = mid_move / box_ratio
-            
-            # Smoothed EMV
-            return emv.rolling(window=self.period).mean() * 1e8 # Scale up
-
-        return df.groupby('ticker', group_keys=False).apply(calc_emv)
+# REMOVED: EaseOfMovement14 (derivative of ATR/price range, conceptually covered by ATR)
+# @FactorRegistry.register()
+# class EaseOfMovement14(TechnicalFactor):
+#     """
+#     Ease of Movement (EMV)
+#     High EMV = Price rising on low volume (Low resistance).
+#     """
+#     def __init__(self, period=14):
+#         super().__init__(name='emv_14', description='Ease of Movement 14D', lookback_period=period + 5)
+#         self.period = period
+# 
+#     def compute(self, df: pd.DataFrame) -> pd.Series:
+#         def calc_emv(x):
+#             # Midpoint Move
+#             high_low_mid = (x['high'] + x['low']) / 2
+#             mid_move = high_low_mid.diff()
+#             
+#             # Box Ratio: Volume / Range
+#             box_ratio = (x['volume'] + EPS) / ((x['high'] - x['low']) + EPS)
+#             
+#             # Raw EMV
+#             emv = mid_move / box_ratio
+#             
+#             # Smoothed EMV
+#             return emv.rolling(window=self.period).mean() * 1e8 # Scale up
+# 
+#         return df.groupby('ticker', group_keys=False).apply(calc_emv)
                                                         
 # ==================== 7. CLASSIC FLOW OSCILLATORS ====================
 

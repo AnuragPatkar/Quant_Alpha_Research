@@ -3,7 +3,7 @@ Technical Features Module
 Exposes sub-modules to ensure FactorRegistry auto-discovery works.
 """
 
-# Momentum Factors
+# Momentum Factors (15 total)
 from .momentum import (
     Return5D, Return10D, Return21D, Return63D, Return126D, Return252D,
     MomentumAcceleration10D, MomentumAcceleration21D,
@@ -12,13 +12,17 @@ from .momentum import (
     StochasticOscillator,
     WilliamsR,
     TSI,
-    RateOfChange12D, RateOfChange20D,
+    # Removed RateOfChange12D (redundant with RateOfChange20D)
+    RateOfChange20D,
     ADX14
 )
 
-# Volatility Factors
+# Volatility Factors (10 total)
 from .volatility import (
-    Volatility5D, Volatility10D, Volatility21D, Volatility63D, Volatility126D,
+    # Removed Volatility5D (too short-term, noisy)
+    # Removed Volatility10D (redundant with Volatility21D)
+    Volatility21D, Volatility63D,
+    # Removed Volatility126D (less useful, regime-like)
     GKVolatility21D, GKVolatility63D,
     ATR14, ATR21,
     VolatilityRatio,
@@ -26,34 +30,37 @@ from .volatility import (
     Kurtosis21D
 )
 
-# Mean Reversion Factors
+# Mean Reversion Factors (12 total)
 from .mean_reversion import (
-    DistSMA10D, DistSMA21D, DistSMA50D, DistSMA200D,
-    ZScore10D, ZScore21D, ZScore63D,
+    # Removed DistSMA10D (too short-term, redundant with DistSMA21D)
+    DistSMA21D, DistSMA50D, DistSMA200D,
+    # Removed ZScore10D (too short-term, redundant with ZScore21D)
+    ZScore21D, ZScore63D,
     MeanRevBBPosition, MeanRevBBWidth,
     MACrossover5_21, MACrossover21_63,
     PriceToHighLow52W,
     CCI
 )
 
-# Volume Factors
+# Volume Factors (9 total)
 from .volume import (
-    VolumeZScore5D, VolumeZScore21D,
+    # Removed VolumeZScore5D (too short-term, noisy)
+    VolumeZScore21D,
     VolumeMA20Ratio,
     TurnoverRate,
     Amihud63D,
-    VWAPDistance,
-    OnBalanceVolumeSlope,
+    # Removed VWAPDistance (redundant with price-based signals)
+    # Removed OnBalanceVolumeSlope (OBV is lagging indicator)
     PriceVolumeCorr21D,
     ForceIndex14D,
-    EaseOfMovement14,
+    # Removed EaseOfMovement14 (derivative of ATR, somewhat redundant)
     ChaikinMoneyFlow21D,
     MoneyFlowIndex14,
     AccumulationDistribution
 )
 
 __all__ = [
-    # Momentum
+    # Momentum (15 factors)
     'Return5D', 'Return10D', 'Return21D', 'Return63D', 'Return126D', 'Return252D',
     'MomentumAcceleration10D', 'MomentumAcceleration21D',
     'RSI14D', 'RSI21',
@@ -61,35 +68,32 @@ __all__ = [
     'StochasticOscillator',
     'WilliamsR',
     'TSI',
-    'RateOfChange12D', 'RateOfChange20D',
+    'RateOfChange20D',
     'ADX14',
     
-    # Volatility
-    'Volatility5D', 'Volatility10D', 'Volatility21D', 'Volatility63D', 'Volatility126D',
+    # Volatility (10 factors)
+    'Volatility21D', 'Volatility63D',
     'GKVolatility21D', 'GKVolatility63D',
     'ATR14', 'ATR21',
     'VolatilityRatio',
     'Skewness21D',
     'Kurtosis21D',
     
-    # Mean Reversion
-    'DistSMA10D', 'DistSMA21D', 'DistSMA50D', 'DistSMA200D',
-    'ZScore10D', 'ZScore21D', 'ZScore63D',
+    # Mean Reversion (12 factors)
+    'DistSMA21D', 'DistSMA50D', 'DistSMA200D',
+    'ZScore21D', 'ZScore63D',
     'MeanRevBBPosition', 'MeanRevBBWidth',
     'MACrossover5_21', 'MACrossover21_63',
     'PriceToHighLow52W',
     'CCI',
     
-    # Volume
-    'VolumeZScore5D', 'VolumeZScore21D',
+    # Volume (9 factors)
+    'VolumeZScore21D',
     'VolumeMA20Ratio',
     'TurnoverRate',
     'Amihud63D',
-    'VWAPDistance',
-    'OnBalanceVolumeSlope',
     'PriceVolumeCorr21D',
     'ForceIndex14D',
-    'EaseOfMovement14',
     'ChaikinMoneyFlow21D',
     'MoneyFlowIndex14',
     'AccumulationDistribution'

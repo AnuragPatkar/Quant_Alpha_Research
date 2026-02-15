@@ -208,3 +208,24 @@ class EarningsFactor(BaseFactor):
 class AlternativeFactor(BaseFactor):
     def __init__(self, name: str, description: str, **kwargs):
         super().__init__(name, 'alternative', description, lookback_period=None, **kwargs)
+    
+    def _validate_input(self, data: pd.DataFrame):
+        """
+        Override validation for alternative factors.
+        Alternative data is macro-level (no ticker required).
+        """
+        if data.empty:
+            raise ValueError(f"Empty DataFrame provided to {self.name}")
+
+class CompositeFactor(BaseFactor):
+    """Composite factors blend multiple signal types for regime-aware trading"""
+    def __init__(self, name: str, description: str, **kwargs):
+        super().__init__(name, 'composite', description, lookback_period=None, **kwargs)
+    
+    def _validate_input(self, data: pd.DataFrame):
+        """
+        Override validation for composite factors.
+        Composite data may mix macro-level (no ticker) with ticker-level data.
+        """
+        if data.empty:
+            raise ValueError(f"Empty DataFrame provided to {self.name}")

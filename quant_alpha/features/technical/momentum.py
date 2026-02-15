@@ -231,18 +231,19 @@ class TSI(TechnicalFactor):
 
 
 # ==================== 4. RATE OF CHANGE (ROC) ====================
-@FactorRegistry.register()
-class RateOfChange12D(TechnicalFactor):
-    """
-    Rate of Change (ROC) - Momentum oscillator
-    Formula: (Close - Close[n periods ago]) / Close[n periods ago]
-    """
-    def __init__(self, period=12):
-        super().__init__(name='roc_12d', description='Rate of Change 12D', lookback_period=period + 1)
-        self.period = period
-    
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        return df.groupby('ticker')['close'].pct_change(self.period)
+# REMOVED: RateOfChange12D (non-standard lookback, subsumed by RateOfChange20D)
+# @FactorRegistry.register()
+# class RateOfChange12D(TechnicalFactor):
+#     """
+#     Rate of Change (ROC) - Momentum oscillator
+#     Formula: (Close - Close[n periods ago]) / Close[n periods ago]
+#     """
+#     def __init__(self, period=12):
+#         super().__init__(name='roc_12d', description='Rate of Change 12D', lookback_period=period + 1)
+#         self.period = period
+#     
+#     def compute(self, df: pd.DataFrame) -> pd.Series:
+#         return df.groupby('ticker')['close'].pct_change(self.period)
 
 @FactorRegistry.register()
 class RateOfChange20D(TechnicalFactor):

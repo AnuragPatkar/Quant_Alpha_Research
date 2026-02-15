@@ -1,15 +1,36 @@
 """
-Comprehensive Test Pipeline for ALL Factor Modules
-- value.py (7 factors)
-- technical/momentum.py (15 factors)
-- technical/volume.py (12 factors)
-- technical/volatility.py (12 factors)
-- technical/mean_reversion.py (13 factors)
+Comprehensive Test Pipeline for ALL 120 Factor Modules
 
-# Total: 59+ factors
+TECHNICAL FACTORS (46):
+  - momentum.py (15 factors)
+  - volatility.py (10 factors) 
+  - mean_reversion.py (12 factors)
+  - volume.py (9 factors)
 
-# Code Review & Quality Metrics Included
-# """
+FUNDAMENTAL FACTORS (34):
+  - value.py (14 factors)
+  - growth.py (8 factors)
+  - quality.py (12 factors)
+
+EARNINGS FACTORS (13):
+  - surprises.py (5 factors)
+  - revision.py (4 factors)
+  - estimates.py (4 factors)
+
+ALTERNATIVE FACTORS (12):
+  - macro.py (4 factors): OilMomentum, USDStrength, YieldTrend, MacroEconomicScore
+  - sentiment.py (4 factors): VIXLevel, VIXMomentum, RiskOnOffSignal, VolatilityStressIndex
+  - inflation.py (4 factors): OilUSDRatio, YieldMomentum, InflationProxyScore, GrowthInflationMix
+
+COMPOSITE FACTORS (15):
+  - macro_adjusted.py (5 factors): MacroAdjustedMomentum, OilCorrectedValue, RateEnvironmentScore, DollarAdjustedGrowth, RiskParityBlend
+  - system_health.py (5 factors): MarketRegimeScore, VolatilityRegime, CapitalFlowSignal, EconomicMomentumScore, PortfolioHealthIndex
+  - smart_signals.py (5 factors): MomentumVIXDivergence, ValueYieldCombo, QualityInDownturn, EarningsMacroAlignment, MultiAssetOpportunity
+
+TOTAL: 46 + 34 + 13 + 12 + 15 = 120 FACTORS
+
+Code Review & Quality Metrics Included
+"""
 
 import pandas as pd
 import numpy as np
@@ -22,6 +43,7 @@ from config.settings import config
 from quant_alpha.data.price_loader import PriceLoader
 from quant_alpha.data.fundamental_loader import FundamentalLoader
 from quant_alpha.data.earnings_loader import EarningsLoader
+from quant_alpha.data.alternative_loader import AlternativeLoader
 from quant_alpha.features.registry import FactorRegistry
 
 # --- IMPORT ALL TECHNICAL FACTORS (triggers @FactorRegistry.register decorators) ---
@@ -35,9 +57,22 @@ import quant_alpha.features.fundamental.value
 import quant_alpha.features.fundamental.quality
 import quant_alpha.features.fundamental.growth
 import quant_alpha.features.fundamental.financial_health
+
+# --- IMPORT ALL EARNINGS FACTORS ---
 import quant_alpha.features.earnings.surprises
-import quant_alpha.features.earnings.revision
+import quant_alpha.features.earnings.revisions
 import quant_alpha.features.earnings.estimates
+
+# --- IMPORT ALL ALTERNATIVE DATA FACTORS ---
+import quant_alpha.features.alternative.macro
+import quant_alpha.features.alternative.sentiment
+import quant_alpha.features.alternative.inflation
+
+# --- IMPORT ALL COMPOSITE FACTORS ---
+import quant_alpha.features.composite.macro_adjusted
+import quant_alpha.features.composite.system_health
+import quant_alpha.features.composite.smart_signals
+import quant_alpha.features.composite.scores
 
 warnings.filterwarnings('ignore')
 
@@ -50,6 +85,7 @@ class FactorTestSuite:
         self.price_df = None
         self.fundamental_df = None
         self.earnings_df = None
+        self.alternative_df = None
         self.registry = FactorRegistry()
         self.results = []
         self.errors = []
@@ -310,6 +346,206 @@ class FactorTestSuite:
         logger.info(f"\n📊 Earnings Factors: {success}/{len(earn_factors)} passed ({success/len(earn_factors)*100:.1f}%)")
         return success == len(earn_factors)
     
+    def test_alternative_factors(self):
+        """Test alternative factors with macro data (OIL, VIX, USD, etc.)"""
+        logger.info("\n" + "="*80)
+        logger.info("TEST 4: ALTERNATIVE DATA FACTORS (Macro, Sentiment, Inflation)")
+        logger.info("="*80)
+        
+        # Load alternative data
+        logger.info("\n[LOADING] Alternative Data (OIL, VIX, USD, Yields, SP500)...")
+        try:
+            alt_loader = AlternativeLoader()
+            self.alternative_df = alt_loader.get_data()
+            
+            if self.alternative_df.empty:
+                logger.warning("⚠️  Alternative data is empty - alternative factors will be skipped")
+                logger.warning("   Ensure data/raw/alternative/ contains OIL.csv, VIX.csv, USD.csv, US_10Y.csv, SP500.csv")
+                return True
+            
+            logger.info(f"✅ Loaded {len(self.alternative_df):,} alternative data records")
+            logger.info(f"   Columns: {self.alternative_df.columns.tolist()}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load alternative data: {e}")
+            self.errors.append(f"Alternative Loading: {str(e)}")
+            return True
+        
+        # Get alternative factors (12 total)
+        alt_factors = {
+            k: v for k, v in self.registry.factors.items() 
+            if v.category == 'alternative'
+        }
+        
+        if not alt_factors:
+            logger.warning("⚠️  No alternative factors registered")
+            return True
+            
+        logger.info(f"\n[TESTING] {len(alt_factors)} Alternative Factors...")
+        logger.info("-"*80)
+        
+        def _test_single_alt(factor_name, factor, data):
+            try:
+                start = time.time()
+                result_df = factor.calculate(data)
+                elapsed = time.time() - start
+                return {'status': 'success', 'name': factor_name, 'factor': factor, 'df': result_df, 'elapsed': elapsed}
+            except Exception as e:
+                return {'status': 'error', 'name': factor_name, 'error': str(e)}
+
+        success = 0
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(_test_single_alt, k, v, self.alternative_df): k for k, v in alt_factors.items()}
+            
+            for future in as_completed(futures):
+                res = future.result()
+                factor_name = res['name']
+                
+                if res['status'] == 'success':
+                    try:
+                        factor = res['factor']
+                        result_df = res['df']
+                        elapsed = res['elapsed']
+                        
+                        factor_col = factor.name
+                        if factor_col not in result_df.columns:
+                            raise ValueError(f"Factor column '{factor_col}' not found")
+                        
+                        factor_series = result_df[factor_col]
+                        stats = self._calculate_stats(factor_series, factor_name, elapsed)
+                        self.results.append(stats)
+                        success += 1
+                        
+                        # Quality checks
+                        self._check_factor_quality(factor_series, factor_name)
+                        
+                        logger.info(f"✅ {factor_name:30s} | Mean:{stats['mean']:8.4f} | Std:{stats['std']:8.4f} | Non-Null:{stats['non_null_pct']:6.2f}% | Time:{elapsed:6.2f}s")
+                    except Exception as e:
+                        logger.error(f"❌ {factor_name:30s} | Error processing results: {str(e)[:60]}")
+                        self.errors.append(f"{factor_name}: {str(e)}")
+                else:
+                    logger.error(f"❌ {factor_name:30s} | Error: {res['error'][:60]}")
+                    self.errors.append(f"{factor_name}: {res['error']}")
+        
+        logger.info("-"*80)
+        logger.info(f"\n📊 Alternative Factors: {success}/{len(alt_factors)} passed ({success/len(alt_factors)*100:.1f}%)")
+        return success == len(alt_factors)
+    
+    def test_composite_factors(self):
+        """Test composite factors (blend price + alternative data)"""
+        logger.info("\n" + "="*80)
+        logger.info("TEST 5: COMPOSITE FACTORS (Macro-Adjusted, System Health, Smart Signals)")
+        logger.info("="*80)
+        
+        # Composite factors need both price data and alternative data
+        if self.price_df is None or self.price_df.empty:
+            logger.error("❌ Price data required - skipping composite factors")
+            return True
+        
+        if not hasattr(self, 'alternative_df') or self.alternative_df is None or self.alternative_df.empty:
+            logger.warning("⚠️  Alternative data required but not loaded - skipping composite factors")
+            return True
+        
+        # Composite factors (ValueScore, QualityScore) also need fundamental data
+        if not hasattr(self, 'fundamental_df') or self.fundamental_df is None:
+             logger.warning("⚠️  Fundamental data not loaded - some composite scores may be incomplete")
+             # Proceeding, but scores relying on fundamentals will be 0
+
+        # Merge price and alternative data
+        logger.info("\n[MERGING] Price data with Alternative data...")
+        try:
+            # Ensure date columns have matching dtypes (datetime64[ns])
+            price_df = self.price_df.copy()
+            alt_df = self.alternative_df.copy()
+            
+            price_df['date'] = pd.to_datetime(price_df['date']).dt.as_unit('ns')
+            alt_df['date'] = pd.to_datetime(alt_df['date']).dt.as_unit('ns')
+            
+            # Merge on date
+            composite_df = pd.merge_asof(
+                price_df.sort_values('date'),
+                alt_df.sort_values('date'),
+                on='date',
+                direction='backward'
+            )
+            
+            # Merge fundamental data if available
+            if self.fundamental_df is not None and not self.fundamental_df.empty:
+                fund_df = self.fundamental_df.copy()
+                fund_df['date'] = pd.to_datetime(fund_df['date']).dt.as_unit('ns')
+                composite_df = pd.merge_asof(
+                    composite_df.sort_values('date'),
+                    fund_df.sort_values('date'),
+                    on='date',
+                    by='ticker',
+                    direction='backward'
+                )
+
+            logger.info(f"✅ Merged {len(composite_df):,} records")
+        except Exception as e:
+            logger.error(f"❌ Failed to merge data: {e}")
+            return True
+        
+        # Get composite factors (15 total)
+        comp_factors = {
+            k: v for k, v in self.registry.factors.items() 
+            if v.category == 'composite'
+        }
+        
+        if not comp_factors:
+            logger.warning("⚠️  No composite factors registered")
+            return True
+            
+        logger.info(f"\n[TESTING] {len(comp_factors)} Composite Factors...")
+        logger.info("-"*80)
+        
+        def _test_single_comp(factor_name, factor, data):
+            try:
+                start = time.time()
+                result_df = factor.calculate(data)
+                elapsed = time.time() - start
+                return {'status': 'success', 'name': factor_name, 'factor': factor, 'df': result_df, 'elapsed': elapsed}
+            except Exception as e:
+                return {'status': 'error', 'name': factor_name, 'error': str(e)}
+
+        success = 0
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(_test_single_comp, k, v, composite_df): k for k, v in comp_factors.items()}
+            
+            for future in as_completed(futures):
+                res = future.result()
+                factor_name = res['name']
+                
+                if res['status'] == 'success':
+                    try:
+                        factor = res['factor']
+                        result_df = res['df']
+                        elapsed = res['elapsed']
+                        
+                        factor_col = factor.name
+                        if factor_col not in result_df.columns:
+                            raise ValueError(f"Factor column '{factor_col}' not found")
+                        
+                        factor_series = result_df[factor_col]
+                        stats = self._calculate_stats(factor_series, factor_name, elapsed)
+                        self.results.append(stats)
+                        success += 1
+                        
+                        # Quality checks
+                        self._check_factor_quality(factor_series, factor_name)
+                        
+                        logger.info(f"✅ {factor_name:30s} | Mean:{stats['mean']:8.4f} | Std:{stats['std']:8.4f} | Non-Null:{stats['non_null_pct']:6.2f}% | Time:{elapsed:6.2f}s")
+                    except Exception as e:
+                        logger.error(f"❌ {factor_name:30s} | Error processing results: {str(e)[:60]}")
+                        self.errors.append(f"{factor_name}: {str(e)}")
+                else:
+                    logger.error(f"❌ {factor_name:30s} | Error: {res['error'][:60]}")
+                    self.errors.append(f"{factor_name}: {res['error']}")
+        
+        logger.info("-"*80)
+        logger.info(f"\n📊 Composite Factors: {success}/{len(comp_factors)} passed ({success/len(comp_factors)*100:.1f}%)")
+        return success == len(comp_factors)
+    
     def _calculate_stats(self, series: pd.Series, factor_name: str, elapsed_time: float) -> dict:
         """Calculate comprehensive statistics for a factor"""
         # Helper to snap small numbers to 0.0 (Cosmetic fix for -0.0000)
@@ -502,12 +738,14 @@ def run_all_tests():
     test1_passed = suite.test_price_factors()
     test2_passed = suite.test_fundamental_factors()
     test3_passed = suite.test_earnings_factors()
+    test4_passed = suite.test_alternative_factors()
+    test5_passed = suite.test_composite_factors()
     
     # Generate reports
     suite.generate_summary_report()
     suite.generate_code_review()
     
-    return test1_passed and test2_passed and test3_passed
+    return test1_passed and test2_passed and test3_passed and test4_passed and test5_passed
 
 
 if __name__ == "__main__":

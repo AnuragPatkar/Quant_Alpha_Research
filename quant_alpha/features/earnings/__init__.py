@@ -1,6 +1,6 @@
 from .surprises import (ConsecutiveSurprise, EPSSurprise, EPSSurprisePercentage,
                         LastQuarterMagnitude, BeatMissMomentum)
-from .revision import (EarningsMomentum, EstimateAccuracyTrend, EPSAcceleration,
+from .revisions import (EarningsMomentum, EstimateAccuracyTrend, EPSAcceleration,
                        RecentPositiveRevisions)
 from .estimates import (ConsensusStrength, EstimateGuidanceQuality,
                         EstimateSurpriseConsistency, PositiveEstimateConfidence)

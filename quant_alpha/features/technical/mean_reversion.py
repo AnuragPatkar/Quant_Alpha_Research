@@ -21,15 +21,17 @@ EPS = 1e-9
 
 # ==================== 1. DISTANCE FROM MOVING AVERAGES ====================
 # Formula: (Close - MA) / MA
-@FactorRegistry.register()
-class DistSMA10D(TechnicalFactor):
-    def __init__(self, period=10):
-        super().__init__(name='dist_sma_10d', description='Distance from 10D SMA', lookback_period=period + 5)
-        self.period = period
-    
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        ma = df.groupby('ticker')['close'].transform(lambda x: x.rolling(window=self.period).mean())
-        return (df['close'] - ma) /( ma + EPS )
+
+# REMOVED: DistSMA10D (too short-term, redundant with DistSMA21D)
+# @FactorRegistry.register()
+# class DistSMA10D(TechnicalFactor):
+#     def __init__(self, period=10):
+#         super().__init__(name='dist_sma_10d', description='Distance from 10D SMA', lookback_period=period + 5)
+#         self.period = period
+#     
+#     def compute(self, df: pd.DataFrame) -> pd.Series:
+#         ma = df.groupby('ticker')['close'].transform(lambda x: x.rolling(window=self.period).mean())
+#         return (df['close'] - ma) /( ma + EPS )
     
 @FactorRegistry.register()
 class DistSMA21D(TechnicalFactor):
@@ -68,16 +70,17 @@ class DistSMA200D(TechnicalFactor):
 # ================================ 2. Price Z-Scores ==============================
 # Formula : (Close - Mean) / Stdev
 
-@FactorRegistry.register()
-class ZScore10D(TechnicalFactor):
-    def __init__(self, period=10):
-        super().__init__(name='zscore_10d', description='Price Z-Score 10D', lookback_period=period + 5)
-        self.period = period
-
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        def calc_z(x):
-            return (x - x.rolling(self.period).mean()) / (x.rolling(self.period).std() + EPS)
-        return df.groupby('ticker')['close'].transform(calc_z)
+# REMOVED: ZScore10D (too short-term mean reversion, high noise-to-signal)
+# @FactorRegistry.register()
+# class ZScore10D(TechnicalFactor):
+#     def __init__(self, period=10):
+#         super().__init__(name='zscore_10d', description='Price Z-Score 10D', lookback_period=period + 5)
+#         self.period = period
+# 
+#     def compute(self, df: pd.DataFrame) -> pd.Series:
+#         def calc_z(x):
+#             return (x - x.rolling(self.period).mean()) / (x.rolling(self.period).std() + EPS)
+#         return df.groupby('ticker')['close'].transform(calc_z)
 
 @FactorRegistry.register()
 class ZScore21D(TechnicalFactor):
