@@ -1,8 +1,8 @@
 """
-Earnings Revision Factors (Production Grade) - TOP 4 MOST IMPORTANT
+Earnings Revision Factors (Production Grade) -
 Focus: Estimate revisions, earnings trajectory, and estimate accuracy trends.
 
-Factors (Ranked by Predictive Power in Academic Literature):
+Factors:
 1. Earnings Momentum -> Direction and acceleration of EPS growth (Most Proven)
 2. Recent Positive Revisions -> Trend of estimate revisions (beating trend)
 3. Estimate Accuracy Trend -> Are estimates improving or deteriorating

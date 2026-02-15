@@ -37,6 +37,7 @@ import quant_alpha.features.fundamental.growth
 import quant_alpha.features.fundamental.financial_health
 import quant_alpha.features.earnings.surprises
 import quant_alpha.features.earnings.revision
+import quant_alpha.features.earnings.estimates
 
 warnings.filterwarnings('ignore')
 
