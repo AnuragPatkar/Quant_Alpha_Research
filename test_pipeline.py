@@ -72,7 +72,6 @@ import quant_alpha.features.alternative.inflation
 import quant_alpha.features.composite.macro_adjusted
 import quant_alpha.features.composite.system_health
 import quant_alpha.features.composite.smart_signals
-import quant_alpha.features.composite.scores
 
 warnings.filterwarnings('ignore')
 
@@ -472,14 +471,15 @@ class FactorTestSuite:
             # Merge fundamental data if available
             if self.fundamental_df is not None and not self.fundamental_df.empty:
                 fund_df = self.fundamental_df.copy()
-                fund_df['date'] = pd.to_datetime(fund_df['date']).dt.as_unit('ns')
-                composite_df = pd.merge_asof(
-                    composite_df.sort_values('date'),
-                    fund_df.sort_values('date'),
-                    on='date',
-                    by='ticker',
-                    direction='backward'
-                )
+                if 'date' in fund_df.columns:
+                    fund_df['date'] = pd.to_datetime(fund_df['date']).dt.as_unit('ns')
+                    composite_df = pd.merge_asof(
+                        composite_df.sort_values('date'),
+                        fund_df.sort_values('date'),
+                        on='date',
+                        by='ticker',
+                        direction='backward'
+                    )
 
             logger.info(f"✅ Merged {len(composite_df):,} records")
         except Exception as e:

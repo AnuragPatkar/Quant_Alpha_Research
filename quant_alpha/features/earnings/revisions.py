@@ -41,8 +41,16 @@ class EarningsMomentum(EarningsFactor):
             if len(events) < 2:
                 return pd.Series(np.nan, index=group.index)
             
-            # Calculate QoQ growth
-            events['eps_growth'] = events['eps_actual'].pct_change() * 100
+            # Calculate QoQ growth with proper formula for negative to positive transitions
+            # Formula: (curr - prev) / abs(prev) handles sign changes correctly
+            curr_eps = events['eps_actual'].values
+            prev_eps = events['eps_actual'].shift(1).values
+            
+            # Avoid division by zero
+            with np.errstate(divide='ignore', invalid='ignore'):
+                growth = (curr_eps - prev_eps) / (np.abs(prev_eps) + 1e-8) * 100
+            
+            events['eps_growth'] = growth
             
             # Forward fill to daily
             return events['eps_growth'].reindex(group.index).ffill()

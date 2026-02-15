@@ -29,10 +29,17 @@ class EPSSurprise(EarningsFactor):
         super().__init__(name='eps_sue_price', description='Surprise standardized by Price')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        required = ['eps_actual', 'eps_estimate', 'close']
-        if all(col in df.columns for col in required):
+        # Try to calculate from actual and estimate first
+        if 'eps_actual' in df.columns and 'eps_estimate' in df.columns and 'close' in df.columns:
             surprise = df['eps_actual'] - df['eps_estimate']
             sue = surprise/(df['close'] + 1e-8)
+            return sue.clip(-0.5, 0.5)
+        
+        # Fallback to surprise_pct if available (already includes estimate division)
+        if 'surprise_pct' in df.columns and 'close' in df.columns:
+            # surprise_pct is already (actual - estimate) / |estimate| * 100
+            # Normalize by price (convert from % to absolute)
+            sue = (df['surprise_pct'] / 100) * (df['close'] / 100 + 1e-8)
             return sue.clip(-0.5, 0.5)
         
         return pd.Series(np.nan, index=df.index)

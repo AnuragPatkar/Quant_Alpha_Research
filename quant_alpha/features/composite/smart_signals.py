@@ -74,11 +74,12 @@ class ValueYieldCombo(CompositeFactor):
         yield_level = df['us_10y_close'].rolling(21).mean().clip(lower=0, upper=5)
         rate_score = 1 - (yield_level / 5)
         
-        # In real implementation, would use actual value factors
-        # For now, use reverse of momentum as proxy (value = anti-momentum)
-        value_proxy = -df['us_10y_close'].pct_change(21) * 100
-        value_norm = (value_proxy.rolling(63).mean() + 0.05) / 0.10
-        value_norm = value_norm.clip(lower=0, upper=1)
+        # Value Proxy: Inverse P/E if available
+        if 'pe_ratio' in df.columns:
+            value_norm = (-df['pe_ratio']).rolling(63).rank(pct=True)
+        else:
+            # Neutral if missing
+            value_norm = pd.Series(0.5, index=df.index)
         
         # Combine
         combo = (value_norm + rate_score) / 2
@@ -140,9 +141,11 @@ class EarningsMacroAlignment(CompositeFactor):
         macro_growth = df['us_10y_close'].pct_change(21)
         macro_growth_norm = (macro_growth.rolling(63).mean() + 0.05) / 0.10
         
-        # In real implementation, would use actual earnings growth data
-        # For simulation: anti-correlated with commodities (lower oil = more economic capacity)
-        earnings_growth = -df['oil_close'].pct_change(21)
+        # Earnings Growth
+        if 'earnings_growth' in df.columns:
+            earnings_growth = df['earnings_growth']
+        else:
+            earnings_growth = pd.Series(0, index=df.index)
         earnings_growth_norm = (earnings_growth.rolling(63).mean() + 0.05) / 0.10
         
         # Alignment: How correlated are they?

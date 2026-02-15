@@ -14,7 +14,7 @@ from .value import (
     ShareholderYield,
     EnterpriseValueFCFYield,
     PriceToSalesRatio,
-    EVtoEBIDAValuation,
+    EVtoEBITDAValuation,
     EVtoSalesValuation,
 )
 
@@ -71,7 +71,7 @@ __all__ = [
     'ShareholderYield',
     'EnterpriseValueFCFYield',
     'PriceToSalesRatio',
-    'EVtoEBIDAValuation',
+    'EVtoEBITDAValuation',
     'EVtoSalesValuation',
     # Quality
     'ROE',

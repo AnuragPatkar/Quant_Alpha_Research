@@ -180,7 +180,7 @@ class PriceToSalesRatio(FundamentalFactor):
         return pd.Series(np.nan, index=df.index)
 
 @FactorRegistry.register()
-class EVtoEBIDAValuation(FundamentalFactor):
+class EVtoEBITDAValuation(FundamentalFactor):
     """
     EV/EBITDA - Most robust valuation metric
     Formula: Enterprise Value / EBITDA

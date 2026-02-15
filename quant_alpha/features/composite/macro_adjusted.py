@@ -70,9 +70,11 @@ class OilCorrectedValue(CompositeFactor):
         oil_median = df['oil_close'].rolling(252).median()
         oil_regime = (df['oil_close'] < oil_median).astype(float) * 0.5 + 0.5
         
-        # Simple value proxy: Return signal (higher is better)
-        # In real implementation, would use actual value factors
-        value_signal = np.random.normal(0, 1, len(df))
+        # Value Proxy: Inverse P/E if available, else 0
+        if 'pe_ratio' in df.columns:
+            value_signal = -df['pe_ratio'].clip(0, 100)
+        else:
+            value_signal = pd.Series(0, index=df.index)
         
         # Apply oil correction
         corrected = value_signal * oil_regime
@@ -100,9 +102,11 @@ class RateEnvironmentScore(CompositeFactor):
         # Rate regime weight for quality (lower rates = more weight to quality)
         rate_weight = 1 - (df['us_10y_close'].rolling(21).mean().clip(lower=0, upper=5) / 5)
         
-        # Quality signal: Simplified as inverse return volatility
-        # In real implementation, would use actual quality metrics
-        quality_signal = np.random.normal(0, 1, len(df))
+        # Quality Proxy: ROE if available
+        if 'roe' in df.columns:
+            quality_signal = df['roe'].clip(-1, 1)
+        else:
+            quality_signal = pd.Series(0, index=df.index)
         
         # Rate-adjusted quality
         adjusted = quality_signal * rate_weight
@@ -131,8 +135,11 @@ class DollarAdjustedGrowth(CompositeFactor):
         usd_median = df['usd_close'].rolling(252).median()
         usd_regime = (df['usd_close'] < usd_median).astype(float) * 0.3 + 0.7
         
-        # Growth proxy signal
-        growth_signal = np.random.normal(0, 1, len(df))
+        # Growth Proxy: Earnings Growth
+        if 'earnings_growth' in df.columns:
+            growth_signal = df['earnings_growth'].clip(-1, 1)
+        else:
+            growth_signal = pd.Series(0, index=df.index)
         
         # Dollar-adjusted growth
         adjusted = growth_signal * usd_regime
