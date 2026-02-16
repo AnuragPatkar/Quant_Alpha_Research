@@ -17,7 +17,10 @@ class EarningsYield(FundamentalFactor):
         # 1. Try 1 / PE (Most direct)
         pe_col = FundamentalColumnValidator.find_column(df, 'pe_ratio')
         if pe_col:
-            return 1.0 / (df[pe_col] + EPS)
+            pe = df[pe_col].copy()
+            # Clip P/E to valid range to avoid division by zero or extreme outliers
+            pe = pe.clip(lower=0.1, upper=200)
+            return 1.0 / (pe + EPS)
         
         # 2. Try EPS / Price
         eps_col = FundamentalColumnValidator.find_column(df, 'eps')

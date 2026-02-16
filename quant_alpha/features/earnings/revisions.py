@@ -1,12 +1,6 @@
 """
-Earnings Revision Factors (Production Grade) -
+Earnings Revision Factors (Production Grade)
 Focus: Estimate revisions, earnings trajectory, and estimate accuracy trends.
-
-Factors:
-1. Earnings Momentum -> Direction and acceleration of EPS growth (Most Proven)
-2. Recent Positive Revisions -> Trend of estimate revisions (beating trend)
-3. Estimate Accuracy Trend -> Are estimates improving or deteriorating
-4. EPS Acceleration -> Is earnings growth accelerating or slowing
 """
 
 import pandas as pd
@@ -14,17 +8,13 @@ import numpy as np
 from ..base import EarningsFactor
 from ..registry import FactorRegistry
 from config.logging_config import logger
-
+from .utils import detect_earnings_events, get_events_with_surprise
 
 @FactorRegistry.register()
 class EarningsMomentum(EarningsFactor):
     """
     Earnings Growth Momentum: QoQ EPS Growth Rate
-    Formula: (Current EPS - Previous EPS) / Previous EPS * 100
-    
-    Why: Positive EPS growth is the strongest predictor of stock appreciation.
-    High value = Strong earnings growth = Better investment candidate.
-    Most consistent cross-sectional predictor.
+    Formula: (Current EPS - Previous EPS) / max(abs(Previous EPS), 0.01) * 100
     """
     def __init__(self):
         super().__init__(name='earn_eps_momentum', description='EPS Growth Momentum (Q/Q)')
@@ -34,26 +24,21 @@ class EarningsMomentum(EarningsFactor):
             return pd.Series(np.nan, index=df.index)
         
         def _calc_momentum(group):
-            # Detect earnings events
-            is_new_event = group['eps_actual'] != group['eps_actual'].shift(1)
+            is_new_event = detect_earnings_events(group)
             events = group.loc[is_new_event].copy()
             
             if len(events) < 2:
-                return pd.Series(np.nan, index=group.index)
+                return pd.Series(0.0, index=group.index)
             
-            # Calculate QoQ growth with proper formula for negative to positive transitions
-            # Formula: (curr - prev) / abs(prev) handles sign changes correctly
-            curr_eps = events['eps_actual'].values
-            prev_eps = events['eps_actual'].shift(1).values
+            curr_eps = events['eps_actual']
+            prev_eps = events['eps_actual'].shift(1)
             
-            # Avoid division by zero
-            with np.errstate(divide='ignore', invalid='ignore'):
-                growth = (curr_eps - prev_eps) / (np.abs(prev_eps) + 1e-8) * 100
+            # Use 0.01 floor to prevent division by near-zero (common in penny stocks/turnarounds)
+            denom = prev_eps.abs().clip(lower=0.01)
+            events['eps_growth'] = (curr_eps - prev_eps) / denom * 100
             
-            events['eps_growth'] = growth
-            
-            # Forward fill to daily
-            return events['eps_growth'].reindex(group.index).ffill()
+            # Clip at 500% to prevent extreme outliers from dominating the cross-section
+            return events['eps_growth'].clip(-500, 500).reindex(group.index).ffill()
         
         return df.groupby('ticker', group_keys=False).apply(_calc_momentum)
 
@@ -62,34 +47,26 @@ class EarningsMomentum(EarningsFactor):
 class RecentPositiveRevisions(EarningsFactor):
     """
     Recent Positive Revisions: % of last 3 quarters with positive surprises.
-    Formula: (# positive surprises in last 3Q) / 3 * 100
-    
-    Why: Consecutive positive surprises = management consistently raising bar.
-    Highest signal of upward estimate revision trajectory.
-    Range: 0% (all misses) to 100% (all beats).
     """
     def __init__(self):
         super().__init__(name='earn_recent_positive_revisions', description='Recent Positive Revisions %')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if 'surprise_pct' not in df.columns or 'eps_actual' not in df.columns:
+        # Check for required columns or ability to compute them
+        has_surprise = 'surprise_pct' in df.columns
+        has_components = 'eps_actual' in df.columns and 'eps_estimate' in df.columns
+        
+        if not (has_surprise or has_components):
             return pd.Series(np.nan, index=df.index)
         
         def _calc_revisions(group):
-            # Detect earnings events
-            is_new_event = group['eps_actual'] != group['eps_actual'].shift(1)
-            events = group.loc[is_new_event].copy()
-            
-            if events.empty:
-                return pd.Series(np.nan, index=group.index)
-            
-            # Calculate positive surprises (1 = beat, 0 = miss)
-            events['positive'] = (events['surprise_pct'] > 0).astype(int)
-            
-            # Rolling average of last 3: % positive
+            events = get_events_with_surprise(group)
+            if events.empty: return pd.Series(np.nan, index=group.index)
+
+            # Handle NaNs: If surprise is missing, don't count as negative, keep as NaN
+            events['positive'] = np.where(events['surprise_pct'].isna(), np.nan, (events['surprise_pct'] > 0).astype(float))
             events['revision_pct'] = events['positive'].rolling(window=3, min_periods=1).mean() * 100
             
-            # Forward fill to daily
             return events['revision_pct'].reindex(group.index).ffill()
         
         return df.groupby('ticker', group_keys=False).apply(_calc_revisions)
@@ -99,38 +76,29 @@ class RecentPositiveRevisions(EarningsFactor):
 class EstimateAccuracyTrend(EarningsFactor):
     """
     Estimate Accuracy Trend: Inverse of recent surprise magnitude.
-    Formula: 100 - |Average Surprise %| (last 4 quarters)
-    
-    Why: Lower surprises = Better estimates = More efficient guidance process.
-    High value = More predictable earnings = Lower risk.
-    Range: 0 (highly unpredictable) to 100 (perfectly predicted).
+    Uses Median for robustness against one-off massive surprises.
     """
     def __init__(self):
         super().__init__(name='earn_estimate_accuracy_trend', description='Estimate Accuracy Trend')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if 'surprise_pct' not in df.columns or 'eps_actual' not in df.columns:
+        # Check for required columns or ability to compute them
+        has_surprise = 'surprise_pct' in df.columns
+        has_components = 'eps_actual' in df.columns and 'eps_estimate' in df.columns
+        
+        if not (has_surprise or has_components):
             return pd.Series(np.nan, index=df.index)
         
         def _calc_accuracy(group):
-            # Detect earnings events
-            is_new_event = group['eps_actual'] != group['eps_actual'].shift(1)
-            events = group.loc[is_new_event].copy()
+            events = get_events_with_surprise(group)
+            if events.empty: return pd.Series(np.nan, index=group.index)
+
+            # Using median is much more robust for 'predictability' than mean
+            events['med_surprise_mag'] = events['surprise_pct'].abs().rolling(window=4, min_periods=2).median()
             
-            if events.empty:
-                return pd.Series(np.nan, index=group.index)
+            # Inverse relationship: higher score = lower surprise magnitude
+            events['accuracy'] = (100 - events['med_surprise_mag']).clip(lower=0, upper=100)
             
-            # Absolute surprise magnitude
-            events['surprise_abs'] = events['surprise_pct'].abs()
-            
-            # 4-quarter rolling average of surprise magnitude
-            events['avg_surprise_mag'] = events['surprise_abs'].rolling(window=4, min_periods=1).mean()
-            
-            # Convert to accuracy (lower surprise = higher accuracy)
-            # Clip at 100 to prevent negative values
-            events['accuracy'] = (100 - events['avg_surprise_mag']).clip(lower=0, upper=100)
-            
-            # Forward fill to daily
             return events['accuracy'].reindex(group.index).ffill()
         
         return df.groupby('ticker', group_keys=False).apply(_calc_accuracy)
@@ -139,13 +107,8 @@ class EstimateAccuracyTrend(EarningsFactor):
 @FactorRegistry.register()
 class EPSAcceleration(EarningsFactor):
     """
-    EPS Acceleration: Change in growth rate (2-quarter momentum).
-    Formula: (Current Growth Rate) - (Previous Growth Rate)
-    
-    Why: Accelerating earnings growth is powerful predictor of future appreciation.
-    Positive = Growth is speeding up (bullish).
-    Negative = Growth is slowing (bearish).
-    Most predictive among earnings momentum factors.
+    EPS Acceleration: The second derivative of earnings.
+    Formula: Current QoQ Growth - Previous QoQ Growth
     """
     def __init__(self):
         super().__init__(name='earn_eps_acceleration', description='EPS Acceleration (Growth Rate Change)')
@@ -155,20 +118,20 @@ class EPSAcceleration(EarningsFactor):
             return pd.Series(np.nan, index=df.index)
         
         def _calc_acceleration(group):
-            # Detect earnings events
-            is_new_event = group['eps_actual'] != group['eps_actual'].shift(1)
+            is_new_event = detect_earnings_events(group)
             events = group.loc[is_new_event].copy()
             
             if len(events) < 3:
                 return pd.Series(np.nan, index=group.index)
             
-            # Calculate QoQ growth rates
-            events['eps_growth'] = events['eps_actual'].pct_change() * 100
+            # Step 1: Growth
+            denom = events['eps_actual'].shift(1).abs().clip(lower=0.01)
+            events['eps_growth'] = (events['eps_actual'] - events['eps_actual'].shift(1)) / denom * 100
             
-            # Acceleration = change in growth rate (2-quarter momentum)
+            # Step 2: Acceleration (Change in growth rate)
             events['acceleration'] = events['eps_growth'].diff()
             
-            # Forward fill to daily
-            return events['acceleration'].reindex(group.index).ffill()
+            # Clip acceleration to prevent extreme values from distorting the model
+            return events['acceleration'].clip(-200, 200).reindex(group.index).ffill()
         
         return df.groupby('ticker', group_keys=False).apply(_calc_acceleration)

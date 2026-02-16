@@ -1,199 +1,127 @@
-"""
-Smart Signals Composite Factors (5 Factors)
-Focus: Complex cross-asset combinations, convergence/divergence signals, sophisticated blends.
-
-Factors (Ranked by Importance):
-1. MomentumVIXDivergence -> Detect euphoria or capitulation
-2. ValueYieldCombo -> Value + rates + sentiment blend
-3. QualityInDownturn -> Quality performance during stress
-4. EarningsMacroAlignment -> Earnings expectations vs macro
-5. MultiAssetOpportunity -> Cross-asset opportunity scoring
-"""
-
 import pandas as pd
 import numpy as np
 from ..base import CompositeFactor
 from ..registry import FactorRegistry
 from config.logging_config import logger
 
-
 @FactorRegistry.register()
 class MomentumVIXDivergence(CompositeFactor):
     """
-    Momentum-VIX Divergence: Detect market extremes (euphoria or capitulation).
-    Formula: Momentum vs VIX trend ratio (positive divergence = warning signal)
-    
-    Why: When momentum rising but VIX rising = Fear despite strength (warning).
-    When momentum falling but VIX falling = Relief despite weakness (bounce setup).
-    Identifies unsustainable moves and potential reversals.
+    Detects euphoria/capitulation. 
+    Logic: (Stock Mom - VIX Mom). 
+    High value = Clean rally. Low value = Risky/Hidden fear.
     """
     def __init__(self):
         super().__init__(name='comp_div_momentum_vix', description='Momentum-VIX Divergence Signal')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        required = ['sp500_close', 'vix_close']
-        if not all(col in df.columns for col in required):
-            logger.warning(f"❌ {self.name}: Missing SP500 or VIX data")
+        if not {'close', 'vix_close'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Momentum direction (positive trend = 1, negative = -1)
-        returns = df['sp500_close'].pct_change(21)
-        mom_trend = (returns > 0).astype(float) * 2 - 1
+        # 1. Individual Stock Momentum
+        mom = df.groupby('ticker')['close'].pct_change(21)
         
-        # VIX trend (falling VIX = 1, rising = -1)
-        vix_change = df['vix_close'].pct_change(21)
-        vix_trend = (vix_change < 0).astype(float) * 2 - 1
+        # 2. VIX Momentum (Normalized to be comparable)
+        vix_mom = df.groupby('ticker')['vix_close'].pct_change(21)
         
-        # Divergence signal: 1 if aligned, -1 if diverged
-        divergence = (mom_trend * vix_trend)
+        # Divergence: If price goes up (+) but VIX also goes up (+), signal drops (Danger)
+        # If price goes up (+) and VIX goes down (-), signal stays high (Strong)
+        signal = mom - vix_mom
         
-        # Smooth and normalize
-        divergence_smooth = divergence.rolling(21).mean()
-        return divergence_smooth.fillna(0)
-
+        # FIX: Group by ticker for rolling calculation
+        return signal.groupby(df['ticker']).transform(lambda x: x.rolling(10, min_periods=1).mean()).fillna(0)
 
 @FactorRegistry.register()
 class ValueYieldCombo(CompositeFactor):
-    """
-    Value-Yield Combo: Blend value signals with rate environment.
-    Formula: (Value_score + (1 - Yield_level/5) ) / 2 normalized
-    
-    Why: Value works better in low-rate environments (higher multiples expansion).
-    In high-rate environment, value still attracts but with lower multiples.
-    Combines fundamentals (value) with macro context (yields).
-    """
     def __init__(self):
-        super().__init__(name='comp_value_yield', description='Value-Yield Combination Signal')
+        super().__init__(name='comp_value_yield', description='Value-Yield Blend')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if 'us_10y_close' not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing yield data")
+        if 'us_10y_close' not in df.columns or 'pe_ratio' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
-        # Rate environment component (lower rates = better for value multiple expansion)
-        yield_level = df['us_10y_close'].rolling(21).mean().clip(lower=0, upper=5)
-        rate_score = 1 - (yield_level / 5)
+        # Yield Component: Inverted (Lower rates = Higher multiple support)
+        yield_smooth = df.groupby('ticker')['us_10y_close'].transform(lambda x: x.rolling(21, min_periods=5).mean()).clip(0.1, 5)
+        rate_score = 1 - (yield_smooth / 5)
         
-        # Value Proxy: Inverse P/E if available
-        if 'pe_ratio' in df.columns:
-            value_norm = (-df['pe_ratio']).rolling(63).rank(pct=True)
-        else:
-            # Neutral if missing
-            value_norm = pd.Series(0.5, index=df.index)
+        # Value Component: Cross-sectional rank of inverse P/E
+        # replace(0) and clip to avoid inf
+        inv_pe = 1 / df['pe_ratio'].replace(0, np.nan).clip(1, 200)
+        # FIX: Group by date for cross-sectional rank
+        value_rank = inv_pe.groupby(df['date']).rank(pct=True)
         
-        # Combine
-        combo = (value_norm + rate_score) / 2
-        return combo.fillna(0.5)
-
+        return (value_rank + rate_score) / 2
 
 @FactorRegistry.register()
 class QualityInDownturn(CompositeFactor):
-    """
-    Quality in Downturn: Quality factor performance during high-stress periods.
-    Formula: Quality_signal * (if VIX > 20 then 1.5 else 1.0)
-    
-    Why: Quality (stable earnings, low debt) outperforms during crashes.
-    This factor amplifies quality exposure when VIX elevated.
-    Anti-cyclical positioning for downside protection.
-    """
     def __init__(self):
-        super().__init__(name='comp_quality_stress', description='Quality in Downturn Signal')
+        super().__init__(name='comp_quality_stress', description='Quality under VIX Stress')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if 'vix_close' not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing VIX data")
-            return pd.Series(np.nan, index=df.index)
+        # Check for core quality columns or fallback
+        roe = df.get('roe', pd.Series(0, index=df.index))
+        debt = df.get('debt_to_equity', pd.Series(1, index=df.index))
+        vix = df.get('vix_close', pd.Series(20, index=df.index))
         
-        # Stress indicator
-        vix = df['vix_close'].rolling(5).mean()
-        stress_multiplier = (vix > 20).astype(float) * 0.5 + 1.0
+        # Quality Proxy: High ROE, Low Debt
+        quality = roe.clip(-0.5, 0.5) - (debt.clip(0, 5) * 0.1)
         
-        # Quality proxy: Low volatility of returns (inverse of price volatility)
-        returns_vol = df['sp500_close'].pct_change().rolling(63).std()
-        quality_signal = 1 / (returns_vol + 0.01)  # Inverse volatility
-        quality_signal = (quality_signal - quality_signal.mean()) / quality_signal.std()
+        # Stress Multiplier: Amplify if VIX is high (above its 63-day mean)
+        vix_ma = df.groupby('ticker')['vix_close'].transform(lambda x: x.rolling(63, min_periods=5).mean())
+        stress_trigger = np.where(vix > vix_ma, 1.5, 1.0)
         
-        # Amplify quality during stress
-        quality_amplified = quality_signal * stress_multiplier
-        
-        return quality_amplified.fillna(0)
-
+        return (quality * stress_trigger).fillna(0)
 
 @FactorRegistry.register()
 class EarningsMacroAlignment(CompositeFactor):
     """
-    Earnings-Macro Alignment: Match earnings expectations with macro reality.
-    Formula: (Earnings_growth_trend + Macro_growth_trend) / 2
-    
-    Why: When earnings growth aligns with macro growth = Sustainable (stay long).
-    When earnings exceed macro = Valuation disconnect (watch for cut).
-    When macro exceeds earnings = Economic growth not monetized (opportunity).
+    FIXED: Per-ticker correlation to ensure variation.
+    Detects if a specific stock's earnings trend is in sync with macro yields.
     """
     def __init__(self):
         super().__init__(name='comp_earnings_macro', description='Earnings-Macro Alignment Score')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if 'us_10y_close' not in df.columns or 'oil_close' not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing macro data")
-            return pd.Series(np.nan, index=df.index)
+        # Check if required columns exist
+        # We prefer pe_ratio for daily correlation, fallback to earnings_growth
+        target_col = 'pe_ratio' if 'pe_ratio' in df.columns else 'earnings_growth'
         
-        # Macro growth proxy: Yield momentum (rising = growth expectations up)
-        macro_growth = df['us_10y_close'].pct_change(21)
-        macro_growth_norm = (macro_growth.rolling(63).mean() + 0.05) / 0.10
+        if 'us_10y_close' not in df.columns or target_col not in df.columns:
+            logger.warning(f"❌ {self.name}: Missing macro or earnings data")
+            return pd.Series(0, index=df.index)
         
-        # Earnings Growth
-        if 'earnings_growth' in df.columns:
-            earnings_growth = df['earnings_growth']
-        else:
-            earnings_growth = pd.Series(0, index=df.index)
-        earnings_growth_norm = (earnings_growth.rolling(63).mean() + 0.05) / 0.10
+        # 1. Macro signal (Yields are the same for everyone, we take 21-day change)
+        # Group by ticker to align indices correctly in the apply
+        macro_momentum = df.groupby('ticker')['us_10y_close'].pct_change(21)
         
-        # Alignment: How correlated are they?
-        # Create alignment score (1 = perfectly aligned, -1 = diverged)
-        rolling_corr = earnings_growth.rolling(63).corr(macro_growth)
+        # 2. Vectorized Grouped Correlation
+        # Alignment = Correlation between stock valuation/earnings and macro yields
+        # Using PE Ratio provides daily variation, preventing "identical values" from constant earnings data
+        alignment = df.groupby('ticker', group_keys=False).apply(
+            lambda x: x[target_col].rolling(63, min_periods=10).corr(macro_momentum.loc[x.index])
+        )
         
-        # Weighted alignment: Use both correlation and absolute levels
-        alignment = (rolling_corr + (macro_growth_norm + earnings_growth_norm) / 2) / 2
-        
+        # 3. Final cleanup: replace NaNs with 0 (neutral)
         return alignment.fillna(0)
-
 
 @FactorRegistry.register()
 class MultiAssetOpportunity(CompositeFactor):
-    """
-    Multi-Asset Opportunity: Cross-asset opportunity scoring (bonds, equities, commodities).
-    Formula: (Oil_opportunity + Yield_opportunity + Currency_opportunity) / 3
-    
-    Why: When all assets agree (Oil, Rates, USD) = High conviction trade.
-    When assets diverge = Transition/rotation period (lower conviction).
-    Measures cross-asset momentum consensus.
-    """
     def __init__(self):
-        super().__init__(name='comp_multi_asset', description='Multi-Asset Opportunity Score')
+        super().__init__(name='comp_multi_asset', description='Oil-Yield-USD Consensus')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        required = ['oil_close', 'us_10y_close', 'usd_close']
-        if not all(col in df.columns for col in required):
-            logger.warning(f"❌ {self.name}: Missing multi-asset data")
-            return pd.Series(np.nan, index=df.index)
+        assets = ['oil_close', 'us_10y_close', 'usd_close']
+        if not all(col in df.columns for col in assets):
+            return pd.Series(50, index=df.index)
         
-        # Oil opportunity (commodity momentum)
-        oil_mom = df['oil_close'].pct_change(21)
-        oil_opp = (oil_mom > 0).astype(float) * 2 - 1
+        # Get binary direction of each asset
+        # 1 if price > 21-day MA, else -1
+        consensus = 0
+        for col in assets:
+            ma = df.groupby('ticker')[col].transform(lambda x: x.rolling(21).mean())
+            consensus += np.where(df[col] > ma, 1, -1)
         
-        # Yield opportunity (growth momentum)
-        yield_mom = df['us_10y_close'].pct_change(21)
-        yield_opp = (yield_mom > 0).astype(float) * 2 - 1
-        
-        # Currency opportunity (USD strength)
-        usd_mom = df['usd_close'].pct_change(21)
-        usd_opp = (usd_mom > 0).astype(float) * 2 - 1
-        
-        # Consensus score (smooth over 21 days)
-        consensus = (oil_opp + yield_opp + usd_opp) / 3
-        consensus_smooth = consensus.rolling(21).mean()
-        
-        # Convert to 0-100 opportunity score
-        opp_score = ((consensus_smooth + 1) / 2) * 100
-        
-        return opp_score.fillna(50)
+        # Map -3 to +3 range into 0 to 100
+        # +3 (all bullish) -> 100, -3 (all bearish) -> 0
+        opp_score = ((consensus / 3) + 1) * 50
+        return pd.Series(opp_score, index=df.index).groupby(df['ticker']).transform(lambda x: x.rolling(5).mean()).fillna(50)

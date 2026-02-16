@@ -1,178 +1,100 @@
-"""
-Macro-Adjusted Composite Factors (5 Factors)
-Focus: Blending technical signals with macro context for better regime adaptation.
-
-Factors (Ranked by Importance):
-1. MacroAdjustedMomentum -> Momentum modulated by volatility regime
-2. OilCorrectedValue -> Value signals filtered by commodity environment
-3. RateEnvironmentScore -> Quality performance in current rate regime
-4. DollarAdjustedGrowth -> Growth adjusted for currency strength
-5. RiskParityBlend -> Equal weight technical momentum + sentiment balance
-"""
-
 import pandas as pd
 import numpy as np
 from ..base import CompositeFactor
 from ..registry import FactorRegistry
 from config.logging_config import logger
 
-
 @FactorRegistry.register()
 class MacroAdjustedMomentum(CompositeFactor):
-    """
-    Macro-Adjusted Momentum: Price momentum scaled by volatility regime.
-    Formula: Momentum * (1 / VIX_level) * 100
-    
-    Why: High VIX suppresses momentum playability (noise too high).
-    Low VIX amplifies momentum edge (clean signals).
-    Adjusts risk exposure to market regime automatically.
-    """
     def __init__(self):
-        super().__init__(name='comp_macro_momentum', description='Macro-Adjusted Momentum Signal')
+        super().__init__(name='comp_macro_momentum', description='Momentum modulated by VIX')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        required = ['sp500_close', 'vix_close']
-        if not all(col in df.columns for col in required):
-            logger.warning(f"❌ {self.name}: Missing SP500 or VIX data")
+        # Stock-specific close and Market VIX
+        if not {'close', 'vix_close'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Base momentum (21-day)
-        momentum = df['sp500_close'].pct_change(21) * 100
+        # 1. Individual Stock Momentum (21-day)
+        # Groupby 'ticker' is CRITICAL here to avoid mixing stock prices
+        momentum = df.groupby('ticker')['close'].pct_change(21) * 100
         
-        # VIX adjustment factor (1/VIX normalized)
-        vix_normalized = df['vix_close'].rolling(5).mean().clip(lower=10, upper=40)
-        adjustment = 25 / vix_normalized  # Higher VIX = lower adjustment
+        # 2. VIX Adjustment (Inverse volatility weight)
+        # We use transform to broadcast market-wide VIX back to all tickers
+        vix_smooth = df.groupby('ticker')['vix_close'].transform(lambda x: x.rolling(5).mean()).clip(10, 40)
+        adjustment = 25 / vix_smooth
         
-        # Adjusted momentum
-        adjusted = momentum * adjustment
-        return adjusted.fillna(0)
-
+        return momentum * adjustment
 
 @FactorRegistry.register()
 class OilCorrectedValue(CompositeFactor):
-    """
-    Oil-Corrected Value: Value signals adjusted for oil/inflation environment.
-    Formula: Value_signal * (1 if Oil < 50th percentile else 0.5)
-    
-    Why: Value performs better in low-inflation environments (oil supply ample).
-    In high-oil regime, value gets hurt by inflation expectations.
-    Auto-weights value exposure to commodity environment.
-    """
     def __init__(self):
-        super().__init__(name='comp_oil_value', description='Oil-Corrected Value Factor')
+        super().__init__(name='comp_oil_value', description='Value signals filtered by oil environment')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if 'oil_close' not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing oil data")
+        if not {'oil_close', 'pe_ratio'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Oil regime: 1 if below median, 0.5 if above
-        oil_median = df['oil_close'].rolling(252).median()
-        oil_regime = (df['oil_close'] < oil_median).astype(float) * 0.5 + 0.5
+        # Oil regime (Market-wide)
+        oil_median = df.groupby('ticker')['oil_close'].transform(lambda x: x.rolling(252).median())
+        oil_regime = np.where(df['oil_close'] < oil_median, 1.0, 0.5)
         
-        # Value Proxy: Inverse P/E if available, else 0
-        if 'pe_ratio' in df.columns:
-            value_signal = -df['pe_ratio'].clip(0, 100)
-        else:
-            value_signal = pd.Series(0, index=df.index)
+        # Value Signal: Inverse PE (Earnings Yield proxy)
+        # clipping to avoid extreme values from low earnings
+        value_signal = 1 / df['pe_ratio'].replace(0, np.nan).clip(1, 100)
         
-        # Apply oil correction
-        corrected = value_signal * oil_regime
-        return pd.Series(corrected, index=df.index).fillna(0)
-
+        return value_signal * oil_regime
 
 @FactorRegistry.register()
 class RateEnvironmentScore(CompositeFactor):
-    """
-    Rate Environment Score: Quality factor performance in current rate regime.
-    Formula: (1 - Yield_level/5) * QualityScore (inverted yield as quality multiple)
-    
-    Why: Lower rates favor durational/quality stocks (low growth, high quality).
-    Higher rates favor value/cyclical (higher discount).
-    Adapts quality weight to rate environment.
-    """
     def __init__(self):
-        super().__init__(name='comp_rate_quality', description='Rate-Adjusted Quality Score')
+        super().__init__(name='comp_rate_quality', description='Quality adjusted by interest rates')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if 'us_10y_close' not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing yield data")
+        if not {'us_10y_close', 'roe'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Rate regime weight for quality (lower rates = more weight to quality)
-        rate_weight = 1 - (df['us_10y_close'].rolling(21).mean().clip(lower=0, upper=5) / 5)
+        # Rate weight: Higher rates = Lower weight for high-duration quality
+        rate_weight = 1 - (df.groupby('ticker')['us_10y_close'].transform(lambda x: x.rolling(21).mean()).clip(0, 5) / 5)
         
-        # Quality Proxy: ROE if available
-        if 'roe' in df.columns:
-            quality_signal = df['roe'].clip(-1, 1)
-        else:
-            quality_signal = pd.Series(0, index=df.index)
+        # Quality: ROE (Stock specific)
+        quality_signal = df.groupby('ticker')['roe'].ffill().clip(-1, 1)
         
-        # Rate-adjusted quality
-        adjusted = quality_signal * rate_weight
-        return pd.Series(adjusted, index=df.index).fillna(0)
-
+        return quality_signal * rate_weight
 
 @FactorRegistry.register()
 class DollarAdjustedGrowth(CompositeFactor):
-    """
-    Dollar-Adjusted Growth: Growth factors modulated by USD strength.
-    Formula: GrowthFactor * (1 if USD < 50th percentile else 0.7)
-    
-    Why: Strong dollar headwind for growth stocks (earnings translation loss).
-    Weak dollar tailwind for growth (more comfortable valuation).
-    Adjusts growth exposure to currency regime.
-    """
     def __init__(self):
-        super().__init__(name='comp_dollar_growth', description='Dollar-Adjusted Growth Factor')
+        super().__init__(name='comp_dollar_growth', description='Growth adjusted for USD strength')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if 'usd_close' not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing USD data")
+        if not {'usd_close', 'earnings_growth'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # USD regime: Strong = lower growth weight
-        usd_median = df['usd_close'].rolling(252).median()
-        usd_regime = (df['usd_close'] < usd_median).astype(float) * 0.3 + 0.7
+        # USD regime (Market-wide)
+        usd_median = df.groupby('ticker')['usd_close'].transform(lambda x: x.rolling(252).median())
+        usd_regime = np.where(df['usd_close'] < usd_median, 1.0, 0.7)
         
-        # Growth Proxy: Earnings Growth
-        if 'earnings_growth' in df.columns:
-            growth_signal = df['earnings_growth'].clip(-1, 1)
-        else:
-            growth_signal = pd.Series(0, index=df.index)
+        # Growth Signal (Stock specific)
+        growth_signal = df.groupby('ticker')['earnings_growth'].ffill().clip(-1, 1)
         
-        # Dollar-adjusted growth
-        adjusted = growth_signal * usd_regime
-        return pd.Series(adjusted, index=df.index).fillna(0)
-
+        return growth_signal * usd_regime
 
 @FactorRegistry.register()
 class RiskParityBlend(CompositeFactor):
-    """
-    Risk Parity Blend: Equal risk weight between momentum + sentiment.
-    Formula: (Momentum_normalized + RiskOnOff_normalized) / 2
-    
-    Why: Combines bull-market signals (momentum) with risk-off signals (VIX).
-    Reduces single-factor regime risk.
-    Natural diversification across signal types.
-    """
     def __init__(self):
-        super().__init__(name='comp_risk_parity', description='Risk Parity Momentum+Sentiment Blend')
+        super().__init__(name='comp_risk_parity', description='Momentum + Sentiment Blend')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        required = ['sp500_close', 'vix_close']
-        if not all(col in df.columns for col in required):
-            logger.warning(f"❌ {self.name}: Missing SP500 or VIX data")
+        if not {'close', 'vix_close'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Momentum component (normalized 0-1)
-        momentum = df['sp500_close'].pct_change(21)
-        momentum_norm = (momentum - momentum.rolling(63).mean()) / momentum.rolling(63).std()
-        momentum_norm = (momentum_norm + 3) / 6  # Clip to ~0-1 range
+        # Stock-specific Momentum Rank
+        mom = df.groupby('ticker')['close'].pct_change(21)
+        # FIX: Group by date to rank stocks against each other on that day
+        mom_rank = mom.groupby(df['date']).rank(pct=True)
         
-        # Sentiment component (VIX inverted - lower VIX = higher sentiment)
-        vix_norm = 1 - ((df['vix_close'] - 10) / 30).clip(lower=0, upper=1)
+        # Market Sentiment Rank (VIX inverted)
+        vix_rank = df.groupby('ticker')['vix_close'].transform(lambda x: x.rolling(252).rank(pct=True))
+        sentiment_rank = 1 - vix_rank
         
-        # Equal weight blend
-        blend = (momentum_norm + vix_norm) / 2
-        return blend.fillna(0.5)
+        return (mom_rank + sentiment_rank) / 2

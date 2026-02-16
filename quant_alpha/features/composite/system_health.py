@@ -1,194 +1,132 @@
-"""
-System Health & Regime Composite Factors (5 Factors)
-Focus: Market regime classification, portfolio health scoring, system-level indicators.
-
-Factors (Ranked by Importance):
-1. MarketRegimeScore -> Bull/Bear/Sideways classification
-2. VolatilityRegime -> Normal/Elevated/Crisis volatility levels
-3. CapitalFlowSignal -> Oil + USD combined flow indication
-4. EconomicMomentumScore -> Combined macro strength indicator
-5. PortfolioHealthIndex -> Overall system health (0-100 scale)
-"""
-
 import pandas as pd
 import numpy as np
 from ..base import CompositeFactor
 from ..registry import FactorRegistry
 from config.logging_config import logger
 
-
 @FactorRegistry.register()
 class MarketRegimeScore(CompositeFactor):
     """
-    Market Regime Score: Classify market as Bull/Bear/Sideways.
-    Formula: +1 if (Ret_positive AND Trend_up) else -1 if (Ret_negative AND Trend_down) else 0
-    
-    Why: Regime determines which factors work (momentum in bull, mean-reversion in bear).
-    Useful for dynamic factor allocation and hedge ratios.
+    Classifies market as Bull (1), Bear (-1), or Sideways (0).
+    Robustified with min_periods to avoid early-data NaNs.
     """
     def __init__(self):
         super().__init__(name='comp_regime', description='Market Regime Classification')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if 'sp500_close' not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing SP500 data")
-            return pd.Series(np.nan, index=df.index)
+            return pd.Series(0, index=df.index)
         
-        # Recent performance (21-day)
-        returns = df['sp500_close'].pct_change(21)
+        # 1. Structural Trend (Long-term)
+        # Using 200-day SMA as the anchor
+        ma200 = df.groupby('ticker')['sp500_close'].transform(lambda x: x.rolling(200, min_periods=50).mean())
+        price_above_ma = df['sp500_close'] > ma200
         
-        # Trend (200-day moving average)
-        trend = df['sp500_close'] > df['sp500_close'].rolling(200).mean()
+        # 2. Cyclical Momentum (Medium-term)
+        returns_21d = df.groupby('ticker')['sp500_close'].pct_change(21)
         
-        # Regime classification
+        # Logic: 
+        # Bull: Price > MA200 AND Returns > 0
+        # Bear: Price < MA200 AND Returns < 0
+        # Sideways: Everything else
         regime = pd.Series(0, index=df.index)
-        regime[(returns > 0) & trend] = 1  # Bull regime
-        regime[(returns < 0) & ~trend] = -1  # Bear regime
+        regime[price_above_ma & (returns_21d > 0)] = 1
+        regime[~price_above_ma & (returns_21d < 0)] = -1
         
-        return regime.fillna(0)
-
+        return regime.ffill().fillna(0)
 
 @FactorRegistry.register()
 class VolatilityRegime(CompositeFactor):
     """
-    Volatility Regime: Classify volatility as Normal/Elevated/Crisis.
-    Formula: 0 if VIX < 15, 1 if 15 < VIX < 25, 2 if VIX > 25
-    
-    Why: Volatility regime drives optimal leverage, position sizing, and strategies.
-    Crisis mode (VIX > 25) requires defensive positioning.
-    Normal mode (VIX < 15) supports more aggressive strategies.
+    Categorical Volatility Score.
+    0: Low Vol (Risk-on), 1: Elevated (Caution), 2: High Vol (Risk-off/Crisis)
     """
     def __init__(self):
-        super().__init__(name='comp_vol_regime', description='Volatility Regime Classification')
+        super().__init__(name='comp_vol_regime', description='Volatility Regime Levels')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if 'vix_close' not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing VIX data")
-            return pd.Series(np.nan, index=df.index)
+            return pd.Series(0, index=df.index)
         
-        vix = df['vix_close'].rolling(5).mean()
+        # Using a 5-day smooth to avoid single-day VIX spikes
+        vix = df.groupby('ticker')['vix_close'].transform(lambda x: x.rolling(5, min_periods=1).mean())
         
-        # Regime classification
-        regime = pd.Series(0, index=df.index)
-        regime[vix >= 15] = 1  # Elevated
-        regime[vix >= 25] = 2  # Crisis
+        # np.select is faster and cleaner for multiple categories
+        conditions = [
+            (vix < 17), # Normal/Quiet
+            (vix >= 17) & (vix < 28), # Elevated
+            (vix >= 28) # Crisis
+        ]
+        choices = [0, 1, 2]
         
-        return regime.fillna(0)
-
+        return pd.Series(np.select(conditions, choices, default=1), index=df.index)
 
 @FactorRegistry.register()
 class CapitalFlowSignal(CompositeFactor):
-    """
-    Capital Flow Signal: Oil + USD trend indicating capital movements.
-    Formula: (Oil_momentum + USD_momentum) / 2, normalized 0-100
-    
-    Why: Rising oil + rising USD = Risk-on (capital chasing growth).
-    Falling oil + falling USD = Risk-off (capital seeking safety).
-    Captures institutional flow patterns.
-    """
     def __init__(self):
-        super().__init__(name='comp_capital_flow', description='Capital Flow Signal Indicator')
+        super().__init__(name='comp_capital_flow', description='Oil & USD Flow Indicator')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        required = ['oil_close', 'usd_close']
-        if not all(col in df.columns for col in required):
-            logger.warning(f"❌ {self.name}: Missing oil or USD data")
-            return pd.Series(np.nan, index=df.index)
+        if not {'oil_close', 'usd_close'}.issubset(df.columns):
+            return pd.Series(50, index=df.index)
         
-        # Oil and USD momentum (21-day)
-        oil_mom = df['oil_close'].pct_change(21)
-        usd_mom = df['usd_close'].pct_change(21)
+        # We look for consensus in momentum
+        # Normalize 21d momentum by its 63d volatility for a 'Z-score' like feel
+        oil_mom = df.groupby('ticker')['oil_close'].pct_change(21)
+        usd_mom = df.groupby('ticker')['usd_close'].pct_change(21)
         
-        # Normalize and combine
-        oil_norm = (oil_mom.rolling(63).mean() + 0.05) / 0.10  # Scale to ~0-1
-        usd_norm = (usd_mom.rolling(63).mean() + 0.05) / 0.10
+        # Combine and scale to 0-100. (Mean of 0 momentum = 50 score)
+        combined = (oil_mom + usd_mom) / 2
+        flow_score = ((combined + 0.05) / 0.10).clip(0, 1) * 100
         
-        # Combined flow signal (0-100 scale)
-        flow = ((oil_norm + usd_norm) / 2).clip(lower=0, upper=1) * 100
-        
-        return flow.fillna(50)
-
+        return flow_score.fillna(50)
 
 @FactorRegistry.register()
 class EconomicMomentumScore(CompositeFactor):
-    """
-    Economic Momentum Score: Combined macro strength from yields + oil + USD.
-    Formula: (Yield_momentum + Oil_momentum - USD_momentum) / 3, normalized 0-100
-    
-    Why: Rising yields + rising oil = Strong growth + inflation (macro strength).
-    Rising yields + falling oil = Real growth leading inflation (best combo).
-    Useful for tactical macro rotation and asset allocation.
-    """
     def __init__(self):
-        super().__init__(name='comp_econ_momentum', description='Economic Momentum Score (0-100)')
+        super().__init__(name='comp_econ_momentum', description='Cross-Asset Macro Strength')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        required = ['us_10y_close', 'oil_close', 'usd_close']
-        if not all(col in df.columns for col in required):
-            logger.warning(f"❌ {self.name}: Missing macro data")
-            return pd.Series(np.nan, index=df.index)
+        req = ['us_10y_close', 'oil_close', 'usd_close']
+        if not all(col in df.columns for col in req):
+            return pd.Series(50, index=df.index)
         
-        # Momentum components (21-day)
-        yield_mom = df['us_10y_close'].pct_change(21)
-        oil_mom = df['oil_close'].pct_change(21)
-        usd_mom = df['usd_close'].pct_change(21)
+        # Yields Up + Oil Up - USD Up (USD is usually a headwind for global growth)
+        y_mom = df.groupby('ticker')['us_10y_close'].pct_change(21)
+        o_mom = df.groupby('ticker')['oil_close'].pct_change(21)
+        u_mom = df.groupby('ticker')['usd_close'].pct_change(21)
         
-        # Composite: Growth (yield) + Inflation (oil) - Currency (USD)
-        # Positive USD = Headwind (strength kills exports)
-        composite = (yield_mom + oil_mom - usd_mom) / 3
-        
-        # Normalize to 0-100 scale
-        composite_norm = ((composite + 0.05) / 0.10).clip(lower=0, upper=1) * 100
-        
-        return composite_norm.fillna(50)
-
+        composite = (y_mom + o_mom - u_mom) / 3
+        return ((composite + 0.04) / 0.08).clip(0, 1).fillna(0.5) * 100
 
 @FactorRegistry.register()
 class PortfolioHealthIndex(CompositeFactor):
     """
-    Portfolio Health Index: Overall system health synthesis (0-100 scale).
-    Formula: (Market_regime_positive * 25 + Vol_regime_normal * 25 + 
-              Flow_signal * 0.25 + Econ_momentum * 0.25) / 100 * 100
-    
-    Why: Single metric for portfolio managers to assess system health.
-    100 = Perfect conditions (bull market, low vol, positive flow, strong macro).
-    0 = Crisis conditions (bear market, high vol, negative flow, weak macro).
-    Useful for risk limits and hedge ratio decisions.
+    The Ultimate 'Master Switch'.
+    Blends Price, Vol, and Macro into a 0-100 'Safety' score.
     """
     def __init__(self):
-        super().__init__(name='comp_health_index', description='Portfolio Health Index (0-100)')
+        super().__init__(name='comp_health_index', description='Global Portfolio Health Score')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if 'sp500_close' not in df.columns or 'vix_close' not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing critical data")
-            return pd.Series(np.nan, index=df.index)
+        # Components
+        regime = self.compute_sub_score(df, 'regime') * 25 # Bull = 25, Sideways = 0
+        vol = self.compute_sub_score(df, 'vol') * 25    # Low Vol = 25, Crisis = 0
+        macro = self.compute_sub_score(df, 'macro') * 50 # Strong Macro = 50
         
-        # Market regime component (0-25 scale)
-        returns = df['sp500_close'].pct_change(21)
-        trend = df['sp500_close'] > df['sp500_close'].rolling(200).mean()
-        regime_score = ((returns > 0) & trend).astype(float) * 25
-        
-        # Volatility regime component (0-25 scale, inverse)
-        vix = df['vix_close'].rolling(5).mean()
-        vol_score = ((40 - vix) / 30).clip(lower=0, upper=1) * 25
-        
-        # Flow signal component (0-25 scale)
-        if 'oil_close' in df.columns and 'usd_close' in df.columns:
-            oil_mom = df['oil_close'].pct_change(21)
-            usd_mom = df['usd_close'].pct_change(21)
-            flow_score = ((oil_mom + usd_mom) / 2).rolling(21).mean() * 250  # Scale to 0-25
-            flow_score = flow_score.clip(lower=0, upper=25)
-        else:
-            flow_score = pd.Series(12.5, index=df.index)  # Default neutral
-        
-        # Economic momentum component (0-25 scale)
-        if 'us_10y_close' in df.columns:
-            yield_mom = df['us_10y_close'].pct_change(21)
-            econ_score = ((yield_mom + 0.05) / 0.10).clip(lower=0, upper=1) * 25
-        else:
-            econ_score = pd.Series(12.5, index=df.index)  # Default neutral
-        
-        # Combine all components
-        health_index = regime_score + vol_score + flow_score + econ_score
-        
-        return health_index.fillna(50)
+        health = regime + vol + macro
+        return health.groupby(df['ticker']).transform(lambda x: x.rolling(5).mean()).clip(0, 100).fillna(50)
+
+    def compute_sub_score(self, df, type):
+        if type == 'regime':
+            # MarketRegimeScore helper
+            ma = df.groupby('ticker')['sp500_close'].transform(lambda x: x.rolling(200).mean())
+            return (df['sp500_close'] > ma).astype(float)
+        elif type == 'vol':
+            # Invert VIX: 15 is good (1.0), 35 is bad (0.0)
+            vix = df.groupby('ticker')['vix_close'].transform(lambda x: x.rolling(5).mean())
+            return ((35 - vix) / 20).clip(0, 1)
+        elif type == 'macro':
+            # Economic Momentum normalized to 0.0-1.0
+            y_mom = df.groupby('ticker')['us_10y_close'].pct_change(21)
+            return ((y_mom + 0.02) / 0.04).clip(0, 1)
