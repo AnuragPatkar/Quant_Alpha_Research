@@ -17,178 +17,268 @@ from quant_alpha.models.trainer import WalkForwardTrainer
 from quant_alpha.models.lightgbm_model import LightGBMModel
 from quant_alpha.models.xgboost_model import XGBoostModel
 from quant_alpha.models.catboost_model import CatBoostModel
+from quant_alpha.features.utils import rank_transform, winsorize, cross_sectional_normalize
 
 # --- RISK & PORTFOLIO PARAMETERS ---
 TOP_N_STOCKS = 25
-STOCK_STOP_LOSS = -0.20
-SL_SLIPPAGE_PENALTY = -0.02  # 2% extra loss for gap-downs
-PORTFOLIO_DD_EXIT = -0.25    # Exit market at 25% drawdown
-PORTFOLIO_DD_REENTRY = -0.15 # Re-enter market when drawdown recovers to 15%
-TRANSACTION_COST = 0.001     # 0.1% per trade
+STOCK_STOP_LOSS = -0.05       # 20% se 5% kar diya
+SL_SLIPPAGE_PENALTY = -0.005  # Tight SL par slippage kam hota hai
+TRANSACTION_COST = 0.001      # 10 bps per trade
+TURNOVER_THRESHOLD = 0.15     # Naya stock tabhi lenge agar wo top 15% rank improvement dikhaye
+PORTFOLIO_DD_EXIT = -0.15     # Exit strategy when DD exceeds 15%
+PORTFOLIO_DD_REENTRY = -0.05  # Re-enter when DD recovers to 5%
+
+
+def load_and_build_full_dataset():
+    # ---------------------------------------------------------
+    # FIX: Check for Cached Master File (Speed up)
+    # ---------------------------------------------------------
+    cache_path = r"E:\coding\quant_alpha_research\data\cache\master_data_with_factors.parquet"
+    if os.path.exists(cache_path):
+        logger.info(f"⚡ Loading Cached Master Dataset from {cache_path}...")
+        return pd.read_parquet(cache_path)
+
+    logger.info("📡 Initializing DataManager and Factor Registry...")
+    dm = DataManager()
+    
+    # 1. Load raw data (DataManager internally 4 files ko merge karta hai)
+    data = dm.get_master_data() 
+    
+    # 🔥 CRITICAL FIX: Registry ko data dene se pehle RESET INDEX zaroori hai
+    # Isse 'date' aur 'ticker' index se nikal kar columns ban jayenge
+    if data.index.names[0] is not None:
+        data = data.reset_index()
+
+    # 2. Check for missing features
+    # Aapke logs mein 102 columns dikh rahe hain, par factors sirf 56 hain
+    if data.shape[1] < 120:
+        logger.info(f"🔄 Factors missing. Computing from Registry on {data.shape[0]} rows...")
+        from quant_alpha.features.registry import FactorRegistry
+        registry = FactorRegistry()
+        
+        # Parallel computation start karein
+        # Registry internally compute_all use karegi
+        data = registry.compute_all(data)
+            
+    logger.info(f"✅ Full Dataset Ready with {data.shape[1]} columns.")
+    
+    # Optimization: Drop any factors that are 100% NaNs (जो computation fail huye)
+    data = data.dropna(axis=1, how='all')
+    
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    logger.info(f"💾 Saving Master Dataset to {cache_path}...")
+    data.to_parquet(cache_path)
+    
+    return data
 
 def calculate_ranks_robust(df):
-    """Vectorized ranking across dates for maximum speed and robustness."""
+    """Ensemble logic: Averaging percentile ranks across models."""
     pred_cols = [c for c in df.columns if c.startswith('pred_')]
-    
-    # Calculate ranks for all model columns at once (vectorized)
     for col in pred_cols:
-        df[f'rank_{col}'] = df.groupby('date')[col].rank(pct=True)
+        r_col = f'rank_{col}'
+        df[r_col] = df.groupby('date')[col].rank(pct=True, method='first')
     
-    # Robust average: Handle cases where some models might have failed (NaNs)
-    rank_cols = [f'rank_{col}' for col in pred_cols]
+    rank_cols = [f'rank_{c}' for c in pred_cols]
     df['ensemble_alpha'] = df[rank_cols].mean(axis=1, skipna=True)
-    df['ensemble_alpha'] = df['ensemble_alpha'].fillna(0.5)
-    
     return df
 
 def plot_performance_tear_sheet(df):
-    logger.info("📊 Generating Performance Tear Sheet...")
+    """
+    Realistic Backtest Evaluation using Next-Day Returns.
+    Fixes the 'linear approximation' issue by using actual daily realized P&L.
+    """
+    logger.info("📊 Generating Reality-Based Performance Tear Sheet...")
     
-    # 1. Top N Selection (Portfolio Construction)
-    # Fix: Set date as index to preserve it during groupby apply
-    portfolio = df.set_index('date').groupby(level='date', group_keys=False).apply(lambda x: x.nlargest(TOP_N_STOCKS, 'ensemble_alpha'))
-    
-    # 2. Realistic Target Adjustment (Stop Loss + Slippage)
-    portfolio['target_adj'] = np.where(
-        portfolio['target'] <= STOCK_STOP_LOSS, 
-        STOCK_STOP_LOSS + SL_SLIPPAGE_PENALTY, 
-        portfolio['target']
+    # 1. Select top stocks for each day based on Ensemble Alpha
+    portfolio = df.set_index('date').groupby(level='date', group_keys=False).apply(
+        lambda x: x.nlargest(TOP_N_STOCKS, 'ensemble_alpha')
     )
     
-    # 3. Strategy Returns Calculation (Scaled for 5-day overlap)
-    daily_returns = portfolio.groupby(level='date')['target_adj'].mean() / 5 
-    daily_returns = daily_returns - (TRANSACTION_COST / 5) # Pro-rated cost
-
-    # 4. Drawdown-Based Risk Manager (Market Filter with Bug Fix)
-    equity_curve = [1.0]
-    peak = 1.0
-    active = True
-    active_flags = []
+    # ---------------------------------------------------------
+    # FIX: Use pnl_return (Next Day) instead of target (21-Day)
+    # ---------------------------------------------------------
+    # Apply Stop Loss logic on daily realized returns
+    portfolio['pnl_adj'] = np.where(
+        portfolio['pnl_return'] <= STOCK_STOP_LOSS, 
+        STOCK_STOP_LOSS + SL_SLIPPAGE_PENALTY, 
+        portfolio['pnl_return']
+    )
     
-    virtual_equity = 1.0 
-    virtual_peak = 1.0
+    # Average daily return of the selected TOP_N_STOCKS
+    daily_returns = portfolio.groupby(level='date')['pnl_adj'].mean()
+    
+    # Full transaction cost applied on daily rebalancing (Conservative approach)
+    daily_returns -= TRANSACTION_COST
+
+    # 2. Equity Curve with Portfolio-Level Risk Management (DD Exit/Re-entry)
+    equity_curve, active = [1.0], True
+    v_equity, v_peak = 1.0, 1.0
+    active_flags = []
 
     for ret in daily_returns:
-        # Always track virtual performance to know when to re-enter
-        virtual_equity *= (1 + ret)
-        virtual_peak = max(virtual_peak, virtual_equity)
-        virtual_dd = (virtual_equity - virtual_peak) / virtual_peak
+        v_equity *= (1 + ret)
+        v_peak = max(v_peak, v_equity)
+        v_dd = (v_equity - v_peak) / v_peak if v_peak != 0 else 0
 
         if active:
-            new_val = equity_curve[-1] * (1 + ret)
-            equity_curve.append(new_val)
-            peak = max(peak, new_val)
-            
-            # Check for Exit Condition
-            if virtual_dd <= PORTFOLIO_DD_EXIT:
-                logger.warning(f"🚨 Drawdown Limit Reached ({virtual_dd:.2%}). Switching to Cash.")
+            # Continue investing if not in a major drawdown
+            equity_curve.append(equity_curve[-1] * (1 + ret))
+            if v_dd <= PORTFOLIO_DD_EXIT: 
+                logger.warning(f"📉 Portfolio DD Limit Hit ({v_dd:.2%}). Moving to Cash.")
                 active = False
         else:
-            # Sitting in cash: Wealth stays flat
+            # Stay in cash until recovery
             equity_curve.append(equity_curve[-1])
-            
-            # Check for Re-entry Condition
-            if virtual_dd >= PORTFOLIO_DD_REENTRY:
-                logger.info(f"🟢 Market Recovered ({virtual_dd:.2%}). Re-entering trades.")
+            if v_dd >= PORTFOLIO_DD_REENTRY: 
+                logger.info(f"✅ Recovery Detected ({v_dd:.2%}). Re-entering Market.")
                 active = True
-                peak = equity_curve[-1] # Reset real peak on re-entry
         
         active_flags.append(1 if active else 0)
 
-    # Slice [1:] to match index length
+    # 3. Metrics Calculation
     equity_series = pd.Series(equity_curve[1:], index=daily_returns.index)
-    drawdown = (equity_series - equity_series.cummax()) / equity_series.cummax()
-
-    # --- Metrics Logic ---
-    total_return = (equity_series.iloc[-1] - 1) * 100
-    ann_return = ((equity_series.iloc[-1]) ** (252 / len(equity_series)) - 1) * 100
+    
+    # Annualized Return (Geometric Mean)
+    days = len(equity_series)
+    ann_ret = ((equity_series.iloc[-1]) ** (252 / days) - 1) * 100 if days > 0 else 0
+    
+    # Annualized Volatility
     vol = equity_series.pct_change().std() * np.sqrt(252)
-    sharpe = (ann_return / 100) / vol if vol != 0 else 0
+    
+    # True Sharpe Ratio
+    sharpe = (ann_ret / 100) / vol if vol > 0 else 0
+    
+    # Maximum Drawdown
+    drawdown = (equity_series - equity_series.cummax()) / equity_series.cummax()
+    max_dd = drawdown.min() * 100
 
-    # --- Plotting ---
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+    print(f"\n⭐ REALITY-BASED RESULTS")
+    print(f"--------------------------------------------------")
+    print(f"Sharpe Ratio:     {sharpe:.2f}")
+    print(f"Ann. Return:      {ann_ret:.2f}%")
+    print(f"Max Drawdown:     {max_dd:.2f}%")
+    print(f"Volatility:       {vol*100:.2f}%")
+    print(f"--------------------------------------------------")
     
-    ax1.plot(equity_series, label='Strategy Equity', color='#27ae60', lw=2)
-    ax1.set_title(f"Final Wealth: {equity_series.iloc[-1]:.2f}x | Sharpe: {sharpe:.2f}", fontsize=14)
-    ax1.fill_between(equity_series.index, equity_series.min(), equity_series.max(), 
-                     where=pd.Series(active_flags, index=equity_series.index)==0, color='red', alpha=0.15, label='In Cash (Filter Active)')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
+    # 4. Visualization
+    plt.figure(figsize=(14, 7))
+    plt.plot(equity_series, color='#27ae60', linewidth=2, label='Alpha-Pro Strategy')
     
-    ax2.fill_between(drawdown.index, 0, drawdown, color='#c0392b', alpha=0.3)
-    ax2.plot(drawdown, color='#c0392b', lw=1)
-    ax2.set_title(f"Max Drawdown: {drawdown.min()*100:.2f}%", fontsize=12)
-    ax2.grid(True, alpha=0.3)
+    # Highlight "Cash Only" (Inactive) periods in Red
+    plt.fill_between(equity_series.index, equity_series.min(), equity_series.max(), 
+                     where=pd.Series(active_flags, index=equity_series.index)==0, 
+                     color='red', alpha=0.1, label='In Cash (Risk Management)')
     
-    plt.tight_layout()
+    plt.title(f"Strategy Equity Curve (Sharpe: {sharpe:.2f})", fontsize=14)
+    plt.ylabel("Portfolio Value (Starting at 1.0)")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
     plt.show()
 
-    print(f"\n✅ BACKTEST COMPLETE")
-    print("="*40)
-    print(f"Total Return:      {total_return:.2f}%")
-    print(f"Annualized Return: {ann_return:.2f}%")
-    print(f"Annualized Vol:    {vol*100:.2f}%")
-    print(f"Max Drawdown:      {drawdown.min()*100:.2f}%")
-    print(f"Sharpe Ratio:      {sharpe:.2f}")
-    print("="*40)
-
 def run_production_pipeline():
-    logger.info("🚀 Booting Quant Engine...")
-    dm = DataManager()
-    data = dm.get_master_data()
+    logger.info("🚀 Booting Optimized Alpha-Pro Engine...")
     
-    if 'date' not in data.columns: 
-        data = data.reset_index()
+    # 1. Load Data (Merging 4 Parquets + Registry Computation)
+    data = load_and_build_full_dataset()
+    
+    if 'date' not in data.columns: data = data.reset_index()
     data['date'] = pd.to_datetime(data['date'])
+    
+    # ---------------------------------------------------------
+    # FIX: Sort is required before shift() operations
+    # ---------------------------------------------------------
     data = data.sort_values(['ticker', 'date'])
     
-    data['target'] = data.groupby('ticker')['close'].shift(-5) / data['close'] - 1
-    data = data.dropna(subset=['target'])
+    # ---------------------------------------------------------
+    # FIX 1: Separate Training Target from Reality-based P&L
+    # ---------------------------------------------------------
+    # Training Target: 21-Day Forward Alpha (Noise Filter)
+    data['target'] = data.groupby('ticker')['close'].shift(-21) / data['close'] - 1
     
-    exclude = ['open', 'high', 'low', 'close', 'volume', 'target', 'date', 'ticker', 'index', 'level_0']
-    features = [c for c in data.columns if c not in exclude]
-    for col in ['sector', 'industry']:
-        if col in data.columns: data[col] = data[col].astype('category')
+    # P&L Return: Next Day Return (Reality check for Tear Sheet)
+    data['pnl_return'] = data.groupby('ticker')['close'].shift(-1) / data['close'] - 1
+    
+    data = data.dropna(subset=['target', 'pnl_return'])
+    
+    # ---------------------------------------------------------
+    # FIX 2: Categorical Preservation & Vectorized Imputation
+    # ---------------------------------------------------------
+    exclude = ['open', 'high', 'low', 'close', 'volume', 'target', 'pnl_return', 'date', 'ticker', 'index', 'level_0']
+    
+    # Identify Numeric vs Categorical features
+    numeric_features = data.select_dtypes(include=[np.number]).columns.tolist()
+    numeric_features = [c for c in numeric_features if c not in exclude]
+    
+    # All features include categorical ones (sector, industry) for GBDT models
+    all_features = [c for c in data.columns if c not in exclude]
+    
+    # FAST Imputation: Groupby transform slow hai, isliye constant fill (0) use karein
+    # Z-score normalization ke baad 0 neutral signal mana jata hai. 
+    # Handle numeric and categorical separately to avoid mixed types.
+    logger.info(f"🛠️ Vectorized Imputation for {len(all_features)} Features...") 
+    data[numeric_features] = data[numeric_features].fillna(0)
 
-    # Model Params (Optimized for stability)
+    # Optional: Fill categorical features if they exist
+    cat_features = [c for c in all_features if c not in numeric_features]
+    if cat_features:
+        data[cat_features] = data[cat_features].fillna('Unknown')
+
+    # 3. Preprocessing (Numeric Only)
+    # Categoricals ko touch nahi karenge, LightGBM/CatBoost unhe natively handle kar lenge
+    data = winsorize(data, numeric_features)
+    data = cross_sectional_normalize(data, numeric_features)
+
+    # 4. Model Training Configuration (Using 'Gold' Hyperparameters)
+    # n_estimators aur regularization ko optimize kiya gaya hai
     models_config = {
-        "LightGBM": (LightGBMModel, {'n_jobs': 1, 'n_estimators': 500, 'reg_lambda': 10.0}),
-        "XGBoost": (XGBoostModel, {'n_jobs': 1, 'n_estimators': 500, 'reg_lambda': 10.0}),
-        "CatBoost": (CatBoostModel, {'thread_count': 1, 'iterations': 500, 'l2_leaf_reg': 10.0})
+        "LightGBM": (LightGBMModel, {
+            'n_estimators': 600, 'learning_rate': 0.02, 'reg_lambda': 1.0, 
+            'num_leaves': 39, 'importance_type': 'gain'
+        }),
+        "XGBoost": (XGBoostModel, {
+            'n_estimators': 600, 'learning_rate': 0.02, 'max_depth': 3, 'reg_lambda': 1.0
+        }),
+        "CatBoost": (CatBoostModel, {
+            'iterations': 600, 'l2_leaf_reg': 3.0, 'verbose': 0, 'cat_features': ['sector', 'industry']
+        })
     }
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        oos_preds_master = {}
-        for name, (model_class, params) in models_config.items():
-            trainer = WalkForwardTrainer(model_class=model_class, min_train_months=36, test_months=6, 
-                                         step_months=6, window_type='sliding', embargo_days=21, model_params=params)
-            oos_preds_master[name] = trainer.train(data, features, 'target')
+    oos_preds_master = {}
+    for name, (model_class, params) in models_config.items():
+        # Safety check for CatBoost features
+        if 'cat_features' in params:
+            params['cat_features'] = [c for c in params['cat_features'] if c in data.columns]
+            
+        logger.info(f"🧠 Training {name}...")
+        trainer = WalkForwardTrainer(
+            model_class=model_class, min_train_months=36, test_months=6, 
+            step_months=6, window_type='sliding', embargo_days=21, model_params=params
+        )
+        # Train on 'target' (21-day alpha)
+        oos_preds_master[name] = trainer.train(data, all_features, 'target')
 
-    # Merge OOS predictions safely on date and ticker
+    # 5. Robust Ensemble Blending
     ensemble_df = None
     for name, df in oos_preds_master.items():
-        temp_df = df[['date', 'ticker', 'target', 'prediction']].rename(columns={'prediction': f'pred_{name}'})
+        temp = df[['date', 'ticker', 'prediction']].rename(columns={'prediction': f'pred_{name}'})
         if ensemble_df is None:
-            ensemble_df = temp_df
+            ensemble_df = temp
         else:
-            # Fix: Do not merge on 'target' (float) and drop target from right df to avoid duplication
-            ensemble_df = pd.merge(ensemble_df, temp_df.drop(columns=['target']), on=['date', 'ticker'], how='inner')
+            ensemble_df = pd.merge(ensemble_df, temp, on=['date', 'ticker'], how='outer')
 
-    logger.info("📊 Processing Vectorized Cross-Sectional Ranking...")
-    final_results = calculate_ranks_robust(ensemble_df)
+    if ensemble_df is None:
+        logger.error("❌ No predictions generated. Aborting.")
+        return
 
-    # Actionable Alpha for next period
-    latest_date = final_results['date'].max()
-    top_picks = final_results[final_results['date'] == latest_date].nlargest(TOP_N_STOCKS, 'ensemble_alpha')
+    # ---------------------------------------------------------
+    # FIX 3: True Backtest Evaluation
+    # ---------------------------------------------------------
+    # Merge target and pnl_return back for realistic P&L calculation
+    ensemble_df = pd.merge(ensemble_df, data[['date', 'ticker', 'target', 'pnl_return']], on=['date', 'ticker'], how='left')
     
-    print(f"\n🚀 TOP {TOP_N_STOCKS} ALPHA PICKS FOR NEXT PERIOD ({latest_date.date()}):")
-    print("-" * 55)
-    # Print only top 10 in console to save space, but all 25 are calculated
-    print(top_picks[['ticker', 'ensemble_alpha']].head(10).to_string(index=False)) 
-    print("... (and 15 more)")
-    print("-" * 55)
-
+    final_results = calculate_ranks_robust(ensemble_df)
+    
+    # Tear sheet ab pnl_return (next day) use karega inflation hatane ke liye
     plot_performance_tear_sheet(final_results)
 
 if __name__ == "__main__":

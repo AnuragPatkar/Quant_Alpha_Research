@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from config.logging_config import logger
+from .utils import winsorize, cross_sectional_normalize
 
 EPS = 1e-9  # Centralized small epsilon to prevent division by zero
 
@@ -96,10 +97,10 @@ class BaseFactor(ABC):
                  result.loc[np.isinf(result[self.name]), self.name] = np.nan
 
             if self.winsorize_flag:
-                result[self.name] = self._winsorize(result[self.name])
+                result = winsorize(result, [self.name])
             
             if self.normalize:
-                result = self._cross_sectional_normalize(result)
+                result = cross_sectional_normalize(result, [self.name])
             
             if self.fill_na:
                 result[self.name] = result[self.name].fillna(0)
@@ -145,43 +146,6 @@ class BaseFactor(ABC):
         if np.isinf(result[self.name]).any():
             logger.warning(f"⚠️ Factor {self.name} contains infinite values. Replacing with NaN.")
             result[self.name] = result[self.name].replace([np.inf, -np.inf], np.nan)
-    
-    # ==================== TRANSFORMATIONS ====================
-    
-    def _winsorize(self, series: pd.Series, lower: float = 0.01, upper: float = 0.99) -> pd.Series:
-        """Clip extreme outliers (1st and 99th percentile)"""
-        lower_val = series.quantile(lower)
-        upper_val = series.quantile(upper)
-        return series.clip(lower=lower_val, upper=upper_val)
-    
-    def _cross_sectional_normalize(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Robust Z-Score Normalization per DATE (Vectorized).
-        Performance optimized: Avoids groupby().apply() or .transform(func).
-        """
-        # Group by date
-        grouper = data.groupby('date')[self.name]
-        
-        # Calculate stats vectorized (aligned with original index)
-        means = grouper.transform('mean')
-        stds = grouper.transform('std')
-        counts = grouper.transform('count')
-        
-        # Create mask for valid calculations:
-        # 1. At least 3 items per date
-        # 2. Std deviation is not 0
-        valid_mask = (counts >= 3) & (stds > 0)
-        
-        # Initialize result with 0.0
-        z_scores = pd.Series(0.0, index=data.index, dtype='float64')
-        
-        # Compute Z-Score only for valid indices
-        if valid_mask.any():
-            z_scores.loc[valid_mask] = (data.loc[valid_mask, self.name] - means.loc[valid_mask]) / stds.loc[valid_mask]
-            
-        data[self.name] = z_scores
-        
-        return data
 
 # ==================== SPECIALIZED SUBCLASSES ====================
 
@@ -207,13 +171,12 @@ class EarningsFactor(BaseFactor):
 
 class AlternativeFactor(BaseFactor):
     def __init__(self, name: str, description: str, **kwargs):
+        # FIX: Single correct initialization with macro-specific defaults
+        # Macro data usually doesn't need cross-sectional normalization
+        kwargs.setdefault('normalize', False) 
         super().__init__(name, 'alternative', description, lookback_period=None, **kwargs)
     
     def _validate_input(self, data: pd.DataFrame):
-        """
-        Override validation for alternative factors.
-        Alternative data is macro-level (no ticker required).
-        """
         if data.empty:
             raise ValueError(f"Empty DataFrame provided to {self.name}")
 

@@ -13,6 +13,7 @@ from quant_alpha.models.trainer import WalkForwardTrainer
 # Tip: Import your other model wrappers here
 from quant_alpha.models.xgboost_model import XGBoostModel
 from quant_alpha.models.catboost_model import CatBoostModel
+from quant_alpha.features.utils import winsorize
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -189,6 +190,10 @@ def verify_all_models():
     
     exclude = ['open', 'high', 'low', 'close', 'volume', 'target', 'date', 'ticker', 'index', 'level_0']
     features = [c for c in data.columns if c not in exclude]
+    
+    # Apply Winsorization (Consistency with Production)
+    logger.info("🧹 Applying Winsorization before Hyperopt...")
+    data = winsorize(data, features)
 
     # Models to optimize
     # Note: Replace placeholders with your actual imported classes
