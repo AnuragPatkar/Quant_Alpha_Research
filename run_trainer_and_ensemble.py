@@ -251,6 +251,15 @@ def run_production_pipeline():
     )
     logger.info(f"✨ Final Selected Features: {len(selected_features)}")
 
+    # --- FIX: Ensure Categorical Features are preserved ---
+    # FeatureSelector only selects numeric features. We must manually add back 
+    # categorical features like 'sector' and 'industry' if they exist.
+    potential_cats = ['sector', 'industry']
+    for cat in potential_cats:
+        if cat in data.columns and cat not in selected_features:
+            selected_features.append(cat)
+            logger.info(f"➕ Manually added categorical feature: {cat}")
+
     # 4. Model Training Configuration (Using 'Gold' Hyperparameters)
     # n_estimators aur regularization ko optimize kiya gaya hai
     models_config = {
@@ -270,7 +279,7 @@ def run_production_pipeline():
     for name, (model_class, params) in models_config.items():
         # Safety check for CatBoost features
         if 'cat_features' in params:
-            params['cat_features'] = [c for c in params['cat_features'] if c in data.columns]
+            params['cat_features'] = [c for c in params['cat_features'] if c in selected_features]
             
         logger.info(f"🧠 Training {name}...")
         trainer = WalkForwardTrainer(
@@ -282,7 +291,7 @@ def run_production_pipeline():
 
         # --- NEW: Train & Save Production Model ---
         logger.info(f"📦 Saving Production Model: {name}")
-        prod_model = model_class(**params)
+        prod_model = model_class(params=params)
         
         # Train on full dataset (using selected features)
         prod_model.fit(data[selected_features], data['target'])
