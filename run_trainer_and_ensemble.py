@@ -5,6 +5,7 @@ from scipy.stats import spearmanr
 import os
 import logging
 import warnings
+import joblib
 
 # --- CONFIGURATION & SUPPRESSION ---
 os.environ["PYTHONWARNINGS"] = "ignore"
@@ -17,6 +18,7 @@ from quant_alpha.models.trainer import WalkForwardTrainer
 from quant_alpha.models.lightgbm_model import LightGBMModel
 from quant_alpha.models.xgboost_model import XGBoostModel
 from quant_alpha.models.catboost_model import CatBoostModel
+from quant_alpha.models.feature_selector import FeatureSelector
 from quant_alpha.features.utils import rank_transform, winsorize, cross_sectional_normalize
 
 # --- RISK & PORTFOLIO PARAMETERS ---
@@ -228,6 +230,27 @@ def run_production_pipeline():
     data = winsorize(data, numeric_features)
     data = cross_sectional_normalize(data, numeric_features)
 
+    # --- NEW: Feature Selection Integration ---
+    logger.info("🧹 Starting Feature Selection...")
+    # Define meta_cols to protect
+    meta_cols = ['ticker', 'date', 'target', 'pnl_return']
+    selector = FeatureSelector(meta_cols=meta_cols)
+
+    # 1. Filter Variance & Correlation
+    data = selector.drop_low_variance(data)
+    data = selector.drop_high_correlation(data)
+
+    # 2. Select Top Alpha Factors
+    # Using LightGBM for importance as it's fast and effective
+    selected_features = selector.select_by_importance(
+        df=data,
+        model_class=LightGBMModel,
+        model_params={'n_estimators': 100, 'learning_rate': 0.05, 'num_leaves': 31},
+        top_n=40,
+        target_col='target'
+    )
+    logger.info(f"✨ Final Selected Features: {len(selected_features)}")
+
     # 4. Model Training Configuration (Using 'Gold' Hyperparameters)
     # n_estimators aur regularization ko optimize kiya gaya hai
     models_config = {
@@ -255,7 +278,21 @@ def run_production_pipeline():
             step_months=6, window_type='sliding', embargo_days=21, model_params=params
         )
         # Train on 'target' (21-day alpha)
-        oos_preds_master[name] = trainer.train(data, all_features, 'target')
+        oos_preds_master[name] = trainer.train(data, selected_features, 'target')
+
+        # --- NEW: Train & Save Production Model ---
+        logger.info(f"📦 Saving Production Model: {name}")
+        prod_model = model_class(**params)
+        
+        # Train on full dataset (using selected features)
+        prod_model.fit(data[selected_features], data['target'])
+        
+        # Save Bridge (Model + Features)
+        os.makedirs("models/production", exist_ok=True)
+        save_path = f"models/production/{name.lower()}_latest.pkl"
+        payload = {'model': prod_model, 'feature_names': selected_features}
+        joblib.dump(payload, save_path)
+        logger.info(f"✅ Saved {name} to {save_path}")
 
     # 5. Robust Ensemble Blending
     ensemble_df = None
