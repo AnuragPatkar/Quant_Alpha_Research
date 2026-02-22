@@ -3,6 +3,8 @@ import numpy as np
 from typing import Dict, Optional
 import logging
 
+from .utils import calculate_returns, calculate_max_drawdown
+
 logger = logging.getLogger(__name__)
 
 class PerformanceMetrics:
@@ -44,7 +46,7 @@ class PerformanceMetrics:
             raise KeyError("DataFrame must have a 'date' column or a DatetimeIndex.")
         
         # Calculate returns and drop first row to avoid bias in mean/std
-        df['return'] = df['total_value'].pct_change()
+        df['return'] = calculate_returns(df['total_value'])
         returns_series = df['return'].dropna()
 
         metrics = {}
@@ -130,10 +132,15 @@ class PerformanceMetrics:
     
     def _calculate_drawdown_metrics(self, df: pd.DataFrame) -> Dict:
         equity = df['total_value']
-        running_max = equity.cummax()
-        drawdowns = (equity - running_max) / running_max
+        
+        # Use robust calculation from utils for the headline number
+        max_dd = calculate_max_drawdown(equity)
 
-        max_dd = drawdowns.min()
+        # Re-calculate series for duration/recovery analysis (using same safety logic)
+        running_max = equity.cummax()
+        safe_max = running_max.replace(0, np.nan) # Safety against division by zero
+        drawdowns = (equity - safe_max) / safe_max
+        
         trough_date = drawdowns.idxmin()
         peak_date = equity[:trough_date].idxmax()
         peak_val = equity.loc[peak_date]
