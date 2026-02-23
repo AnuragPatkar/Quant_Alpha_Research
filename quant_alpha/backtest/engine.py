@@ -124,7 +124,7 @@ class BacktestEngine:
             impact = 0.0
             vol = mkt_data.get('volatility', 0.02)
             if self.impact_model:
-                impact = self.impact_model.calculate_impact(abs(diff), mkt_data['volume'], vol)
+                impact = self.impact_model.calculate_impact(abs(diff), mkt_data['volume'], vol, side=side)
 
             # Execution Simulator (Architecture Part 5A)
             fill_result = self.executor.execute_order(
