@@ -168,10 +168,13 @@ class PerformanceMetrics:
             return {'total_trades': 0, 'trade_win_rate': 0.0, 'profit_factor': 0.0, 'expectancy': 0.0, 'trades_per_day': 0.0}
         
         pnls = trades_df['pnl']
-        wins = pnls[pnls > 0]
-        losses = pnls[pnls < 0]
+        # Filter for actual PnL events (exclude entries with 0 PnL)
+        closed_trades = pnls[pnls != 0]
         
-        win_rate = len(wins) / len(pnls)
+        wins = closed_trades[closed_trades > 0]
+        losses = closed_trades[closed_trades < 0]
+        
+        win_rate = len(wins) / len(closed_trades) if not closed_trades.empty else 0.0
         avg_win = wins.mean() if not wins.empty else 0
         avg_loss = losses.mean() if not losses.empty else 0
 

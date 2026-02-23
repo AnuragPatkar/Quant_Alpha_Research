@@ -92,7 +92,7 @@ class Portfolio:
         self.position_costs[ticker] = ((old_shares * old_cost) + total_cost) / new_shares
         self.positions[ticker] = new_shares
         
-        self._record_tx('buy', ticker, shares, exec_price, commission)
+        self._record_tx('buy', ticker, shares, exec_price, commission, pnl=0.0)
         return True
     
     def sell(self, ticker: str, shares: float, price: float, commission: Optional[float] = None) -> bool:
@@ -118,7 +118,8 @@ class Portfolio:
         
         # Realize P&L
         cost_basis = self.position_costs[ticker]
-        self.realized_pnl += (net_proceeds - (shares * cost_basis))
+        trade_pnl = net_proceeds - (shares * cost_basis)
+        self.realized_pnl += trade_pnl
         
         self.cash += net_proceeds
         self.total_commissions += commission
@@ -132,7 +133,7 @@ class Portfolio:
             # Optional: Remove from current_prices to keep state clean
             # if ticker in self.current_prices: del self.current_prices[ticker]
         
-        self._record_tx('sell', ticker, shares, exec_price, commission)
+        self._record_tx('sell', ticker, shares, exec_price, commission, pnl=trade_pnl)
         return True
 
     def record_daily_snapshot(self, date: pd.Timestamp):
@@ -143,10 +144,10 @@ class Portfolio:
             'realized_pnl': self.realized_pnl
         })
 
-    def _record_tx(self, type, ticker, shares, price, comm):
+    def _record_tx(self, type, ticker, shares, price, comm, pnl=0.0):
         self.transaction_history.append({
             'type': type, 'ticker': ticker, 'shares': shares, 
-            'price': price, 'commission': comm, 'nav': self.total_value
+            'price': price, 'commission': comm, 'pnl': pnl, 'nav': self.total_value
         })
 
     def update_prices(self, prices: pd.DataFrame):
