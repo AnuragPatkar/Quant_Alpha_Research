@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Union
 import logging
 
 logger = logging.getLogger(__name__)
@@ -150,18 +150,21 @@ class Portfolio:
             'price': price, 'commission': comm, 'pnl': pnl, 'nav': self.total_value
         })
 
-    def update_prices(self, prices: pd.DataFrame):
+    def update_prices(self, prices: Union[pd.DataFrame, Dict[str, float]]):
         """
-        Accepts DataFrame with [ticker, close]
+        Accepts DataFrame with [ticker, close] OR Dictionary {ticker: close}
         Optimized for speed using dictionary mapping.
         """
-        # --- FIX 3: Performance Optimization ---
-        # iterrows() hatakar vectorized dictionary mapping use kiya
-        if prices.empty: return
-        
-        # Filter only relevant tickers to save memory
-        relevant_prices = prices[prices['ticker'].isin(self.positions.keys())]
-        
-        # Bulk update
-        new_prices = dict(zip(relevant_prices['ticker'], relevant_prices['close']))
-        self.current_prices.update(new_prices)
+        if isinstance(prices, dict):
+            self.current_prices.update(prices)
+            return
+
+        if isinstance(prices, pd.DataFrame):
+            if prices.empty: return
+            
+            # Filter only relevant tickers to save memory
+            relevant_prices = prices[prices['ticker'].isin(self.positions.keys())]
+            
+            # Bulk update
+            new_prices = dict(zip(relevant_prices['ticker'], relevant_prices['close']))
+            self.current_prices.update(new_prices)

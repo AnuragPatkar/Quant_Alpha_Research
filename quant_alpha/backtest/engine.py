@@ -60,16 +60,35 @@ class BacktestEngine:
                 day_preds = predictions[predictions['date'] == date].head(top_n)
                 target_weights = self._generate_weights(day_preds, top_n)
                 
+                # Prepare maps for Risk Manager
+                adv_map = {}
+                price_map_risk = {}
+                sector_map = {}
+                
+                if isinstance(day_prices, pd.DataFrame):
+                    if 'volume' in day_prices.columns:
+                        adv_map = day_prices['volume'].to_dict()
+                    if 'close' in day_prices.columns:
+                        price_map_risk = day_prices['close'].to_dict()
+                    if 'sector' in day_prices.columns:
+                        sector_map = day_prices['sector'].to_dict()
+                
                 # Apply Risk Management
-                safe_weights = self.risk_manager.apply_constraints(target_weights, self.portfolio.total_value)
-                self._execute_rebalance(date, safe_weights, prices_indexed)
+                safe_weights = self.risk_manager.apply_constraints(
+                    target_weights, 
+                    self.portfolio.total_value,
+                    adv_map=adv_map,
+                    price_map=price_map_risk,
+                    sector_map=sector_map
+                )
+                self._execute_rebalance(date, safe_weights, day_prices)
 
             # 5. Snapshot: Single Source of Truth (Portfolio internally tracks equity_curve)
             self.portfolio.record_daily_snapshot(date)
 
         return self._wrap_results()
 
-    def _execute_rebalance(self, date, target_weights, prices_indexed):
+    def _execute_rebalance(self, date, target_weights, day_prices):
         """Phase-based execution: Sell first to free up capital, then Buy."""
         current_holdings = self.portfolio.get_holdings()
         
@@ -78,8 +97,8 @@ class BacktestEngine:
         for ticker, weight in target_weights.items():
             target_dollar = (self.portfolio.total_value * weight) * 0.99
             try:
-                if (date, ticker) in prices_indexed.index:
-                    px = prices_indexed.loc[(date, ticker), 'close']
+                if ticker in day_prices.index:
+                    px = day_prices.loc[ticker, 'close']
                     if px > 0:
                         targets[ticker] = int(target_dollar // px)
             except Exception:
@@ -104,20 +123,20 @@ class BacktestEngine:
         # Execute Sells first
         for ticker, target in sells:
             reason = "LIQUIDATE" if target == 0 else "REBALANCE"
-            self._process_order(date, ticker, target, prices_indexed, reason)
+            self._process_order(date, ticker, target, day_prices, reason)
             
         # Execute Buys next
         for ticker, target in buys:
-            self._process_order(date, ticker, target, prices_indexed, "REBALANCE")
+            self._process_order(date, ticker, target, day_prices, "REBALANCE")
 
-    def _process_order(self, date, ticker, target_shares, prices_indexed, reason):
+    def _process_order(self, date, ticker, target_shares, day_prices, reason):
         current_shares = self.portfolio.positions.get(ticker, 0)
         diff = target_shares - current_shares
         
         if diff == 0: return
 
         try:
-            mkt_data = prices_indexed.loc[(date, ticker)]
+            mkt_data = day_prices.loc[ticker]
             side = 'buy' if diff > 0 else 'sell'
             
             # Market Impact calculation

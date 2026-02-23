@@ -20,6 +20,9 @@ from quant_alpha.models.xgboost_model import XGBoostModel
 from quant_alpha.models.catboost_model import CatBoostModel
 from quant_alpha.models.feature_selector import FeatureSelector
 from quant_alpha.features.utils import rank_transform, winsorize, cross_sectional_normalize
+from quant_alpha.backtest.engine import BacktestEngine
+from quant_alpha.backtest.metrics import print_metrics_report
+from quant_alpha.backtest.attribution import SimpleAttribution
 
 # --- RISK & PORTFOLIO PARAMETERS ---
 TOP_N_STOCKS = 25
@@ -83,99 +86,6 @@ def calculate_ranks_robust(df):
     rank_cols = [f'rank_{c}' for c in pred_cols]
     df['ensemble_alpha'] = df[rank_cols].mean(axis=1, skipna=True)
     return df
-
-def plot_performance_tear_sheet(df):
-    """
-    Realistic Backtest Evaluation using Next-Day Returns.
-    Fixes the 'linear approximation' issue by using actual daily realized P&L.
-    """
-    logger.info("📊 Generating Reality-Based Performance Tear Sheet...")
-    
-    # 1. Select top stocks for each day based on Ensemble Alpha
-    portfolio = df.set_index('date').groupby(level='date', group_keys=False).apply(
-        lambda x: x.nlargest(TOP_N_STOCKS, 'ensemble_alpha')
-    )
-    
-    # ---------------------------------------------------------
-    # FIX: Use pnl_return (Next Day) instead of target (21-Day)
-    # ---------------------------------------------------------
-    # Apply Stop Loss logic on daily realized returns
-    portfolio['pnl_adj'] = np.where(
-        portfolio['pnl_return'] <= STOCK_STOP_LOSS, 
-        STOCK_STOP_LOSS + SL_SLIPPAGE_PENALTY, 
-        portfolio['pnl_return']
-    )
-    
-    # Average daily return of the selected TOP_N_STOCKS
-    daily_returns = portfolio.groupby(level='date')['pnl_adj'].mean()
-    
-    # Full transaction cost applied on daily rebalancing (Conservative approach)
-    daily_returns -= TRANSACTION_COST
-
-    # 2. Equity Curve with Portfolio-Level Risk Management (DD Exit/Re-entry)
-    equity_curve, active = [1.0], True
-    v_equity, v_peak = 1.0, 1.0
-    active_flags = []
-
-    for ret in daily_returns:
-        v_equity *= (1 + ret)
-        v_peak = max(v_peak, v_equity)
-        v_dd = (v_equity - v_peak) / v_peak if v_peak != 0 else 0
-
-        if active:
-            # Continue investing if not in a major drawdown
-            equity_curve.append(equity_curve[-1] * (1 + ret))
-            if v_dd <= PORTFOLIO_DD_EXIT: 
-                logger.warning(f"📉 Portfolio DD Limit Hit ({v_dd:.2%}). Moving to Cash.")
-                active = False
-        else:
-            # Stay in cash until recovery
-            equity_curve.append(equity_curve[-1])
-            if v_dd >= PORTFOLIO_DD_REENTRY: 
-                logger.info(f"✅ Recovery Detected ({v_dd:.2%}). Re-entering Market.")
-                active = True
-        
-        active_flags.append(1 if active else 0)
-
-    # 3. Metrics Calculation
-    equity_series = pd.Series(equity_curve[1:], index=daily_returns.index)
-    
-    # Annualized Return (Geometric Mean)
-    days = len(equity_series)
-    ann_ret = ((equity_series.iloc[-1]) ** (252 / days) - 1) * 100 if days > 0 else 0
-    
-    # Annualized Volatility
-    vol = equity_series.pct_change().std() * np.sqrt(252)
-    
-    # True Sharpe Ratio
-    sharpe = (ann_ret / 100) / vol if vol > 0 else 0
-    
-    # Maximum Drawdown
-    drawdown = (equity_series - equity_series.cummax()) / equity_series.cummax()
-    max_dd = drawdown.min() * 100
-
-    print(f"\n⭐ REALITY-BASED RESULTS")
-    print(f"--------------------------------------------------")
-    print(f"Sharpe Ratio:     {sharpe:.2f}")
-    print(f"Ann. Return:      {ann_ret:.2f}%")
-    print(f"Max Drawdown:     {max_dd:.2f}%")
-    print(f"Volatility:       {vol*100:.2f}%")
-    print(f"--------------------------------------------------")
-    
-    # 4. Visualization
-    plt.figure(figsize=(14, 7))
-    plt.plot(equity_series, color='#27ae60', linewidth=2, label='Alpha-Pro Strategy')
-    
-    # Highlight "Cash Only" (Inactive) periods in Red
-    plt.fill_between(equity_series.index, equity_series.min(), equity_series.max(), 
-                     where=pd.Series(active_flags, index=equity_series.index)==0, 
-                     color='red', alpha=0.1, label='In Cash (Risk Management)')
-    
-    plt.title(f"Strategy Equity Curve (Sharpe: {sharpe:.2f})", fontsize=14)
-    plt.ylabel("Portfolio Value (Starting at 1.0)")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.show()
 
 def run_production_pipeline():
     logger.info("🚀 Booting Optimized Alpha-Pro Engine...")
@@ -324,8 +234,48 @@ def run_production_pipeline():
     
     final_results = calculate_ranks_robust(ensemble_df)
     
-    # Tear sheet ab pnl_return (next day) use karega inflation hatane ke liye
-    plot_performance_tear_sheet(final_results)
+    # ---------------------------------------------------------
+    # FIX 4: Run Institutional Backtest Engine
+    # ---------------------------------------------------------
+    logger.info("🚀 Starting Institutional Backtest Simulation...")
+    
+    # Prepare Data for Engine
+    # Predictions: date, ticker, prediction (using ensemble_alpha)
+    backtest_preds = final_results[['date', 'ticker', 'ensemble_alpha']].rename(columns={'ensemble_alpha': 'prediction'})
+    
+    # Prices: date, ticker, close, volume, volatility
+    # Ensure volatility exists
+    if 'volatility' not in data.columns:
+        data['volatility'] = 0.02
+        
+    backtest_prices = data[['date', 'ticker', 'close', 'volume', 'volatility']].copy()
+    
+    # Initialize Engine
+    engine = BacktestEngine(
+        initial_capital=1_000_000,
+        commission=TRANSACTION_COST,
+        spread=0.0005,
+        slippage=0.0002,
+        position_limit=1.0/TOP_N_STOCKS, # Equal weight implied limit
+        rebalance_freq='daily', # As per original tear sheet logic
+        use_market_impact=True
+    )
+    
+    # Run Simulation
+    results = engine.run(
+        predictions=backtest_preds,
+        prices=backtest_prices,
+        top_n=TOP_N_STOCKS
+    )
+    
+    # Print Report
+    print_metrics_report(results['metrics'])
+    
+    # Attribution Analysis
+    logger.info("🔍 Running Attribution Analysis...")
+    attribution = SimpleAttribution()
+    attr_results = attribution.analyze_pnl_drivers(results['trades'])
+    print(f"\nAttribution: Hit Ratio={attr_results.get('hit_ratio',0):.2%}, Win/Loss={attr_results.get('win_loss_ratio',0):.2f}")
 
 if __name__ == "__main__":
     run_production_pipeline()
