@@ -58,12 +58,19 @@ class Portfolio:
 
     # ==================== TRADING OPERATIONS ====================
     
-    def buy(self, ticker: str, shares: float, price: float) -> bool:
+    def buy(self, ticker: str, shares: float, price: float, commission: Optional[float] = None) -> bool:
         if shares <= 0 or price <= 0: return False
 
-        exec_price = price * (1 + self.slippage_pct)
-        raw_cost = shares * exec_price
-        commission = raw_cost * self.commission_pct
+        if commission is not None:
+            # External execution: price is already fill_price, commission is explicit
+            exec_price = price
+            raw_cost = shares * exec_price
+        else:
+            # Internal execution
+            exec_price = price * (1 + self.slippage_pct)
+            raw_cost = shares * exec_price
+            commission = raw_cost * self.commission_pct
+            
         total_cost = raw_cost + commission
         
         # --- FIX 2: Floating Point Precision ---
@@ -88,7 +95,7 @@ class Portfolio:
         self._record_tx('buy', ticker, shares, exec_price, commission)
         return True
     
-    def sell(self, ticker: str, shares: float, price: float) -> bool:
+    def sell(self, ticker: str, shares: float, price: float, commission: Optional[float] = None) -> bool:
         # --- FIX 2: Floating Point Precision ---
         current_shares = self.positions.get(ticker, 0.0)
         if ticker not in self.positions or shares > current_shares + 1e-9:
@@ -97,9 +104,16 @@ class Portfolio:
         # Cap shares to held amount (handle rounding errors)
         shares = min(shares, current_shares)
 
-        exec_price = price * (1 - self.slippage_pct)
-        proceeds = shares * exec_price
-        commission = proceeds * self.commission_pct
+        if commission is not None:
+            # External execution
+            exec_price = price
+            proceeds = shares * exec_price
+        else:
+            # Internal execution
+            exec_price = price * (1 - self.slippage_pct)
+            proceeds = shares * exec_price
+            commission = proceeds * self.commission_pct
+            
         net_proceeds = proceeds - commission
         
         # Realize P&L
