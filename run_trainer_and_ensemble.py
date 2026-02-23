@@ -22,7 +22,7 @@ from quant_alpha.models.feature_selector import FeatureSelector
 from quant_alpha.features.utils import rank_transform, winsorize, cross_sectional_normalize
 from quant_alpha.backtest.engine import BacktestEngine
 from quant_alpha.backtest.metrics import print_metrics_report
-from quant_alpha.backtest.attribution import SimpleAttribution
+from quant_alpha.backtest.attribution import SimpleAttribution, FactorAttribution
 
 # --- RISK & PORTFOLIO PARAMETERS ---
 TOP_N_STOCKS = 25
@@ -247,8 +247,13 @@ def run_production_pipeline():
     # Ensure volatility exists
     if 'volatility' not in data.columns:
         data['volatility'] = 0.02
+    
+    # FIX: Include 'sector' for RiskManager if available
+    price_cols = ['date', 'ticker', 'close', 'volume', 'volatility']
+    if 'sector' in data.columns:
+        price_cols.append('sector')
         
-    backtest_prices = data[['date', 'ticker', 'close', 'volume', 'volatility']].copy()
+    backtest_prices = data[price_cols].copy()
     
     # Initialize Engine
     engine = BacktestEngine(
@@ -273,9 +278,32 @@ def run_production_pipeline():
     
     # Attribution Analysis
     logger.info("🔍 Running Attribution Analysis...")
-    attribution = SimpleAttribution()
-    attr_results = attribution.analyze_pnl_drivers(results['trades'])
-    print(f"\nAttribution: Hit Ratio={attr_results.get('hit_ratio',0):.2%}, Win/Loss={attr_results.get('win_loss_ratio',0):.2f}")
+    
+    # 1. Simple Attribution (PnL Drivers)
+    simple_attr = SimpleAttribution()
+    simple_results = simple_attr.analyze_pnl_drivers(results['trades'])
+    
+    print(f"\n[ PnL Attribution ]")
+    print(f"  Hit Ratio:     {simple_results.get('hit_ratio',0):.2%}")
+    print(f"  Win/Loss Ratio:{simple_results.get('win_loss_ratio',0):.2f}")
+    print(f"  Long PnL:      ${simple_results.get('long_pnl_contribution',0):,.0f}")
+    print(f"  Short PnL:     ${simple_results.get('short_pnl_contribution',0):,.0f}")
+
+    # 2. Factor Attribution (Alpha Predictive Power)
+    factor_attr = FactorAttribution()
+    
+    # Prepare data for IC (MultiIndex required: date, ticker)
+    ic_data = final_results.dropna(subset=['ensemble_alpha', 'pnl_return'])
+    if not ic_data.empty:
+        factor_vals = ic_data.set_index(['date', 'ticker'])[['ensemble_alpha']]
+        fwd_rets = ic_data.set_index(['date', 'ticker'])[['pnl_return']]
+        
+        rolling_ic = factor_attr.calculate_rolling_ic(factor_vals, fwd_rets)
+        
+        print(f"\n[ Factor Analysis (Ensemble Alpha) ]")
+        print(f"  Mean IC:       {rolling_ic.mean():.4f}")
+        print(f"  IC Std Dev:    {rolling_ic.std():.4f}")
+        print(f"  IR (IC/Std):   {rolling_ic.mean() / rolling_ic.std() if rolling_ic.std() != 0 else 0:.2f}")
 
 if __name__ == "__main__":
     run_production_pipeline()
