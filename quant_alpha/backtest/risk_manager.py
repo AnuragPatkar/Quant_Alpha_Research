@@ -25,7 +25,8 @@ class RiskManager:
         min_position_size: float = 0.001,    # Minimum tradeable size (0.1%)
         sector_limit: float = 0.30,          # Max 30% per sector
         max_adv_participation: float = 0.10, # Max 10% of Daily Volume
-        enable_sector_limits: bool = False
+        enable_sector_limits: bool = False,
+        target_volatility: float = 0.20      # NEW: Target 20% Annual Volatility
     ):
         self.position_limit = position_limit
         self.leverage_limit = leverage_limit
@@ -34,6 +35,7 @@ class RiskManager:
         self.sector_limit = sector_limit
         self.max_adv_participation = max_adv_participation
         self.enable_sector_limits = enable_sector_limits
+        self.target_volatility = target_volatility
         
         self.violations: List[Tuple] = []
         logger.info(f"RiskManager initialized with {position_limit*100}% pos limit.")
@@ -44,7 +46,8 @@ class RiskManager:
         portfolio_value: float,
         adv_map: Optional[Dict[str, float]] = None,
         sector_map: Optional[Dict[str, str]] = None,
-        price_map: Optional[Dict[str, float]] = None
+        price_map: Optional[Dict[str, float]] = None,
+        current_volatility: Optional[float] = None # NEW: Input for Vol Targeting
     ) -> Dict[str, float]:
         """
         Filters and scales weights to meet all risk criteria.
@@ -69,10 +72,25 @@ class RiskManager:
         if self.enable_sector_limits and sector_map:
             constrained = self._apply_sector_limits(constrained, sector_map)
 
+        # 5. Volatility Targeting (Dynamic De-leverage)
+        # Agar market volatility target se zyada hai, to exposure kam karo
+        if current_volatility and current_volatility > self.target_volatility:
+            vol_scalar = self.target_volatility / current_volatility
+            # Cap scalar at 1.0 (Hum leverage badhayenge nahi, sirf ghatayenge)
+            vol_scalar = min(vol_scalar, 1.0)
+            constrained = {t: w * vol_scalar for t, w in constrained.items()}
+
         # 5. Global Leverage Scaling
         constrained = self._apply_leverage_limit(constrained)
         
-        # 6. Final cleanup (Remove dust)
+        # 6. HHI Concentration Monitor
+        # Warn if portfolio is effectively holding < 5 stocks
+        if self.check_concentration(constrained):
+            self.violations.append(('concentration', 'portfolio', 0.0, 0.0))
+            # Note: We log violation but don't block trade to avoid stuck positions, 
+            # but this flag can be used by Engine to halt new entries.
+
+        # 7. Final cleanup (Remove dust)
         return self._remove_tiny_positions(constrained)
 
     def _apply_liquidity_limits(self, weights, p_value, adv_map, price_map):
@@ -85,9 +103,9 @@ class RiskManager:
             stock_adv_usd = adv * price
             
             if stock_adv_usd <= 0:
-                # Missing data: Retain existing weight (don't force liquidate)
-                # This prevents churn when volume data is temporarily missing
-                continue
+                # Fix: Treat missing volume as illiquid -> Force exit
+                constrained[t] = 0.0
+                self.violations.append(('liquidity_missing', t, w, 0.0))
             
             # Max $ position = X% of Daily $ Volume
             max_pos_usd = stock_adv_usd * self.max_adv_participation
@@ -132,6 +150,14 @@ class RiskManager:
             if s in sector_scales:
                 constrained[t] *= sector_scales[s]
         return constrained
+        
+    def check_concentration(self, weights: Dict[str, float]) -> bool:
+        """Returns True if portfolio is too concentrated (HHI check)."""
+        metrics = self.get_concentration_metrics(weights)
+        # If effective N < 5, it's too risky
+        if metrics['effective_n'] < 5 and len(weights) > 5:
+            return True
+        return False
 
     def _remove_tiny_positions(self, weights):
         return {t: w for t, w in weights.items() if w >= self.min_position_size}

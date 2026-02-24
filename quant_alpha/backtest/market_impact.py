@@ -13,8 +13,35 @@ Academic Foundation:
 
 import numpy as np
 import logging
+try:
+    from numba import jit
+    HAS_NUMBA = True
+except ImportError:
+    HAS_NUMBA = False
 
 logger = logging.getLogger(__name__)
+
+# --- NUMBA OPTIMIZED CORE ---
+def _calculate_impact_core(shares, volume, volatility, eta, gamma, alpha, beta, vol_ref, side_is_sell):
+    if volume <= 0 or shares == 0:
+        return 1.0 if shares != 0 else 0.0
+    
+    participation = abs(shares) / volume
+    
+    penalty = 1.0
+    if participation > 0.10:
+        penalty = 1 + (participation * 10) ** 2
+    
+    vol_scale = volatility / vol_ref if vol_ref > 0 else 1.0
+    side_mult = 1.1 if side_is_sell else 1.0
+    
+    perm_impact = gamma * (participation ** alpha) * vol_scale * side_mult
+    temp_impact = eta * (participation ** beta) * vol_scale * penalty
+    
+    return perm_impact + temp_impact
+
+if HAS_NUMBA:
+    _calculate_impact_core = jit(nopython=True)(_calculate_impact_core)
 
 
 class AlmgrenChrissImpact:
@@ -38,7 +65,7 @@ class AlmgrenChrissImpact:
     
     def __init__(
         self,
-        eta: float = 0.15,          # Temporary impact coefficient (Liquidity)
+        eta: float = 0.015,         # FIX: Lowered from 0.15 to 0.015 (Realistic ~10bps at 1% ADV)
         gamma: float = 0.1,         # Permanent impact coefficient (Info)
         alpha: float = 1.0,         # Permanent exponent (Linear)
         beta: float = 0.6,          # Temporary exponent (Concave)
@@ -79,7 +106,9 @@ class AlmgrenChrissImpact:
             Impact cost rate (e.g. 0.0010 for 10bps)
         """
         if volume <= 0 or shares == 0:
-            return 0.0
+            # SAFETY: If volume is 0 (illiquid/halted), cost is effectively infinite.
+            # We return a massive penalty (100%) to discourage the optimizer/engine.
+            return 1.0 if shares != 0 else 0.0
         
         # 1. Participation Rate (Always positive)
         participation = abs(shares) / volume
@@ -87,7 +116,7 @@ class AlmgrenChrissImpact:
         # NEW: Safety Penalty for excessive participation (>10% ADV)
         penalty = 1.0
         if participation > 0.10:
-            penalty = 1 + (participation - 0.10) * 5 # Exponential penalty
+            penalty = 1 + (participation * 10) ** 2 # Quadratic penalty (Institutional Standard)
         
         # 2. Volatility Scaling
         vol_scale = volatility / self.vol_ref if self.vol_ref > 0 else 1.0
@@ -95,14 +124,13 @@ class AlmgrenChrissImpact:
         # NEW: Asymmetry (Selling in a crisis is costlier)
         side_mult = 1.1 if side == 'sell' else 1.0
         
-        # 3. Calculate Components
-        # Permanent: Moves the mid-price (Linear)
-        perm_impact = self.gamma * (participation ** self.alpha) * vol_scale * side_mult
-        
-        # Temporary: Cost of liquidity (Concave)
-        temp_impact = self.eta * (participation ** self.beta) * vol_scale * penalty
-        
-        return perm_impact + temp_impact
+        return _calculate_impact_core(
+            float(shares), 
+            float(volume), 
+            float(volatility),
+            self.eta, self.gamma, self.alpha, self.beta, self.vol_ref,
+            side == 'sell'
+        )
     
     def estimate_capacity(
         self,
@@ -178,3 +206,16 @@ def compare_impact_models(shares: float, volume: float, volatility: float = 0.02
     logger.info(f"Almgren-Chriss: {ac_impact*10000:.2f} bps")
     logger.info(f"Simple Model:   {simple_impact*10000:.2f} bps")
     logger.info(f"Difference:     {abs(ac_impact - simple_impact)*10000:.2f} bps")
+
+if __name__ == "__main__":
+    # TCA Verification for Small Cap Scenario
+    # Scenario: Small Cap Stock ($10 Price, $1M ADV)
+    # Trade: 2% of ADV ($20k) -> 2,000 shares
+    print("\n🔍 TCA VERIFICATION (Small Cap Scenario)")
+    print("Stock: $10 | ADV: $1M (100k shares) | Volatility: 3%")
+    print("Trade: Buy $20k (2% Participation)")
+    
+    compare_impact_models(shares=2000, volume=100000, volatility=0.03)
+    
+    print("\n✅ Result: Impact should be < 10 bps for 2% participation.")
+    print("   If Impact > 100 bps (1%), then Eta is too high.")

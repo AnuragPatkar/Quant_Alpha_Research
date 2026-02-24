@@ -96,6 +96,9 @@ def run_production_pipeline():
     if 'date' not in data.columns: data = data.reset_index()
     data['date'] = pd.to_datetime(data['date'])
     
+    # --- FIX: Ensure Unique Index (Prevents Duplicates Error) ---
+    data = data.drop_duplicates(subset=['date', 'ticker'])
+    
     # ---------------------------------------------------------
     # FIX: Sort is required before shift() operations
     # ---------------------------------------------------------
@@ -104,10 +107,17 @@ def run_production_pipeline():
     # ---------------------------------------------------------
     # FIX 1: Separate Training Target from Reality-based P&L
     # ---------------------------------------------------------
-    # Training Target: 21-Day Forward Alpha (Noise Filter)
-    data['target'] = data.groupby('ticker')['close'].shift(-21) / data['close'] - 1
+    # Training Target: 5-Day Forward Alpha (Aligned with Weekly Rebalance)
+    # LOGIC CHANGE: 21-day target for weekly trading causes signal lag. 5-day is sharper.
+    data['raw_ret_5d'] = data.groupby('ticker')['close'].shift(-5) / data['close'] - 1
     
-    # P&L Return: Next Day Return (Reality check for Tear Sheet)
+    # LOGIC CHANGE: Sector Neutralization (Pure Alpha)
+    # Subtract the sector's average return from the stock's return.
+    # This removes "Beta" and isolates "Alpha".
+    sector_mean = data.groupby(['date', 'sector'])['raw_ret_5d'].transform('mean')
+    data['target'] = data['raw_ret_5d'] - sector_mean
+    
+    # P&L Return: Next Day Return (Reality check for Backtest)
     data['pnl_return'] = data.groupby('ticker')['close'].shift(-1) / data['close'] - 1
     
     data = data.dropna(subset=['target', 'pnl_return'])
@@ -115,7 +125,7 @@ def run_production_pipeline():
     # ---------------------------------------------------------
     # FIX 2: Categorical Preservation & Vectorized Imputation
     # ---------------------------------------------------------
-    exclude = ['open', 'high', 'low', 'close', 'volume', 'target', 'pnl_return', 'date', 'ticker', 'index', 'level_0']
+    exclude = ['open', 'high', 'low', 'close', 'volume', 'target', 'pnl_return', 'date', 'ticker', 'index', 'level_0', 'raw_ret_5d']
     
     # Identify Numeric vs Categorical features
     numeric_features = data.select_dtypes(include=[np.number]).columns.tolist()
@@ -143,12 +153,48 @@ def run_production_pipeline():
     # --- NEW: Feature Selection Integration ---
     logger.info("🧹 Starting Feature Selection...")
     # Define meta_cols to protect
-    meta_cols = ['ticker', 'date', 'target', 'pnl_return']
+    meta_cols = ['ticker', 'date', 'target', 'pnl_return', 'open', 'high', 'low', 'close', 'volume', 'sector', 'industry', 'raw_ret_5d']
     selector = FeatureSelector(meta_cols=meta_cols)
 
     # 1. Filter Variance & Correlation
     data = selector.drop_low_variance(data)
-    data = selector.drop_high_correlation(data)
+    
+    # --- FIX: Strict Correlation Filter (Threshold: 0.75) ---
+    # Cluster analysis showed high redundancy (0.9+). We filter strictly at 0.75.
+    logger.info("🧹 Applying Strict Correlation Filter (Threshold: 0.75)...")
+    numeric_df = data.select_dtypes(include=[np.number])
+    
+    # 1. Calculate IC for each feature to decide winner
+    feature_ic = {}
+    for col in numeric_df.columns:
+        if col not in meta_cols:
+            ic = numeric_df[col].corr(data['target'])
+            feature_ic[col] = abs(ic) if not np.isnan(ic) else 0.0
+            
+    # Calculate correlation matrix
+    corr_matrix = numeric_df.corr().abs()
+    # Select upper triangle of correlation matrix
+    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+    
+    # Find features to drop (Smart Selection)
+    to_drop = set()
+    for col in upper.columns:
+        if col in meta_cols: continue
+        
+        # Check correlations
+        high_corr_cols = upper.index[upper[col] > 0.75].tolist()
+        for other_col in high_corr_cols:
+            if other_col in meta_cols: continue
+            
+            # Keep the one with higher IC
+            if feature_ic.get(col, 0) < feature_ic.get(other_col, 0):
+                to_drop.add(col)
+            else:
+                to_drop.add(other_col)
+    
+    if to_drop:
+        logger.info(f"📉 Dropping {len(to_drop)} redundant features (kept higher IC ones): {list(to_drop)}")
+        data = data.drop(columns=list(to_drop))
 
     # 2. Select Top Alpha Factors
     # Using LightGBM for importance as it's fast and effective
@@ -156,7 +202,7 @@ def run_production_pipeline():
         df=data,
         model_class=LightGBMModel,
         model_params={'n_estimators': 100, 'learning_rate': 0.05, 'num_leaves': 31},
-        top_n=40,
+        top_n=40, # Optimized: "Less is More" - 40 orthogonal features
         target_col='target'
     )
     logger.info(f"✨ Final Selected Features: {len(selected_features)}")
@@ -172,16 +218,20 @@ def run_production_pipeline():
 
     # 4. Model Training Configuration (Using 'Gold' Hyperparameters)
     # n_estimators aur regularization ko optimize kiya gaya hai
+    logger.info("⚙️ Applying Final Hyperopt Parameters...")
     models_config = {
         "LightGBM": (LightGBMModel, {
-            'n_estimators': 600, 'learning_rate': 0.02, 'reg_lambda': 1.0, 
-            'num_leaves': 39, 'importance_type': 'gain'
+            'n_estimators': 300, 'learning_rate': 0.035675689449899364, 'reg_lambda': 18.37226620326944, 
+            'num_leaves': 24, 'max_depth': 6, 'importance_type': 'gain'
         }),
         "XGBoost": (XGBoostModel, {
-            'n_estimators': 600, 'learning_rate': 0.02, 'max_depth': 3, 'reg_lambda': 1.0
+            'n_estimators': 300, 'learning_rate': 0.03261427122370329, 'max_depth': 3, 
+            'reg_lambda': 67.87878943705068, 'min_child_weight': 1, 'subsample': 0.6756485311881795
         }),
         "CatBoost": (CatBoostModel, {
-            'iterations': 600, 'l2_leaf_reg': 3.0, 'verbose': 0, 'cat_features': ['sector', 'industry']
+            'iterations': 300, 'learning_rate': 0.03693249563204964, 'depth': 5, 
+            'l2_leaf_reg': 27.699310279154073, 'subsample': 0.8996377987961148, 
+            'verbose': 0, 'cat_features': ['sector', 'industry']
         })
     }
 
@@ -234,6 +284,12 @@ def run_production_pipeline():
     
     final_results = calculate_ranks_robust(ensemble_df)
     
+    # --- NEW: Save Predictions for Fast Backtesting ---
+    pred_cache_path = r"E:\coding\quant_alpha_research\data\cache\ensemble_predictions.parquet"
+    os.makedirs(os.path.dirname(pred_cache_path), exist_ok=True)
+    logger.info(f"💾 Saving Ensemble Predictions to {pred_cache_path}...")
+    final_results.to_parquet(pred_cache_path)
+
     # ---------------------------------------------------------
     # FIX 4: Run Institutional Backtest Engine
     # ---------------------------------------------------------
@@ -242,6 +298,9 @@ def run_production_pipeline():
     # Prepare Data for Engine
     # Predictions: date, ticker, prediction (using ensemble_alpha)
     backtest_preds = final_results[['date', 'ticker', 'ensemble_alpha']].rename(columns={'ensemble_alpha': 'prediction'})
+    
+    # FIX: Explicitly drop duplicates to satisfy BacktestEngine validation
+    backtest_preds = backtest_preds.drop_duplicates(subset=['date', 'ticker'])
     
     # Prices: date, ticker, close, volume, volatility
     # Ensure volatility exists
@@ -254,6 +313,8 @@ def run_production_pipeline():
         price_cols.append('sector')
         
     backtest_prices = data[price_cols].copy()
+    # FIX: Ensure prices are unique
+    backtest_prices = backtest_prices.drop_duplicates(subset=['date', 'ticker'])
     
     # Initialize Engine
     engine = BacktestEngine(
@@ -261,10 +322,13 @@ def run_production_pipeline():
         commission=TRANSACTION_COST,
         spread=0.0005,
         slippage=0.0002,
-        position_limit=1.0/TOP_N_STOCKS, # Equal weight implied limit
-        rebalance_freq='daily', # As per original tear sheet logic
-        use_market_impact=True
+        position_limit=0.10, # FIX: Relaxed to 10% to allow Inverse-Vol weighting to work
+        rebalance_freq='weekly', # Optimized for speed and lower churn
+        use_market_impact=True,
+        target_volatility=0.15, # FIX: Lowered to 15% (Institutional Standard)
+        max_adv_participation=0.02 # FIX: Cap participation at 2% of ADV to minimize impact
     )
+    # Note: Sector limits disabled in RiskManager default (False) which is correct for Sector-Neutral Alpha
     
     # Run Simulation
     results = engine.run(

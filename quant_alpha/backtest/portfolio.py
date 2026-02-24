@@ -56,10 +56,13 @@ class Portfolio:
     def cash_pct(self) -> float:
         return self.cash / self.total_value if self.total_value > 0 else 0
 
+    def get_holdings(self) -> Dict[str, float]:
+        return self.positions.copy()
+
     # ==================== TRADING OPERATIONS ====================
     
-    def buy(self, ticker: str, shares: float, price: float, commission: Optional[float] = None) -> bool:
-        if shares <= 0 or price <= 0: return False
+    def buy(self, ticker: str, shares: float, price: float, commission: Optional[float] = None) -> Optional[float]:
+        if shares <= 0 or price <= 0: return None
 
         if commission is not None:
             # External execution: price is already fill_price, commission is explicit
@@ -77,7 +80,7 @@ class Portfolio:
         # Allow tiny margin of error (epsilon) for full cash usage
         if total_cost > self.cash + 1e-9:
             logger.warning(f"Insufficient cash for {ticker}: Need {total_cost:.2f}, Have {self.cash:.2f}")
-            return False
+            return None
         
         self.cash -= total_cost
         self.total_commissions += commission
@@ -89,17 +92,18 @@ class Portfolio:
         new_shares = old_shares + shares
         
         # Weighted Average Cost
-        self.position_costs[ticker] = ((old_shares * old_cost) + total_cost) / new_shares
+        # Fix: Exclude commission from cost basis (Accounting Standard)
+        self.position_costs[ticker] = ((old_shares * old_cost) + raw_cost) / new_shares
         self.positions[ticker] = new_shares
         
         self._record_tx('buy', ticker, shares, exec_price, commission, pnl=0.0)
-        return True
+        return 0.0
     
-    def sell(self, ticker: str, shares: float, price: float, commission: Optional[float] = None) -> bool:
+    def sell(self, ticker: str, shares: float, price: float, commission: Optional[float] = None) -> Optional[float]:
         # --- FIX 2: Floating Point Precision ---
         current_shares = self.positions.get(ticker, 0.0)
         if ticker not in self.positions or shares > current_shares + 1e-9:
-            return False
+            return None
         
         # Cap shares to held amount (handle rounding errors)
         shares = min(shares, current_shares)
@@ -134,12 +138,13 @@ class Portfolio:
             # if ticker in self.current_prices: del self.current_prices[ticker]
         
         self._record_tx('sell', ticker, shares, exec_price, commission, pnl=trade_pnl)
-        return True
+        return trade_pnl
 
     def record_daily_snapshot(self, date: pd.Timestamp):
         self.equity_curve.append({
             'date': date,
             'nav': self.total_value,
+            'total_value': self.total_value,
             'cash': self.cash,
             'realized_pnl': self.realized_pnl
         })
@@ -147,7 +152,7 @@ class Portfolio:
     def _record_tx(self, type, ticker, shares, price, comm, pnl=0.0):
         self.transaction_history.append({
             'type': type, 'ticker': ticker, 'shares': shares, 
-            'price': price, 'commission': comm, 'pnl': pnl, 'nav': self.total_value
+            'price': price, 'commission': comm, 'pnl': pnl, 'total_value': self.total_value
         })
 
     def update_prices(self, prices: Union[pd.DataFrame, Dict[str, float]]):

@@ -60,8 +60,8 @@ class ExecutionSimulator:
         
         # 3. Market Friction Costs (Spread + Slippage + Impact)
         # Scalable Slippage: Variance scales with volatility
-        slippage_variance = np.random.normal(1.0, volatility * 5) # 5x vol for tail risk
-        slippage_variance = max(0.1, slippage_variance) # Cap at lower bound
+        # Fix: Use LogNormal to ensure positive distribution and realistic tails
+        slippage_variance = np.random.lognormal(0, volatility)
         
         total_friction_rate = self.spread_bps + (self.slippage_bps * slippage_variance) + impact_rate
         friction_usd = total_friction_rate * notional

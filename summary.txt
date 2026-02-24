@@ -1,5 +1,5 @@
 🏆 FINAL MULTI-MODEL SUMMARY
 ═════════════════════════════════════════════
-✅ LightGBM: {'num_leaves': 24, 'max_depth': 7, 'learning_rate': 0.03329423369746392, 'reg_lambda': 18.787446419429912}
-✅ XGBoost: {'max_depth': 4, 'learning_rate': 0.022127012677889375, 'reg_lambda': 20.227251229345626, 'min_child_weight': 5, 'subsample': 0.682758926888865}
-✅ CatBoost: {'depth': 6, 'learning_rate': 0.027959917910737448, 'l2_leaf_reg': 14.304001334450705, 'subsample': 0.6913767539633211}
+✅ LightGBM: {'num_leaves': 24, 'max_depth': 6, 'learning_rate': 0.035675689449899364, 'reg_lambda': 18.37226620326944}
+✅ XGBoost: {'max_depth': 3, 'learning_rate': 0.03261427122370329, 'reg_lambda': 67.87878943705068, 'min_child_weight': 1, 'subsample': 0.6756485311881795}
+✅ CatBoost: {'depth': 5, 'learning_rate': 0.03693249563204964, 'l2_leaf_reg': 27.699310279154073, 'subsample': 0.8996377987961148}

@@ -105,7 +105,7 @@ class FactorAttribution:
     ) -> pd.Series:
         """
         Calculates Rolling Information Coefficient (Spearman Rank Correlation).
-        Expects MultiIndex (date, ticker) for both inputs.
+        IMPORTANT: forward_returns must be shifted (t+1) aligned to factor_values (t).
         """
         ic_series = []
         
@@ -164,12 +164,12 @@ class SimpleAttribution:
         # Logic: PnL is realized on the CLOSING leg.
         # Closing a Long position involves SELLING.
         # Closing a Short position involves BUYING.
+        # Assuming Long-Only strategy for simplicity in this report.
         
-        long_trades = trades_df[trades_df['side'] == 'sell']
-        short_trades = trades_df[trades_df['side'] == 'buy']
-        
-        long_pnl = long_trades['pnl'].sum() if not long_trades.empty else 0.0
-        short_pnl = short_trades['pnl'].sum() if not short_trades.empty else 0.0
+        # Fix: Sum PnL from all trades. In Long-Only, 'buy' has 0 PnL, 'sell' has realized PnL.
+        # If Shorting exists, 'buy' would have PnL.
+        long_pnl = trades_df[trades_df['pnl'] > 0]['pnl'].sum() + trades_df[trades_df['pnl'] < 0]['pnl'].sum()
+        short_pnl = 0.0 # Placeholder for Long-Only
         
         winners = closed_trades[closed_trades['pnl'] > 0]
         losers = closed_trades[closed_trades['pnl'] < 0]

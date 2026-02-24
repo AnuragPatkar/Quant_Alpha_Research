@@ -8,6 +8,7 @@ from .execution import ExecutionSimulator
 from .market_impact import AlmgrenChrissImpact
 from .risk_manager import RiskManager
 from .metrics import PerformanceMetrics
+from .utils import validate_backtest_data
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +22,14 @@ class BacktestEngine:
         position_limit: float = 0.05,
         leverage_limit: float = 1.0,
         rebalance_freq: str = 'weekly',
-        use_market_impact: bool = True
+        use_market_impact: bool = True,
+        target_volatility: float = 0.20,
+        max_adv_participation: float = 0.02 # NEW: Default 2% limit
     ):
         self.portfolio = Portfolio(initial_capital)
         self.executor = ExecutionSimulator(commission, spread, slippage)
         self.impact_model = AlmgrenChrissImpact() if use_market_impact else None
-        self.risk_manager = RiskManager(position_limit, leverage_limit)
+        self.risk_manager = RiskManager(position_limit, leverage_limit, target_volatility=target_volatility, max_adv_participation=max_adv_participation)
         self.metrics_engine = PerformanceMetrics()
         
         self.initial_capital = initial_capital
@@ -34,6 +37,11 @@ class BacktestEngine:
         self.trades = []
 
     def run(self, predictions: pd.DataFrame, prices: pd.DataFrame, top_n: int = 50):
+        # 0. Validation
+        is_valid, errors = validate_backtest_data(predictions, prices)
+        if not is_valid:
+            raise ValueError(f"Data Validation Failed: {errors}")
+
         # 1. Setup Data - Ensure MultiIndex is sorted for performance
         predictions = predictions.sort_values(['date', 'prediction'], ascending=[True, False])
         dates = sorted(predictions['date'].unique())
@@ -57,8 +65,24 @@ class BacktestEngine:
 
             # 4. Rebalance Logic
             if self._is_rebalance_day(date, i):
-                day_preds = predictions[predictions['date'] == date].head(top_n)
-                target_weights = self._generate_weights(day_preds, top_n)
+                # Fix: Pass more predictions to allow Buffer Logic (Top 100)
+                day_preds = predictions[predictions['date'] == date].head(top_n * 4)
+                
+                # Calculate Rolling Volatility (21-day lookback)
+                current_vol = 0.0
+                if len(self.portfolio.equity_curve) > 22:
+                    navs = [x['total_value'] for x in self.portfolio.equity_curve[-22:]]
+                    pct_changes = pd.Series(navs).pct_change().dropna()
+                    if not pct_changes.empty:
+                        current_vol = pct_changes.std() * np.sqrt(252)
+
+                # Generate Weights (Smart Weighting + Hysteresis)
+                target_weights = self._generate_smart_weights(
+                    day_preds, 
+                    top_n, 
+                    day_prices, 
+                    current_vol
+                )
                 
                 # Prepare maps for Risk Manager
                 adv_map = {}
@@ -79,7 +103,8 @@ class BacktestEngine:
                     self.portfolio.total_value,
                     adv_map=adv_map,
                     price_map=price_map_risk,
-                    sector_map=sector_map
+                    sector_map=sector_map,
+                    current_volatility=current_vol
                 )
                 self._execute_rebalance(date, safe_weights, day_prices)
 
@@ -126,8 +151,40 @@ class BacktestEngine:
             self._process_order(date, ticker, target, day_prices, reason)
             
         # Execute Buys next
+        # --- FIX: Dynamic Cash Management ---
+        # After sells, check actual available cash. 
+        # If we failed to sell something (e.g. halted stock), we might have less cash than expected.
+        total_buy_value = 0.0
+        buy_orders = []
         for ticker, target in buys:
-            self._process_order(date, ticker, target, day_prices, "REBALANCE")
+            if ticker in day_prices.index:
+                px = day_prices.loc[ticker, 'close']
+                diff = target - self.portfolio.positions.get(ticker, 0)
+                if diff > 0:
+                    total_buy_value += diff * px
+                    buy_orders.append((ticker, target))
+        
+        # Calculate scaling factor if we are short on cash
+        # Reserve 1% buffer for buy-side costs
+        available_cash = self.portfolio.cash * 0.99
+        scale_factor = 1.0
+        if total_buy_value > available_cash and total_buy_value > 0:
+            scale_factor = available_cash / total_buy_value
+            if scale_factor < 0.9:
+                logger.info(f"⚠️ Cash constrained. Scaling buys by {scale_factor:.2f}x (Need ${total_buy_value:,.0f}, Have ${available_cash:,.0f})")
+            else:
+                logger.debug(f"Cash constrained. Scaling buys by {scale_factor:.2f}x")
+
+        # Execute Buys next
+        for ticker, target in buy_orders:
+            # Apply scaling to target shares difference
+            current = self.portfolio.positions.get(ticker, 0)
+            diff = target - current
+            adjusted_diff = int(diff * scale_factor)
+            final_target = current + adjusted_diff
+            
+            if adjusted_diff > 0:
+                self._process_order(date, ticker, final_target, day_prices, "REBALANCE")
 
     def _process_order(self, date, ticker, target_shares, day_prices, reason):
         current_shares = self.portfolio.positions.get(ticker, 0)
@@ -160,19 +217,105 @@ class BacktestEngine:
             # Finalize with Portfolio class logic
             if fill_result.get('success', False) and fill_result['shares'] > 0:
                 comm = fill_result.get('commission_usd', 0.0)
-                if side == 'buy':
-                    self.portfolio.buy(ticker, fill_result['shares'], fill_result['fill_price'], commission=comm)
-                else:
-                    self.portfolio.sell(ticker, fill_result['shares'], fill_result['fill_price'], commission=comm)
+                pnl = 0.0
+                success = False
                 
-                self.trades.append({**fill_result, 'reason': reason})
+                if side == 'buy':
+                    res = self.portfolio.buy(ticker, fill_result['shares'], fill_result['fill_price'], commission=comm)
+                    if res is not None: success = True
+                else:
+                    res = self.portfolio.sell(ticker, fill_result['shares'], fill_result['fill_price'], commission=comm)
+                    if res is not None: 
+                        pnl = res
+                        success = True
+                
+                if success:
+                    self.trades.append({**fill_result, 'reason': reason, 'pnl': pnl})
 
         except Exception as e:
             logger.error(f"Execution Error: {ticker} | {date} | {str(e)}")
 
-    def _generate_weights(self, day_preds, top_n):
+    def _generate_smart_weights(self, day_preds, top_n, day_prices, current_vol):
+        """
+        Implements:
+        1. Hysteresis (Buffer Zone): Buy Top N, Sell if Rank > 1.5 * N
+        2. Smart Weighting: Inverse Volatility (Alpha / Vol)
+        3. Regime Filter: Cash if Vol is extreme
+        """
         if day_preds.empty: return {}
-        return {row.ticker: 1.0/len(day_preds) for row in day_preds.itertuples()}
+        
+        # --- NEW REGIME DETECTION (Drawdown + Trend) ---
+        if len(self.portfolio.equity_curve) > 50:
+            navs = [x['total_value'] for x in self.portfolio.equity_curve]
+            nav_series = pd.Series(navs)
+            current_nav = nav_series.iloc[-1]
+            peak_nav = nav_series.cummax().iloc[-1]
+            
+            current_dd = (current_nav - peak_nav) / peak_nav if peak_nav > 0 else 0.0
+            ma_50 = nav_series.rolling(window=50).mean().iloc[-1]
+            
+            # Logic: Deep Drawdown (-15%) AND Below Trend (MA50) -> Cash
+            if current_dd < -0.15 and current_nav < ma_50:
+                logger.info(f"🛡️ REGIME DEFENSE: DD {current_dd:.1%} & NAV < MA50. Going to Cash.")
+                return {}
+
+        # 1. Regime Filter (VIX Logic)
+        # If current strategy vol > 1.5x Target, go to Cash
+        if current_vol > (self.risk_manager.target_volatility * 1.5):
+            logger.info(f"🛡️ DEFENSIVE MODE: Volatility {current_vol:.1%} > Limit. Going to Cash.")
+            return {}
+
+        # 2. Hysteresis Logic
+        current_holdings = set(self.portfolio.positions.keys())
+        
+        # Rank predictions
+        day_preds = day_preds.copy()
+        day_preds['rank'] = range(1, len(day_preds) + 1)
+        
+        # Selection Logic
+        buffer_limit = int(top_n * 1.6) # e.g., 25 -> 40
+        selected_tickers = []
+        
+        # Keep existing if within buffer
+        for row in day_preds.itertuples():
+            if row.ticker in current_holdings and row.rank <= buffer_limit:
+                selected_tickers.append(row.ticker)
+        
+        # Fill remaining with Top picks
+        for row in day_preds.itertuples():
+            if len(selected_tickers) >= top_n: break
+            if row.ticker not in selected_tickers:
+                selected_tickers.append(row.ticker)
+                
+        # 3. Smart Weighting (Inverse Volatility)
+        weights = {}
+        inv_vols = {}
+        total_inv_vol = 0.0
+        
+        for ticker in selected_tickers:
+            vol = 0.02 # Default fallback
+            try:
+                if isinstance(day_prices, pd.DataFrame) and ticker in day_prices.index:
+                    vol = day_prices.loc[ticker, 'volatility']
+            except Exception:
+                pass
+            
+            # Safety: Avoid division by zero or extreme low vol
+            if vol <= 0.001: vol = 0.02 
+            
+            inv_vol = 1.0 / vol
+            inv_vols[ticker] = inv_vol
+            total_inv_vol += inv_vol
+            
+        if total_inv_vol > 0:
+            for ticker in selected_tickers:
+                weights[ticker] = inv_vols[ticker] / total_inv_vol
+        else:
+            # Fallback: Equal Weight
+            for ticker in selected_tickers:
+                weights[ticker] = 1.0 / len(selected_tickers)
+
+        return weights
 
     def _is_rebalance_day(self, date, index):
         if index == 0: return True

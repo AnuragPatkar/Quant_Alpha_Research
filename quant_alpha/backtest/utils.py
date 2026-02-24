@@ -43,6 +43,9 @@ def align_dates(df1: pd.DataFrame, df2: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
     if not common_dates:
         logger.warning("No common dates found between datasets.")
         return pd.DataFrame(), pd.DataFrame()
+        
+    if len(common_dates) < len(d1_temp):
+        logger.info(f"📉 Date Alignment: Dropped {len(d1_temp) - len(common_dates)} rows from DF1 to match dates.")
 
     # Vectorized filtering using pre-converted series
     df1_aligned = df1[d1_temp.isin(common_dates)].copy()
