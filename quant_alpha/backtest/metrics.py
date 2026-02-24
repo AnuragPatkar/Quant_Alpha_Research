@@ -118,7 +118,7 @@ class PerformanceMetrics:
     
     def _calculate_risk_adjusted_metrics(self, cagr, ann_vol, downside_vol, max_dd, daily_mean_ret) -> Dict:
         # Annualized Excess Return for Sharpe/Sortino
-        ann_excess_ret = (daily_mean_ret * self.ann_factor) - self.rf_rate
+        ann_excess_ret = cagr - self.rf_rate
 
         sharpe = ann_excess_ret / ann_vol if ann_vol > 0 else 0
         sortino = ann_excess_ret / downside_vol if downside_vol > 0 else sharpe
@@ -178,7 +178,7 @@ class PerformanceMetrics:
         avg_win = wins.mean() if not wins.empty else 0
         avg_loss = losses.mean() if not losses.empty else 0
 
-        profit_factor = wins.sum() / abs(losses.sum()) if losses.sum() != 0 else 1.0
+        profit_factor = wins.sum() / abs(losses.sum()) if losses.sum() != 0 else np.inf
         expectancy = (win_rate * avg_win) + ((1 - win_rate) * avg_loss)
 
         return {

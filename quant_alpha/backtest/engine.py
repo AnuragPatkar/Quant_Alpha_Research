@@ -66,7 +66,7 @@ class BacktestEngine:
             # 4. Rebalance Logic
             if self._is_rebalance_day(date, i):
                 # Fix: Pass more predictions to allow Buffer Logic (Top 100)
-                day_preds = predictions[predictions['date'] == date].head(top_n * 4)
+                day_preds = predictions[predictions['date'] == date].head(top_n * 5)
                 
                 # Calculate Rolling Volatility (21-day lookback)
                 current_vol = 0.0
@@ -300,8 +300,9 @@ class BacktestEngine:
             except Exception:
                 pass
             
-            # Safety: Avoid division by zero or extreme low vol
-            if vol <= 0.001: vol = 0.02 
+            # Safety: Floor volatility to avoid division by zero or extreme weights
+            # Floor at 0.5% daily vol (~8% annualized) to prevent single-stock dominance
+            vol = max(vol, 0.005)
             
             inv_vol = 1.0 / vol
             inv_vols[ticker] = inv_vol

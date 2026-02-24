@@ -63,18 +63,21 @@ class FactorAttribution:
     ) -> Dict:
         """
         Detailed calculation of factor contributions over time.
-        Assumes exposures are lagged (t-1) aligned with returns (t).
+        Enforces 1-day lag on exposures to ensure Point-in-Time alignment.
         """
         # 1. Align Data
+        # Shift exposures by 1 day (T-1 exposure explains T return)
+        lagged_exposures = exposures.shift(1)
+        
         # Ensure all inputs share the same index (dates)
-        common_dates = portfolio_returns.index.intersection(exposures.index).intersection(factor_returns.index)
+        common_dates = portfolio_returns.index.intersection(lagged_exposures.index).intersection(factor_returns.index)
         
         if len(common_dates) == 0:
             logger.error("No overlapping data found for attribution analysis.")
             return {'factor_contribution': {}, 'residual_alpha': 0}
 
         p_ret = portfolio_returns.loc[common_dates]
-        exp = exposures.loc[common_dates]
+        exp = lagged_exposures.loc[common_dates]
         f_ret = factor_returns.loc[common_dates]
 
         # 2. Calculate Contribution: Exposure * Factor Return
@@ -89,13 +92,50 @@ class FactorAttribution:
         total_factor_contrib = contributions.sum(axis=1)
         residual_alpha = p_ret - total_factor_contrib
 
+        # NEW: Risk-Adjusted Alpha Metrics
+        ann_alpha = residual_alpha.mean() * 252
+        alpha_vol = residual_alpha.std() * np.sqrt(252)
+        information_ratio = ann_alpha / alpha_vol if alpha_vol != 0 else 0.0
+        
+        # NEW: Factor Efficiency Analysis
+        efficiency = self.calculate_factor_efficiency(contributions)
+
         return {
             'factor_contribution': contributions.sum().to_dict(),
             'cumulative_attribution': contributions.cumsum().to_dict(),
             'total_factor_return': total_factor_contrib.sum(),
             'residual_alpha': residual_alpha.sum(),
-            'alpha_volatility': residual_alpha.std() * np.sqrt(252)
+            'alpha_volatility': alpha_vol,
+            'information_ratio': information_ratio,
+            'factor_efficiency': efficiency
         }
+
+    def calculate_factor_efficiency(self, contributions: pd.DataFrame) -> Dict:
+        """
+        Calculates the 'Hit Rate' of each factor. 
+        How many days did the factor actually contribute positively?
+        """
+        efficiency = {}
+        for col in contributions.columns:
+            if contributions[col].empty: continue
+            
+            pos_days = (contributions[col] > 0).sum()
+            total_days = len(contributions)
+            
+            # T-test for mean different from 0
+            # Safety: If variance is 0 (constant contribution), t-stat is 0
+            if np.std(contributions[col]) == 0:
+                t_stat, p_val = 0.0, 1.0
+            else:
+                t_stat, p_val = stats.ttest_1samp(contributions[col], 0)
+            
+            efficiency[col] = {
+                'hit_rate': pos_days / total_days if total_days > 0 else 0.0,
+                'avg_contribution': contributions[col].mean(),
+                't_stat': t_stat if not np.isnan(t_stat) else 0.0,
+                'p_value': p_val if not np.isnan(p_val) else 1.0
+            }
+        return efficiency
 
     def calculate_rolling_ic(
         self,
@@ -135,7 +175,11 @@ class FactorAttribution:
                 if isinstance(r_data, pd.DataFrame):
                     r_data = r_data.iloc[:, 0]
                 
-                ic, _ = stats.spearmanr(f_data, r_data)
+                # Safety: Handle constant arrays to avoid RuntimeWarnings
+                if np.std(f_data) == 0 or np.std(r_data) == 0:
+                    ic = 0.0
+                else:
+                    ic, _ = stats.spearmanr(f_data, r_data)
                 ic_series.append({'date': date, 'ic': ic})
             except Exception:
                 continue

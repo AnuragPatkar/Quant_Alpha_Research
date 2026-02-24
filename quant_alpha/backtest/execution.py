@@ -42,6 +42,14 @@ class ExecutionSimulator:
         Calculates execution details. Commission is kept separate to avoid 
         double-counting in the Portfolio class.
         """
+        # 0. Liquidity Check (Circuit Breaker / Halted)
+        if volume <= 0:
+            logger.warning(f"LIQUIDITY_LOCK: {ticker} on {date} (Zero Volume)")
+            return self._create_empty_trade(ticker, date, failure_reason="ZERO_VOLUME")
+
+        # Ensure integer shares to prevent "Dust" disconnects (costs on 0.9 shares, but 0 returned)
+        shares = int(shares)
+
         # 1. Fill Probability (No silent failures - log explicitly)
         if np.random.random() > self.fill_prob:
             logger.warning(f"FILL_FAILURE: {ticker} on {date} (Liquidity/Probability)")

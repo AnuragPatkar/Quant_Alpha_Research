@@ -62,6 +62,10 @@ class Portfolio:
     # ==================== TRADING OPERATIONS ====================
     
     def buy(self, ticker: str, shares: float, price: float, commission: Optional[float] = None) -> Optional[float]:
+        if np.isnan(price) or np.isinf(price):
+            logger.error(f"Invalid price received for {ticker}: {price}")
+            return None
+
         if shares <= 0 or price <= 0: return None
 
         if commission is not None:
@@ -100,6 +104,10 @@ class Portfolio:
         return 0.0
     
     def sell(self, ticker: str, shares: float, price: float, commission: Optional[float] = None) -> Optional[float]:
+        if np.isnan(price) or np.isinf(price):
+            logger.error(f"Invalid price received for {ticker}: {price}")
+            return None
+
         # --- FIX 2: Floating Point Precision ---
         current_shares = self.positions.get(ticker, 0.0)
         if ticker not in self.positions or shares > current_shares + 1e-9:
@@ -140,6 +148,24 @@ class Portfolio:
         self._record_tx('sell', ticker, shares, exec_price, commission, pnl=trade_pnl)
         return trade_pnl
 
+    def apply_dividends(self, dividend_map: Dict[str, float]):
+        """
+        Applies dividends to cash balance without affecting shares or cost basis.
+        dividend_map: {ticker: dividend_per_share}
+        """
+        total_div = 0.0
+        for ticker, div_per_share in dividend_map.items():
+            if ticker in self.positions:
+                shares = self.positions[ticker]
+                amount = shares * div_per_share
+                if amount > 0:
+                    self.cash += amount
+                    total_div += amount
+                    self._record_tx('dividend', ticker, shares, div_per_share, 0.0, pnl=amount)
+        
+        if total_div > 0:
+            logger.info(f"💰 Dividends received: ${total_div:,.2f}")
+
     def record_daily_snapshot(self, date: pd.Timestamp):
         self.equity_curve.append({
             'date': date,
@@ -173,3 +199,13 @@ class Portfolio:
             # Bulk update
             new_prices = dict(zip(relevant_prices['ticker'], relevant_prices['close']))
             self.current_prices.update(new_prices)
+
+    def get_tx_history_df(self) -> pd.DataFrame:
+        return pd.DataFrame(self.transaction_history)
+
+    def get_equity_curve_df(self) -> pd.DataFrame:
+        df = pd.DataFrame(self.equity_curve)
+        if not df.empty and 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.set_index('date')
+        return df

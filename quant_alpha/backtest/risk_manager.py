@@ -38,6 +38,7 @@ class RiskManager:
         self.target_volatility = target_volatility
         
         self.violations: List[Tuple] = []
+        self._warned_other_sector = False # Prevent log spam
         logger.info(f"RiskManager initialized with {position_limit*100}% pos limit.")
 
     def apply_constraints(
@@ -80,17 +81,21 @@ class RiskManager:
             vol_scalar = min(vol_scalar, 1.0)
             constrained = {t: w * vol_scalar for t, w in constrained.items()}
 
-        # 5. Global Leverage Scaling
+        # 6. Global Leverage Scaling
         constrained = self._apply_leverage_limit(constrained)
         
-        # 6. HHI Concentration Monitor
+        # 6b. Final Sector Check (Prevent Leakage from Scaling)
+        if self.enable_sector_limits and sector_map:
+            constrained = self._apply_sector_limits(constrained, sector_map)
+        
+        # 7. HHI Concentration Monitor
         # Warn if portfolio is effectively holding < 5 stocks
         if self.check_concentration(constrained):
             self.violations.append(('concentration', 'portfolio', 0.0, 0.0))
             # Note: We log violation but don't block trade to avoid stuck positions, 
             # but this flag can be used by Engine to halt new entries.
 
-        # 7. Final cleanup (Remove dust)
+        # 8. Final cleanup (Remove dust)
         return self._remove_tiny_positions(constrained)
 
     def _apply_liquidity_limits(self, weights, p_value, adv_map, price_map):
@@ -106,6 +111,7 @@ class RiskManager:
                 # Fix: Treat missing volume as illiquid -> Force exit
                 constrained[t] = 0.0
                 self.violations.append(('liquidity_missing', t, w, 0.0))
+                continue
             
             # Max $ position = X% of Daily $ Volume
             max_pos_usd = stock_adv_usd * self.max_adv_participation
@@ -133,7 +139,13 @@ class RiskManager:
     def _apply_sector_limits(self, weights, sector_map):
         sector_totals = defaultdict(float)
         for t, w in weights.items():
-            sector_totals[sector_map.get(t, 'Other')] += w
+            s = sector_map.get(t, 'Other')
+            sector_totals[s] += w
+            
+        # Data Hygiene: Warn if unclassified exposure is high
+        if 'Other' in sector_totals and sector_totals['Other'] > 0.10 and not self._warned_other_sector:
+            logger.warning(f"⚠️ High unclassified sector exposure: {sector_totals['Other']:.1%}. Check data quality. (Logged once)")
+            self._warned_other_sector = True
             
         sector_scales = {}
         for s, total in sector_totals.items():

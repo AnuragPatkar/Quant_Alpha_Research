@@ -110,20 +110,10 @@ class AlmgrenChrissImpact:
             # We return a massive penalty (100%) to discourage the optimizer/engine.
             return 1.0 if shares != 0 else 0.0
         
-        # 1. Participation Rate (Always positive)
-        participation = abs(shares) / volume
-        
-        # NEW: Safety Penalty for excessive participation (>10% ADV)
-        penalty = 1.0
-        if participation > 0.10:
-            penalty = 1 + (participation * 10) ** 2 # Quadratic penalty (Institutional Standard)
-        
-        # 2. Volatility Scaling
-        vol_scale = volatility / self.vol_ref if self.vol_ref > 0 else 1.0
-        
-        # NEW: Asymmetry (Selling in a crisis is costlier)
-        side_mult = 1.1 if side == 'sell' else 1.0
-        
+        # Delegate to Numba-optimized core for speed and consistency.
+        # The core handles:
+        # 1. Quadratic Penalty for >10% ADV
+        # 2. Selling Asymmetry (1.1x cost)
         return _calculate_impact_core(
             float(shares), 
             float(volume), 
