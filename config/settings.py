@@ -268,6 +268,7 @@ class Config:
         self.MAX_DRAWDOWN_LIMIT = 0.20   # Stop trading if 20% loss
         self.STOP_LOSS_PCT = 0.05        # Stop loss per trade
         self.TAKE_PROFIT_PCT = 0.15      # Take profit per trade
+        self.TRAILING_STOP_PCT = 0.10    # Trailing stop (10%)
         self.MAX_POSITION_SIZE = 0.15
         
         # Realistic Market Simulation (ADDED NEW)

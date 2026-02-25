@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 from quant_alpha.backtest.engine import BacktestEngine
 from quant_alpha.backtest.metrics import print_metrics_report
 from quant_alpha.backtest.attribution import SimpleAttribution, FactorAttribution
+from config.settings import config
 
 # --- CONFIGURATION ---
 CACHE_PRED_PATH = r"E:\coding\quant_alpha_research\data\cache\ensemble_predictions.parquet"
@@ -87,7 +88,8 @@ def run_fast_backtest():
         rebalance_freq='weekly',
         use_market_impact=True,
         target_volatility=0.15, # FIX: Lowered from 0.30 to 0.15 to reduce Drawdown
-        max_adv_participation=0.02
+        max_adv_participation=0.02,
+        trailing_stop_pct=config.TRAILING_STOP_PCT # NEW: Enable Trailing Stop in Fast Backtest
     )
 
     # Run Simulation
@@ -101,6 +103,12 @@ def run_fast_backtest():
     # Report
     print_metrics_report(results['metrics'])
     
+    # --- NEW: Save Detailed Trade Report ---
+    trade_report_path = r"E:\coding\quant_alpha_research\results\detailed_trade_report_fast.csv"
+    if not results['trades'].empty:
+        results['trades'].to_csv(trade_report_path, index=False)
+        logger.info(f"📄 Detailed Trade Report Saved: {trade_report_path}")
+
     # Simple Attribution
     simple_attr = SimpleAttribution()
     simple_results = simple_attr.analyze_pnl_drivers(results['trades'])

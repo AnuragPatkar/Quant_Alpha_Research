@@ -24,13 +24,18 @@ class BacktestEngine:
         rebalance_freq: str = 'weekly',
         use_market_impact: bool = True,
         target_volatility: float = 0.20,
-        max_adv_participation: float = 0.02 # NEW: Default 2% limit
+        max_adv_participation: float = 0.02, # NEW: Default 2% limit
+        trailing_stop_pct: float = None      # NEW: Trailing Stop
     ):
         self.portfolio = Portfolio(initial_capital)
         self.executor = ExecutionSimulator(commission, spread, slippage)
         self.impact_model = AlmgrenChrissImpact() if use_market_impact else None
         self.risk_manager = RiskManager(position_limit, leverage_limit, target_volatility=target_volatility, max_adv_participation=max_adv_participation)
         self.metrics_engine = PerformanceMetrics()
+        
+        self.trailing_stop_pct = trailing_stop_pct
+        self.high_water_marks = {}   # Track peak price for trailing stop
+        self.position_entry_map = {} # Track entry for detailed reporting
         
         self.initial_capital = initial_capital
         self.rebalance_freq = rebalance_freq
@@ -62,6 +67,10 @@ class BacktestEngine:
                 if valid_tickers:
                     price_map = day_prices.loc[valid_tickers, 'close'].to_dict()
                     self.portfolio.update_prices(price_map)
+            
+            # 3.5 Check Trailing Stops (NEW)
+            if self.trailing_stop_pct:
+                self._check_trailing_stops(date, day_prices)
 
             # 4. Rebalance Logic
             if self._is_rebalance_day(date, i):
@@ -112,6 +121,31 @@ class BacktestEngine:
             self.portfolio.record_daily_snapshot(date)
 
         return self._wrap_results()
+
+    def _check_trailing_stops(self, date, day_prices):
+        """Executes trailing stops if price drops below peak * (1 - stop_pct)"""
+        current_holdings = list(self.portfolio.positions.keys())
+        
+        for ticker in current_holdings:
+            if ticker not in day_prices.index: continue
+            
+            current_price = day_prices.loc[ticker, 'close']
+            
+            # Update High Water Mark
+            if ticker not in self.high_water_marks:
+                self.high_water_marks[ticker] = current_price
+            else:
+                self.high_water_marks[ticker] = max(self.high_water_marks[ticker], current_price)
+            
+            # Check Stop Condition
+            stop_price = self.high_water_marks[ticker] * (1 - self.trailing_stop_pct)
+            
+            if current_price < stop_price:
+                logger.info(f"🛑 Trailing Stop Hit: {ticker} @ {current_price:.2f} (Peak: {self.high_water_marks[ticker]:.2f})")
+                # Force Sell
+                shares = self.portfolio.positions[ticker]
+                self._process_order(date, ticker, 0, day_prices, "TRAILING_STOP")
+                # Metadata cleanup happens in _process_order via _log_trade logic
 
     def _execute_rebalance(self, date, target_weights, day_prices):
         """Phase-based execution: Sell first to free up capital, then Buy."""
@@ -229,8 +263,12 @@ class BacktestEngine:
                         pnl = res
                         success = True
                 
+                # Clean up metadata on full exit
+                if side == 'sell' and self.portfolio.positions.get(ticker, 0) == 0:
+                    if ticker in self.high_water_marks: del self.high_water_marks[ticker]
+                
                 if success:
-                    self.trades.append({**fill_result, 'reason': reason, 'pnl': pnl})
+                    self._log_trade_detailed(fill_result, reason, pnl)
 
         except Exception as e:
             logger.error(f"Execution Error: {ticker} | {date} | {str(e)}")
@@ -318,6 +356,70 @@ class BacktestEngine:
 
         return weights
 
+    def _log_trade_detailed(self, trade, reason, realized_pnl):
+        """
+        Logs trade with FIFO Entry Price tracking for detailed reporting.
+        """
+        ticker = trade['ticker']
+        
+        if trade['side'] == 'buy':
+            # Track Entry
+            if ticker not in self.position_entry_map:
+                self.position_entry_map[ticker] = []
+            
+            self.position_entry_map[ticker].append({
+                'price': trade['fill_price'],
+                'shares': trade['shares'],
+                'date': trade['date']
+            })
+            
+            # Initialize High Water Mark for new position
+            if ticker not in self.high_water_marks:
+                self.high_water_marks[ticker] = trade['fill_price']
+                
+            record = {
+                **trade,
+                'reason': reason,
+                'pnl': 0.0,
+                'entry_price': np.nan,
+                'return_pct': 0.0
+            }
+            
+        else: # SELL
+            # FIFO Matching for Report
+            shares_to_close = trade['shares']
+            total_cost = 0.0
+            shares_matched = 0
+            entry_date = None
+            
+            if ticker in self.position_entry_map:
+                entries = self.position_entry_map[ticker]
+                while shares_to_close > 0 and entries:
+                    entry = entries[0]
+                    if entry_date is None: entry_date = entry['date']
+                    
+                    matched = min(shares_to_close, entry['shares'])
+                    total_cost += matched * entry['price']
+                    shares_matched += matched
+                    shares_to_close -= matched
+                    
+                    entry['shares'] -= matched
+                    if entry['shares'] <= 0:
+                        entries.pop(0)
+            
+            avg_entry = total_cost / shares_matched if shares_matched > 0 else 0.0
+            
+            record = {
+                **trade,
+                'reason': reason,
+                'pnl': realized_pnl,
+                'entry_price': avg_entry,
+                'entry_date': entry_date,
+                'return_pct': (realized_pnl / (avg_entry * trade['shares'])) if avg_entry > 0 else 0.0
+            }
+            
+        self.trades.append(record)
+
     def _is_rebalance_day(self, date, index):
         if index == 0: return True
         dt = pd.to_datetime(date)
@@ -337,7 +439,7 @@ class BacktestEngine:
         )
         
         return {
-            'equity': df_equity, 
+            'equity_curve': df_equity, 
             'trades': df_trades, 
             'metrics': metrics
         }

@@ -79,7 +79,8 @@ class HyperparameterOptimizer:
                 min_train_months=36,
                 test_months=6,
                 step_months=6,
-                window_type='sliding'
+                window_type='sliding',
+                embargo_days=12 # Match Production Logic (Safe for 5-day target)
             )
             
             splits = trainer._generate_splits(data)

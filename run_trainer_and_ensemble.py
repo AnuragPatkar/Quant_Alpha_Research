@@ -23,6 +23,7 @@ from quant_alpha.features.utils import rank_transform, winsorize, cross_sectiona
 from quant_alpha.backtest.engine import BacktestEngine
 from quant_alpha.backtest.metrics import print_metrics_report
 from quant_alpha.backtest.attribution import SimpleAttribution, FactorAttribution
+from config.settings import config
 
 # --- RISK & PORTFOLIO PARAMETERS ---
 TOP_N_STOCKS = 25
@@ -134,6 +135,13 @@ def run_production_pipeline():
     # All features include categorical ones (sector, industry) for GBDT models
     all_features = [c for c in data.columns if c not in exclude]
     
+    # 3. Preprocessing (Numeric Only)
+    # Categoricals ko touch nahi karenge, LightGBM/CatBoost unhe natively handle kar lenge
+    # FIX: Normalize BEFORE Imputation so that 0 represents the Mean (Neutral Signal)
+    # NOTE: This order is intentional. Imputing 0 before normalization would bias the mean.
+    data = winsorize(data, numeric_features)
+    data = cross_sectional_normalize(data, numeric_features)
+
     # FAST Imputation: Groupby transform slow hai, isliye constant fill (0) use karein
     # Z-score normalization ke baad 0 neutral signal mana jata hai. 
     # Handle numeric and categorical separately to avoid mixed types.
@@ -144,11 +152,6 @@ def run_production_pipeline():
     cat_features = [c for c in all_features if c not in numeric_features]
     if cat_features:
         data[cat_features] = data[cat_features].fillna('Unknown')
-
-    # 3. Preprocessing (Numeric Only)
-    # Categoricals ko touch nahi karenge, LightGBM/CatBoost unhe natively handle kar lenge
-    data = winsorize(data, numeric_features)
-    data = cross_sectional_normalize(data, numeric_features)
 
     # --- NEW: Feature Selection Integration ---
     logger.info("🧹 Starting Feature Selection...")
@@ -244,7 +247,7 @@ def run_production_pipeline():
         logger.info(f"🧠 Training {name}...")
         trainer = WalkForwardTrainer(
             model_class=model_class, min_train_months=36, test_months=6, 
-            step_months=6, window_type='sliding', embargo_days=21, model_params=params
+            step_months=6, window_type='sliding', embargo_days=12, model_params=params # Optimized: 12 days is safe for 5-day target
         )
         # Train on 'target' (21-day alpha)
         oos_preds_master[name] = trainer.train(data, selected_features, 'target')
@@ -326,7 +329,8 @@ def run_production_pipeline():
         rebalance_freq='weekly', # Optimized for speed and lower churn
         use_market_impact=True,
         target_volatility=0.15, # FIX: Lowered to 15% (Institutional Standard)
-        max_adv_participation=0.02 # FIX: Cap participation at 2% of ADV to minimize impact
+        max_adv_participation=0.02, # FIX: Cap participation at 2% of ADV to minimize impact
+        trailing_stop_pct=config.TRAILING_STOP_PCT # NEW: Trailing Stop
     )
     # Note: Sector limits disabled in RiskManager default (False) which is correct for Sector-Neutral Alpha
     
@@ -340,6 +344,12 @@ def run_production_pipeline():
     # Print Report
     print_metrics_report(results['metrics'])
     
+    # --- NEW: Save Detailed Trade Report ---
+    trade_report_path = r"E:\coding\quant_alpha_research\results\detailed_trade_report.csv"
+    if not results['trades'].empty:
+        results['trades'].to_csv(trade_report_path, index=False)
+        logger.info(f"📄 Detailed Trade Report Saved: {trade_report_path}")
+
     # Attribution Analysis
     logger.info("🔍 Running Attribution Analysis...")
     

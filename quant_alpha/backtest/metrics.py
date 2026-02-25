@@ -72,8 +72,10 @@ class PerformanceMetrics:
         metrics.update(risk_adj)
 
         # 3. Trade Metrics (Using Equity Duration for accurate Frequency)
-        strategy_duration_days = (df.index[-1] - df.index[0]).days
-        metrics.update(self._calculate_trade_metrics(trades_df, strategy_duration_days))
+        # FIX: Use Trading Days (len(df)) instead of Calendar Days for Trades/Day
+        num_trading_days = len(df)
+        metrics.update(self._calculate_trade_metrics(trades_df, num_trading_days))
+        metrics['trading_days'] = num_trading_days
         return metrics
     
     def _calculate_return_metrics(self, df: pd.DataFrame, initial_capital: float) -> Dict:
@@ -167,12 +169,17 @@ class PerformanceMetrics:
         if trades_df.empty or 'pnl' not in trades_df.columns:
             return {'total_trades': 0, 'trade_win_rate': 0.0, 'profit_factor': 0.0, 'expectancy': 0.0, 'trades_per_day': 0.0}
         
-        pnls = trades_df['pnl']
-        # Filter for actual PnL events (exclude entries with 0 PnL)
-        closed_trades = pnls[pnls != 0]
+        # FIX: Identify Closed Trades by Side (Sell) rather than PnL != 0 to include breakeven trades
+        # Assuming Long-Only strategy where Sells are exits
+        if 'side' in trades_df.columns:
+            closed_trades = trades_df[trades_df['side'] == 'sell']
+        else:
+            # Fallback for legacy data
+            closed_trades = trades_df[trades_df['pnl'] != 0]
         
-        wins = closed_trades[closed_trades > 0]
-        losses = closed_trades[closed_trades < 0]
+        pnls = closed_trades['pnl']
+        wins = pnls[pnls > 0]
+        losses = pnls[pnls < 0]
         
         win_rate = len(wins) / len(closed_trades) if not closed_trades.empty else 0.0
         avg_win = wins.mean() if not wins.empty else 0
@@ -181,15 +188,18 @@ class PerformanceMetrics:
         profit_factor = wins.sum() / abs(losses.sum()) if losses.sum() != 0 else np.inf
         expectancy = (win_rate * avg_win) + ((1 - win_rate) * avg_loss)
 
+        # FIX: Total Trades should reflect Completed Trades (Round Trips)
+        num_completed_trades = len(closed_trades)
+
         return {
-            'total_trades': len(trades_df),
+            'total_trades': num_completed_trades,
             'trade_win_rate': win_rate,
             'profit_factor': profit_factor,
             'expectancy': expectancy,
             'num_buys': int((trades_df['side'] == 'buy').sum()) if 'side' in trades_df.columns else 0,
             'num_sells': int((trades_df['side'] == 'sell').sum()) if 'side' in trades_df.columns else 0,
             'avg_cost_bps': trades_df['cost_bps'].mean() if 'cost_bps' in trades_df.columns else 0.0,
-            'trades_per_day': len(trades_df) / max(strategy_days, 1)
+            'trades_per_day': num_completed_trades / max(strategy_days, 1)
         }
 
 def print_metrics_report(metrics: Dict):
@@ -213,5 +223,6 @@ def print_metrics_report(metrics: Dict):
     print(f"  Total Trades: {metrics.get('total_trades', 0):>10,}      Win Rate:        {metrics.get('trade_win_rate', 0):>10.2%}")
     print(f"  Profit Factor:{metrics.get('profit_factor', 0):>10.2f}      Expectancy:      {metrics.get('expectancy', 0):>10.2f}")
     print(f"  Trades/Day:   {metrics.get('trades_per_day', 0):>10.2f}      Avg Cost (bps):  {metrics.get('avg_cost_bps', 0):>10.1f}")
+    print(f"  Trading Days: {metrics.get('trading_days', 0):>10,}")
     
     print("\n" + "═"*70 + "\n")

@@ -26,7 +26,8 @@ class RiskManager:
         sector_limit: float = 0.30,          # Max 30% per sector
         max_adv_participation: float = 0.10, # Max 10% of Daily Volume
         enable_sector_limits: bool = False,
-        target_volatility: float = 0.20      # NEW: Target 20% Annual Volatility
+        target_volatility: float = 0.20,     # NEW: Target 20% Annual Volatility
+        max_drawdown_limit: float = 0.20     # NEW: Max Drawdown Limit
     ):
         self.position_limit = position_limit
         self.leverage_limit = leverage_limit
@@ -36,6 +37,7 @@ class RiskManager:
         self.max_adv_participation = max_adv_participation
         self.enable_sector_limits = enable_sector_limits
         self.target_volatility = target_volatility
+        self.max_drawdown_limit = max_drawdown_limit
         
         self.violations: List[Tuple] = []
         self._warned_other_sector = False # Prevent log spam
