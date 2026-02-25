@@ -71,6 +71,10 @@ class PerformanceMetrics:
         metrics.update(dd_metrics)
         metrics.update(risk_adj)
 
+        # Add Date Range
+        metrics['start_date'] = df.index[0].strftime('%Y-%m-%d') if not df.empty else "N/A"
+        metrics['end_date'] = df.index[-1].strftime('%Y-%m-%d') if not df.empty else "N/A"
+
         # 3. Trade Metrics (Using Equity Duration for accurate Frequency)
         # FIX: Use Trading Days (len(df)) instead of Calendar Days for Trades/Day
         num_trading_days = len(df)
@@ -99,11 +103,18 @@ class PerformanceMetrics:
         }
     
     def _calculate_risk_metrics(self, returns: pd.Series) -> Dict:
+        if len(returns) < 2:
+            return {'annual_volatility': 0.0, 'downside_volatility': 0.0, 'daily_var_95': 0.0, 'daily_cvar_95': 0.0}
+
         daily_vol = returns.std()
         ann_vol = daily_vol * np.sqrt(self.ann_factor)
 
-        downside_returns = returns[returns < 0]
-        downside_vol = downside_returns.std() * np.sqrt(self.ann_factor) if len(downside_returns) > 1 else 0.0
+        # FIX: Downside Volatility (Sortino Denominator)
+        # Previous logic used std() of losses, which is incorrect (dispersion around mean loss).
+        # Correct logic is Lower Partial Moment (LPM2) around 0.
+        neg_ret = returns.copy()
+        neg_ret[neg_ret > 0] = 0
+        downside_vol = np.sqrt((neg_ret**2).mean()) * np.sqrt(self.ann_factor)
 
         # Daily Historical VaR and CVaR
         var_95 = returns.quantile(0.05)
@@ -119,8 +130,9 @@ class PerformanceMetrics:
         }
     
     def _calculate_risk_adjusted_metrics(self, cagr, ann_vol, downside_vol, max_dd, daily_mean_ret) -> Dict:
-        # Annualized Excess Return for Sharpe/Sortino
-        ann_excess_ret = cagr - self.rf_rate
+        # FIX: Use Arithmetic Mean for Sharpe/Sortino (Standard Industry Practice)
+        # CAGR is geometric and implicitly penalizes volatility, leading to double-counting risk in Sharpe.
+        ann_excess_ret = (daily_mean_ret * self.ann_factor) - self.rf_rate
 
         sharpe = ann_excess_ret / ann_vol if ann_vol > 0 else 0
         sortino = ann_excess_ret / downside_vol if downside_vol > 0 else sharpe
@@ -171,6 +183,7 @@ class PerformanceMetrics:
         
         # FIX: Identify Closed Trades by Side (Sell) rather than PnL != 0 to include breakeven trades
         # Assuming Long-Only strategy where Sells are exits
+        # If 'side' is missing, fallback to non-zero PnL (legacy support)
         if 'side' in trades_df.columns:
             closed_trades = trades_df[trades_df['side'] == 'sell']
         else:
@@ -185,21 +198,48 @@ class PerformanceMetrics:
         avg_win = wins.mean() if not wins.empty else 0
         avg_loss = losses.mean() if not losses.empty else 0
 
+        # Win/Loss Ratio (Absolute)
+        if avg_loss != 0:
+            win_loss_ratio = abs(avg_win / avg_loss)
+        else:
+            # If avg_loss is 0 (Perfect Strategy), Ratio is Infinite
+            win_loss_ratio = np.inf
+
         profit_factor = wins.sum() / abs(losses.sum()) if losses.sum() != 0 else np.inf
-        expectancy = (win_rate * avg_win) + ((1 - win_rate) * avg_loss)
+        avg_pnl = pnls.mean() if not pnls.empty else 0.0
+        
+        # NEW: Expectancy Ratio (Risk Adjusted)
+        # Formula: Avg PnL / Abs(Avg Loss)
+        if avg_loss != 0:
+            expectancy_ratio = avg_pnl / abs(avg_loss)
+        else:
+            # If no losses, Expectancy Ratio is Infinite (Perfect Strategy)
+            expectancy_ratio = np.inf if avg_pnl > 0 else 0.0
+        
+        # NEW: Kelly Criterion (W - (1-W)/R)
+        # R = Win/Loss Ratio. If R=0 (no wins) or Inf (no losses), handle gracefully.
+        kelly = 0.0
+        if win_loss_ratio == np.inf:
+            kelly = win_rate  # If no losses, bet size -> Win Rate (Theoretical max)
+        elif win_loss_ratio > 0:
+            kelly = win_rate - ((1 - win_rate) / win_loss_ratio)
 
         # FIX: Total Trades should reflect Completed Trades (Round Trips)
         num_completed_trades = len(closed_trades)
 
         return {
             'total_trades': num_completed_trades,
+            'avg_trade_return_pct': closed_trades['return_pct'].mean() if 'return_pct' in closed_trades.columns else 0.0,
             'trade_win_rate': win_rate,
             'profit_factor': profit_factor,
-            'expectancy': expectancy,
+            'avg_pnl': avg_pnl,
+            'expectancy_ratio': expectancy_ratio,
             'num_buys': int((trades_df['side'] == 'buy').sum()) if 'side' in trades_df.columns else 0,
             'num_sells': int((trades_df['side'] == 'sell').sum()) if 'side' in trades_df.columns else 0,
             'avg_cost_bps': trades_df['cost_bps'].mean() if 'cost_bps' in trades_df.columns else 0.0,
-            'trades_per_day': num_completed_trades / max(strategy_days, 1)
+            'trades_per_day': num_completed_trades / max(strategy_days, 1),
+            'win_loss_ratio': win_loss_ratio,
+            'kelly_criterion': kelly
         }
 
 def print_metrics_report(metrics: Dict):
@@ -207,6 +247,7 @@ def print_metrics_report(metrics: Dict):
     print("\n" + "═"*70)
     print(f"{'QUANT ALPHA STRATEGY REPORT':^70}")
     print("═"*70)
+    print(f"Period:       {metrics.get('start_date', 'N/A')} to {metrics.get('end_date', 'N/A')} ({metrics.get('trading_days', 0)} days)")
 
     print(f"\n{'[ RETURN METRICS ]':<35} {'[ RISK METRICS ]':<35}")
     print(f"  Total Return: {metrics.get('total_return', 0):>10.2%}      Ann. Volatility: {metrics.get('annual_volatility', 0):>10.2%}")
@@ -221,8 +262,9 @@ def print_metrics_report(metrics: Dict):
     
     print(f"\n{'[ TRADE STATISTICS ]':<70}")
     print(f"  Total Trades: {metrics.get('total_trades', 0):>10,}      Win Rate:        {metrics.get('trade_win_rate', 0):>10.2%}")
-    print(f"  Profit Factor:{metrics.get('profit_factor', 0):>10.2f}      Expectancy:      {metrics.get('expectancy', 0):>10.2f}")
-    print(f"  Trades/Day:   {metrics.get('trades_per_day', 0):>10.2f}      Avg Cost (bps):  {metrics.get('avg_cost_bps', 0):>10.1f}")
-    print(f"  Trading Days: {metrics.get('trading_days', 0):>10,}")
+    print(f"  Profit Factor:{metrics.get('profit_factor', 0):>10.2f}      Avg PnL:         {metrics.get('avg_pnl', 0):>10.2f}")
+    print(f"  Exp. Ratio:   {metrics.get('expectancy_ratio', 0):>10.2f}      Kelly Crit:      {metrics.get('kelly_criterion', 0):>10.2%}")
+    print(f"  Avg Trade %:  {metrics.get('avg_trade_return_pct', 0):>10.2%}      Trades/Day:      {metrics.get('trades_per_day', 0):>10.2f}")
+    print(f"  Avg Cost (bps):{metrics.get('avg_cost_bps', 0):>10.1f}      Trading Days:    {metrics.get('trading_days', 0):>10,}")
     
     print("\n" + "═"*70 + "\n")

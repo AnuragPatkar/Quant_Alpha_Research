@@ -166,7 +166,7 @@ class Config:
         
         # Feature Selection (Prevents overfitting/model confusion)
         self.MAX_FEATURES = 80             # Retain only the Top 80 predictive signals
-        self.FEATURE_CORRELATION_THRESHOLD = 0.90 # Remove highly correlated (duplicate) signals
+        self.FEATURE_CORRELATION_THRESHOLD = 0.75 # Remove highly correlated (duplicate) signals
         
         # Data Cleaning (Normalization & Outlier Management)
         self.NORMALIZE_FEATURES = True     # Z-Score Standardization (Scale all features equally)

@@ -25,6 +25,26 @@ from quant_alpha.backtest.metrics import print_metrics_report
 from quant_alpha.backtest.attribution import SimpleAttribution, FactorAttribution
 from config.settings import config
 
+# --- IMPORT ALL FACTOR MODULES (CRITICAL FOR REGISTRY) ---
+# Without these imports, FactorRegistry won't know how to calculate Fundamentals/Earnings
+import quant_alpha.features.technical.momentum
+import quant_alpha.features.technical.volatility
+import quant_alpha.features.technical.volume
+import quant_alpha.features.technical.mean_reversion
+import quant_alpha.features.fundamental.value
+import quant_alpha.features.fundamental.quality
+import quant_alpha.features.fundamental.growth
+import quant_alpha.features.fundamental.financial_health
+import quant_alpha.features.earnings.surprises
+import quant_alpha.features.earnings.estimates
+import quant_alpha.features.earnings.revisions
+import quant_alpha.features.alternative.macro
+import quant_alpha.features.alternative.sentiment
+import quant_alpha.features.alternative.inflation
+import quant_alpha.features.composite.macro_adjusted
+import quant_alpha.features.composite.system_health
+import quant_alpha.features.composite.smart_signals
+
 # --- RISK & PORTFOLIO PARAMETERS ---
 TOP_N_STOCKS = 25
 STOCK_STOP_LOSS = -0.05       # 20% se 5% kar diya
@@ -56,7 +76,7 @@ def load_and_build_full_dataset():
         data = data.reset_index()
 
     # 2. Check for missing features
-    # Aapke logs mein 102 columns dikh rahe hain, par factors sirf 56 hain
+    # Heuristic: If columns < 120, likely missing calculated factors (Raw data is usually ~15-20 cols)
     if data.shape[1] < 120:
         logger.info(f"🔄 Factors missing. Computing from Registry on {data.shape[0]} rows...")
         from quant_alpha.features.registry import FactorRegistry
@@ -80,6 +100,12 @@ def load_and_build_full_dataset():
 def calculate_ranks_robust(df):
     """Ensemble logic: Averaging percentile ranks across models."""
     pred_cols = [c for c in df.columns if c.startswith('pred_')]
+    
+    if not pred_cols:
+        logger.warning("⚠️ No prediction columns found for ensemble. Returning 0 alpha.")
+        df['ensemble_alpha'] = 0.0
+        return df
+
     for col in pred_cols:
         r_col = f'rank_{col}'
         df[r_col] = df.groupby('date')[col].rank(pct=True, method='first')
@@ -116,6 +142,10 @@ def run_production_pipeline():
     # Subtract the sector's average return from the stock's return.
     # This removes "Beta" and isolates "Alpha".
     sector_mean = data.groupby(['date', 'sector'])['raw_ret_5d'].transform('mean')
+    
+    # Target: Sector-Neutral Return
+    # REVERT: Removed Volatility Scaling to restore 152% return logic.
+    # We want the model to predict magnitude of return, not just risk-adjusted quality.
     data['target'] = data['raw_ret_5d'] - sector_mean
     
     # P&L Return: Next Day Return (Reality check for Backtest)
@@ -162,9 +192,10 @@ def run_production_pipeline():
     # 1. Filter Variance & Correlation
     data = selector.drop_low_variance(data)
     
-    # --- FIX: Strict Correlation Filter (Threshold: 0.75) ---
-    # Cluster analysis showed high redundancy (0.9+). We filter strictly at 0.75.
-    logger.info("🧹 Applying Strict Correlation Filter (Threshold: 0.75)...")
+    # --- FIX: Strict Correlation Filter ---
+    # Cluster analysis showed high redundancy. We filter strictly.
+    corr_threshold = config.FEATURE_CORRELATION_THRESHOLD
+    logger.info(f"🧹 Applying Strict Correlation Filter (Threshold: {corr_threshold})...")
     numeric_df = data.select_dtypes(include=[np.number])
     
     # 1. Calculate IC for each feature to decide winner
@@ -185,7 +216,7 @@ def run_production_pipeline():
         if col in meta_cols: continue
         
         # Check correlations
-        high_corr_cols = upper.index[upper[col] > 0.75].tolist()
+        high_corr_cols = upper.index[upper[col] > corr_threshold].tolist()
         for other_col in high_corr_cols:
             if other_col in meta_cols: continue
             
@@ -234,7 +265,7 @@ def run_production_pipeline():
         "CatBoost": (CatBoostModel, {
             'iterations': 300, 'learning_rate': 0.03693249563204964, 'depth': 5, 
             'l2_leaf_reg': 27.699310279154073, 'subsample': 0.8996377987961148, 
-            'verbose': 0, 'cat_features': ['sector', 'industry']
+            'verbose': 0, 'cat_features': ['sector', 'industry'], 'allow_writing_files': False
         })
     }
 
@@ -247,7 +278,7 @@ def run_production_pipeline():
         logger.info(f"🧠 Training {name}...")
         trainer = WalkForwardTrainer(
             model_class=model_class, min_train_months=36, test_months=6, 
-            step_months=6, window_type='sliding', embargo_days=12, model_params=params # Optimized: 12 days is safe for 5-day target
+            step_months=6, window_type='sliding', embargo_days=12, model_params=params # 12 days embargo > 5 day target (Safe)
         )
         # Train on 'target' (21-day alpha)
         oos_preds_master[name] = trainer.train(data, selected_features, 'target')
@@ -330,7 +361,7 @@ def run_production_pipeline():
         use_market_impact=True,
         target_volatility=0.15, # FIX: Lowered to 15% (Institutional Standard)
         max_adv_participation=0.02, # FIX: Cap participation at 2% of ADV to minimize impact
-        trailing_stop_pct=config.TRAILING_STOP_PCT # NEW: Trailing Stop
+        trailing_stop_pct=getattr(config, 'TRAILING_STOP_PCT', 0.10) # NEW: Trailing Stop with Safe Fallback
     )
     # Note: Sector limits disabled in RiskManager default (False) which is correct for Sector-Neutral Alpha
     
@@ -341,6 +372,10 @@ def run_production_pipeline():
         top_n=TOP_N_STOCKS
     )
     
+    # Log Backtest Period
+    m = results['metrics']
+    logger.info(f"📅 Backtest Period: {m.get('start_date')} to {m.get('end_date')} ({m.get('trading_days')} days)")
+
     # Print Report
     print_metrics_report(results['metrics'])
     

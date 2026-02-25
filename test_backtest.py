@@ -89,7 +89,7 @@ def run_fast_backtest():
         use_market_impact=True,
         target_volatility=0.15, # FIX: Lowered from 0.30 to 0.15 to reduce Drawdown
         max_adv_participation=0.02,
-        trailing_stop_pct=config.TRAILING_STOP_PCT # NEW: Enable Trailing Stop in Fast Backtest
+        trailing_stop_pct=getattr(config, 'TRAILING_STOP_PCT', 0.10) # NEW: Enable Trailing Stop in Fast Backtest
     )
 
     # Run Simulation
@@ -99,6 +99,10 @@ def run_fast_backtest():
         prices=backtest_prices,
         top_n=TOP_N_STOCKS
     )
+
+    # Log Backtest Period
+    m = results['metrics']
+    logger.info(f"📅 Backtest Period: {m.get('start_date')} to {m.get('end_date')} ({m.get('trading_days')} days)")
 
     # Report
     print_metrics_report(results['metrics'])

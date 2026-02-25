@@ -13,7 +13,7 @@ from quant_alpha.models.trainer import WalkForwardTrainer
 # Tip: Import your other model wrappers here
 from quant_alpha.models.xgboost_model import XGBoostModel
 from quant_alpha.models.catboost_model import CatBoostModel
-from quant_alpha.features.utils import winsorize
+from quant_alpha.features.utils import winsorize, cross_sectional_normalize
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -186,15 +186,24 @@ def verify_all_models():
     
     # Target & Feature Prep
     data = data.sort_values(['ticker', 'date'])
-    data['target'] = data.groupby('ticker')['close'].shift(-5) / data['close'] - 1
+    data['raw_ret_5d'] = data.groupby('ticker')['close'].shift(-5) / data['close'] - 1
+    
+    # FIX: Align with Production (Sector Neutral Target)
+    # Optimization should match the actual training target
+    sector_mean = data.groupby(['date', 'sector'])['raw_ret_5d'].transform('mean')
+    data['target'] = data['raw_ret_5d'] - sector_mean
+    
     data = data.dropna(subset=['target'])
     
-    exclude = ['open', 'high', 'low', 'close', 'volume', 'target', 'date', 'ticker', 'index', 'level_0']
+    exclude = ['open', 'high', 'low', 'close', 'volume', 'target', 'date', 'ticker', 'index', 'level_0', 'raw_ret_5d']
     features = [c for c in data.columns if c not in exclude]
     
     # Apply Winsorization (Consistency with Production)
     logger.info("🧹 Applying Winsorization before Hyperopt...")
     data = winsorize(data, features)
+    
+    logger.info("⚖️ Applying Cross-Sectional Normalization (Consistency with Production)...")
+    data = cross_sectional_normalize(data, features)
 
     # Models to optimize
     # Note: Replace placeholders with your actual imported classes
