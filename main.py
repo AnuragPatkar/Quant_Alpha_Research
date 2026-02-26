@@ -68,7 +68,8 @@ def process_single_factor(name, factor, flat_master, target_index):
         res.index = target_index
         return res
         
-    except Exception:
+    except Exception as e:
+        logger.error(f"❌ Error calculating {name}: {str(e)}")
         return None
 
 def run_pipeline():
