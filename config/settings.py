@@ -277,6 +277,11 @@ class Config:
         self.RISK_FREE_RATE = 0.04        # 4% Annual Risk Free Rate (for Sharpe)
         self.BENCHMARK_TICKER = 'SPY'     # Compare performance vs S&P 500
         self.REBALANCE_FREQ = 'W'         # Weekly Rebalancing
+        
+        # Portfolio Optimization Settings
+        self.OPT_RISK_AVERSION = 2.5      # Mean-Variance & BL
+        self.OPT_KELLY_FRACTION = 0.5     # Kelly Criterion
+        self.OPT_LOOKBACK_DAYS = 252      # Covariance Lookback
 
     # ==================== LOGGING CONFIGURATION ====================
 

@@ -58,13 +58,16 @@ class BlackLittermanModel:
                 missing_caps.append(t)
         
         if len(missing_caps) > len(tickers) * 0.1:
-            logger.warning(f"⚠️ {len(missing_caps)}/{len(tickers)} stocks missing market cap data. Equilibrium may be distorted.")
+            logger.debug(f"⚠️ {len(missing_caps)}/{len(tickers)} stocks missing market cap data. Using defaults.")
 
         total_mcap = sum(weights)
         if total_mcap == 0:
-            raise ValueError("Total market cap is zero. Cannot calculate implied returns.")
+            # Fallback: If no market cap data, assume Equal Weight Equilibrium
+            # This prevents the optimizer from crashing and falling back to pure Equal Weight
+            w_mkt = np.ones(len(tickers)) / len(tickers)
+        else:
+            w_mkt = np.array(weights) / total_mcap
             
-        w_mkt = np.array(weights) / total_mcap
         Sigma = covariance_matrix.values
         
         # Pi = delta * Sigma * w_mkt

@@ -6,6 +6,7 @@ import os
 import logging
 import warnings
 import joblib
+from tqdm import tqdm
 
 # --- CONFIGURATION & SUPPRESSION ---
 os.environ["PYTHONWARNINGS"] = "ignore"
@@ -23,6 +24,7 @@ from quant_alpha.features.utils import rank_transform, winsorize, cross_sectiona
 from quant_alpha.backtest.engine import BacktestEngine
 from quant_alpha.backtest.metrics import print_metrics_report
 from quant_alpha.backtest.attribution import SimpleAttribution, FactorAttribution
+from quant_alpha.optimization.allocator import PortfolioAllocator
 from config.settings import config
 
 # --- IMPORT ALL FACTOR MODULES (CRITICAL FOR REGISTRY) ---
@@ -113,6 +115,85 @@ def calculate_ranks_robust(df):
     rank_cols = [f'rank_{c}' for c in pred_cols]
     df['ensemble_alpha'] = df[rank_cols].mean(axis=1, skipna=True)
     return df
+
+def generate_optimized_weights(predictions, prices_df, method='mean_variance'):
+    """
+    Runs Portfolio Optimization on a rolling basis.
+    """
+    logger.info(f"⚖️  Running Portfolio Optimization ({method})...")
+    
+    # Initialize Allocator
+    allocator = PortfolioAllocator(
+        method=method,
+        risk_aversion=config.OPT_RISK_AVERSION,
+        fraction=config.OPT_KELLY_FRACTION,
+        tau=0.05
+    )
+    
+    # Prepare Data
+    # Pivot prices for covariance: Index=Date, Columns=Ticker
+    price_matrix = prices_df.pivot(index='date', columns='ticker', values='close')
+    
+    # Get unique rebalance dates (Weekly)
+    unique_dates = sorted(predictions['date'].unique())
+    
+    optimized_allocations = []
+    
+    # Rolling Optimization Loop
+    for current_date in tqdm(unique_dates, desc="Optimizing Portfolio"):
+        # 1. Get Alpha Signals for this date
+        day_preds = predictions[predictions['date'] == current_date]
+        if day_preds.empty: continue
+        
+        # Select Top N candidates based on Alpha Score
+        top_candidates = day_preds.sort_values('ensemble_alpha', ascending=False).head(TOP_N_STOCKS)
+        tickers = top_candidates['ticker'].tolist()
+        
+        # Expected Returns (Mapping Alpha 0-1 to expected return magnitude)
+        # In production, you might scale this to realistic annualized returns (e.g. 0.10 - 0.30)
+        expected_returns = top_candidates.set_index('ticker')['ensemble_alpha'].to_dict()
+        
+        # 2. Calculate Historical Covariance (Lookback Window)
+        start_date = current_date - pd.Timedelta(days=config.OPT_LOOKBACK_DAYS)
+        
+        # Slice price matrix for speed
+        hist_prices = price_matrix.loc[start_date:current_date, tickers]
+        
+        if len(hist_prices) < 60: # Need at least ~3 months for valid covariance
+            # Fallback to Equal Weight if not enough history
+            weights = {t: 1.0/len(tickers) for t in tickers}
+        else:
+            # Calculate Covariance
+            returns = hist_prices.pct_change().dropna()
+            if returns.empty:
+                weights = {t: 1.0/len(tickers) for t in tickers}
+            else:
+                cov_matrix = returns.cov() * 252 # Annualized
+                
+                # 3. Run Allocator
+                # Market Caps for Black-Litterman
+                market_caps = {}
+                if 'market_cap' in prices_df.columns:
+                    mc_slice = prices_df[(prices_df['date'] == current_date) & (prices_df['ticker'].isin(tickers))]
+                    market_caps = mc_slice.set_index('ticker')['market_cap'].to_dict()
+                
+                # Fill missing/zero caps with default to prevent BL crash
+                for t in tickers:
+                    if t not in market_caps or pd.isna(market_caps.get(t, 0)) or market_caps.get(t, 0) == 0:
+                        market_caps[t] = 1e9 # Default 1B to avoid zero division
+                
+                weights = allocator.allocate(
+                    expected_returns=expected_returns,
+                    covariance_matrix=cov_matrix,
+                    market_caps=market_caps,
+                    risk_free_rate=config.RISK_FREE_RATE
+                )
+        
+        # 4. Store Results
+        for ticker, w in weights.items():
+            optimized_allocations.append({'date': current_date, 'ticker': ticker, 'optimized_weight': w})
+            
+    return pd.DataFrame(optimized_allocations)
 
 def run_production_pipeline():
     logger.info("🚀 Booting Optimized Alpha-Pro Engine...")
@@ -332,9 +413,9 @@ def run_production_pipeline():
     # Prepare Data for Engine
     # Predictions: date, ticker, prediction (using ensemble_alpha)
     backtest_preds = final_results[['date', 'ticker', 'ensemble_alpha']].rename(columns={'ensemble_alpha': 'prediction'})
-    
-    # FIX: Explicitly drop duplicates to satisfy BacktestEngine validation
-    backtest_preds = backtest_preds.drop_duplicates(subset=['date', 'ticker'])
+    # Prepare Prices for Optimization
+    price_cols = ['date', 'ticker', 'close']
+    backtest_prices_simple = data[price_cols].drop_duplicates(subset=['date', 'ticker'])
     
     # Prices: date, ticker, close, volume, volatility
     # Ensure volatility exists
@@ -342,63 +423,77 @@ def run_production_pipeline():
         data['volatility'] = 0.02
     
     # FIX: Include 'sector' for RiskManager if available
-    price_cols = ['date', 'ticker', 'close', 'volume', 'volatility']
+    full_price_cols = ['date', 'ticker', 'close', 'volume', 'volatility']
     if 'sector' in data.columns:
-        price_cols.append('sector')
+        full_price_cols.append('sector')
         
-    backtest_prices = data[price_cols].copy()
+    backtest_prices = data[full_price_cols].copy()
     # FIX: Ensure prices are unique
     backtest_prices = backtest_prices.drop_duplicates(subset=['date', 'ticker'])
     
-    # Initialize Engine
-    engine = BacktestEngine(
-        initial_capital=1_000_000,
-        commission=TRANSACTION_COST,
-        spread=0.0005,
-        slippage=0.0002,
-        position_limit=0.10, # FIX: Relaxed to 10% to allow Inverse-Vol weighting to work
-        rebalance_freq='weekly', # Optimized for speed and lower churn
-        use_market_impact=True,
-        target_volatility=0.15, # FIX: Lowered to 15% (Institutional Standard)
-        max_adv_participation=0.02, # FIX: Cap participation at 2% of ADV to minimize impact
-        trailing_stop_pct=getattr(config, 'TRAILING_STOP_PCT', 0.10) # NEW: Trailing Stop with Safe Fallback
-    )
-    # Note: Sector limits disabled in RiskManager default (False) which is correct for Sector-Neutral Alpha
+    # --- NEW: Loop through ALL Optimization Methods ---
+    optimization_methods = ['mean_variance', 'risk_parity', 'kelly', 'black_litterman']
     
-    # Run Simulation
-    results = engine.run(
-        predictions=backtest_preds,
-        prices=backtest_prices,
-        top_n=TOP_N_STOCKS
-    )
-    
-    # Log Backtest Period
-    m = results['metrics']
-    logger.info(f"📅 Backtest Period: {m.get('start_date')} to {m.get('end_date')} ({m.get('trading_days')} days)")
+    for method in optimization_methods:
+        print(f"\n{'='*60}")
+        print(f"🚀 RUNNING BACKTEST WITH: {method.upper()}")
+        print(f"{'='*60}")
+        
+        # Generate weights for this specific method
+        opt_weights_df = generate_optimized_weights(final_results, backtest_prices_simple, method=method)
+        
+        if not opt_weights_df.empty:
+            current_preds = opt_weights_df.rename(columns={'optimized_weight': 'prediction'})
+            logger.info(f"✅ Using {method} Weights for Backtest.")
+        else:
+            current_preds = final_results[['date', 'ticker', 'ensemble_alpha']].rename(columns={'ensemble_alpha': 'prediction'})
+            logger.warning(f"⚠️ {method} Optimization returned empty. Falling back to Raw Alpha Scores.")
+        
+        current_preds = current_preds.drop_duplicates(subset=['date', 'ticker'])
 
-    # Print Report
-    print_metrics_report(results['metrics'])
-    
-    # --- NEW: Save Detailed Trade Report ---
-    trade_report_path = r"E:\coding\quant_alpha_research\results\detailed_trade_report.csv"
-    if not results['trades'].empty:
-        results['trades'].to_csv(trade_report_path, index=False)
-        logger.info(f"📄 Detailed Trade Report Saved: {trade_report_path}")
+        # Initialize Engine
+        engine = BacktestEngine(
+            initial_capital=1_000_000,
+            commission=TRANSACTION_COST,
+            spread=0.0005,
+            slippage=0.0002,
+            position_limit=0.10, # FIX: Relaxed to 10%
+            rebalance_freq='weekly',
+            use_market_impact=True,
+            target_volatility=0.15,
+            max_adv_participation=0.02,
+            trailing_stop_pct=getattr(config, 'TRAILING_STOP_PCT', 0.10)
+        )
+        
+        # Run Simulation
+        results = engine.run(
+            predictions=current_preds,
+            prices=backtest_prices,
+            top_n=TOP_N_STOCKS
+        )
+        
+        # Print Report for this method
+        print_metrics_report(results['metrics'])
+        
+        # Save Trade Report
+        trade_report_path = r"E:\coding\quant_alpha_research\results\detailed_trade_report_{}.csv".format(method)
+        if not results['trades'].empty:
+            results['trades'].to_csv(trade_report_path, index=False)
+            logger.info(f"📄 Detailed Trade Report Saved: {trade_report_path}")
+            
+            # Attribution Analysis (Per Strategy)
+            simple_attr = SimpleAttribution()
+            simple_results = simple_attr.analyze_pnl_drivers(results['trades'])
+            
+            print(f"\n[ PnL Attribution ({method}) ]")
+            print(f"  Hit Ratio:     {simple_results.get('hit_ratio',0):.2%}")
+            print(f"  Win/Loss Ratio:{simple_results.get('win_loss_ratio',0):.2f}")
+            print(f"  Long PnL:      ${simple_results.get('long_pnl_contribution',0):,.0f}")
+            print(f"  Short PnL:     ${simple_results.get('short_pnl_contribution',0):,.0f}")
 
-    # Attribution Analysis
-    logger.info("🔍 Running Attribution Analysis...")
-    
-    # 1. Simple Attribution (PnL Drivers)
-    simple_attr = SimpleAttribution()
-    simple_results = simple_attr.analyze_pnl_drivers(results['trades'])
-    
-    print(f"\n[ PnL Attribution ]")
-    print(f"  Hit Ratio:     {simple_results.get('hit_ratio',0):.2%}")
-    print(f"  Win/Loss Ratio:{simple_results.get('win_loss_ratio',0):.2f}")
-    print(f"  Long PnL:      ${simple_results.get('long_pnl_contribution',0):,.0f}")
-    print(f"  Short PnL:     ${simple_results.get('short_pnl_contribution',0):,.0f}")
+    # Factor Attribution (Alpha Predictive Power) - Runs once as Alpha is constant
+    logger.info("🔍 Running Factor Analysis (Signal Quality)...")
 
-    # 2. Factor Attribution (Alpha Predictive Power)
     factor_attr = FactorAttribution()
     
     # Prepare data for IC (MultiIndex required: date, ticker)
