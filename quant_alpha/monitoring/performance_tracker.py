@@ -145,18 +145,30 @@ class PerformanceTracker:
         # Rolling window
         recent = df.tail(self.window_days)
         
+        # Clean data for stats (Drop NaNs to prevent np.cov errors)
+        valid_stats = recent.dropna(subset=['portfolio_return', 'benchmark_return'])
+        valid_stats_total = df.dropna(subset=['portfolio_return', 'benchmark_return'])
+        
         # Calculate metrics
         ic_recent = recent['ic'].mean()
         ic_std = recent['ic'].std()
         
-        returns_recent = recent['portfolio_return']
-        benchmark_recent = recent['benchmark_return']
+        returns_recent = valid_stats['portfolio_return']
+        benchmark_recent = valid_stats['benchmark_return']
+        
+        # Rolling Active Return (Simple Outperformance)
+        active_ret_daily_rolling = recent['active_return'].mean()
+        active_ret_rolling_annual = active_ret_daily_rolling * 252
+
+        # Total Active Return (over full history)
+        active_ret_daily_total = df['active_return'].mean()
+        active_ret_total_annual = active_ret_daily_total * 252
         
         # Sharpe Ratio (Risk-Adjusted)
         sharpe = self._calculate_sharpe(returns_recent)
         
         # Beta and Alpha
-        if len(returns_recent) > 1 and benchmark_recent.std() > 0:
+        if len(returns_recent) > 1 and benchmark_recent.std() > 1e-8:
             covariance = np.cov(returns_recent, benchmark_recent)[0, 1]
             variance = benchmark_recent.var()
             beta = covariance / variance
@@ -166,10 +178,23 @@ class PerformanceTracker:
         else:
             beta = 0.0
             alpha = 0.0
+            
+        # --- TOTAL HISTORY METRICS ---
+        # Calculate Alpha/Beta over full history to match Backtest Report
+        if len(valid_stats_total) > 1 and valid_stats_total['benchmark_return'].std() > 1e-8:
+            cov_total = np.cov(valid_stats_total['portfolio_return'], valid_stats_total['benchmark_return'])[0, 1]
+            var_total = valid_stats_total['benchmark_return'].var()
+            beta_total = cov_total / var_total
+            alpha_total = (valid_stats_total['portfolio_return'].mean() - self.risk_free_rate/252) - beta_total * (valid_stats_total['benchmark_return'].mean() - self.risk_free_rate/252)
+            alpha_total = alpha_total * 252
+        else:
+            beta_total = 0.0
+            alpha_total = 0.0
         
         # Cumulative returns
         cum_returns = (1 + df['portfolio_return']).cumprod()
         current_dd = self._calculate_current_drawdown(cum_returns)
+        max_dd = self._calculate_max_drawdown(cum_returns)
         
         # Determine status
         if ic_recent < self.ic_critical or current_dd > self.dd_critical:
@@ -187,7 +212,12 @@ class PerformanceTracker:
             'sharpe_rolling': sharpe,
             'beta': beta,
             'alpha_annual': alpha,
+            'alpha_total': alpha_total,
+            'beta_total': beta_total,
+            'active_return_rolling_annual': active_ret_rolling_annual if not np.isnan(active_ret_rolling_annual) else 0.0,
+            'active_return_total_annual': active_ret_total_annual if not np.isnan(active_ret_total_annual) else 0.0,
             'current_drawdown': current_dd,
+            'max_drawdown': max_dd,
             'avg_turnover': recent['turnover'].mean() if 'turnover' in recent else 0.0,
             'total_costs': recent['transaction_costs'].sum() if 'transaction_costs' in recent else 0.0,
             'num_days': len(recent),
@@ -217,6 +247,12 @@ class PerformanceTracker:
             return 0.0
         current_dd = (cum_returns.iloc[-1] - cummax.iloc[-1]) / cummax.iloc[-1]
         return abs(current_dd)
+        
+    def _calculate_max_drawdown(self, cum_returns: pd.Series) -> float:
+        """Calculate maximum drawdown over history"""
+        cummax = cum_returns.cummax()
+        drawdown = (cum_returns - cummax) / cummax
+        return abs(drawdown.min())
     
     def get_history_df(self) -> pd.DataFrame:
         """Get full history as DataFrame"""

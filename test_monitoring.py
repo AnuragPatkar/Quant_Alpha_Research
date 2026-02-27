@@ -10,6 +10,7 @@ import logging
 import shutil
 import subprocess
 from datetime import datetime, timedelta
+import collections
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -87,6 +88,8 @@ def test_model_drift():
         data['pnl_return'] = data.groupby('ticker')['close'].shift(-1) / data['close'] - 1
     
     # Merge
+    if 'pnl_return' in preds.columns:
+        preds = preds.drop(columns=['pnl_return'])
     merged = pd.merge(preds, data[['date', 'ticker', 'pnl_return']], on=['date', 'ticker'])
     merged = merged.dropna(subset=['ensemble_alpha', 'pnl_return'])
     
@@ -113,18 +116,28 @@ def test_performance_tracker():
     preds, data = load_real_data()
     if preds is None: return
 
-    tracker = PerformanceTracker(window_days=60)
+    # Use large history to capture full backtest period
+    tracker = PerformanceTracker(window_days=60, max_history=5000)
     
     # Calculate Actual Returns
     if 'pnl_return' not in data.columns:
         data = data.sort_values(['ticker', 'date'])
         data['pnl_return'] = data.groupby('ticker')['close'].shift(-1) / data['close'] - 1
     
+    if 'pnl_return' in preds.columns:
+        preds = preds.drop(columns=['pnl_return'])
     merged = pd.merge(preds, data[['date', 'ticker', 'pnl_return']], on=['date', 'ticker'])
     merged = merged.dropna(subset=['ensemble_alpha', 'pnl_return'])
     
     dates = sorted(merged['date'].unique())
+    
+    # Calculate daily market return (Equal Weighted Universe)
+    market_returns = merged.groupby('date')['pnl_return'].mean()
     logger.info(f"Simulating performance tracking over {len(dates)} days...")
+    
+    # Volatility Targeting (Match Backtest Engine)
+    TARGET_VOL = 0.15
+    vol_window = collections.deque(maxlen=20)
     
     for d in dates:
         day_slice = merged[merged['date'] == d]
@@ -136,6 +149,20 @@ def test_performance_tracker():
         
         # Portfolio Return (Simple Average of Top 20)
         port_ret = top_picks['pnl_return'].mean()
+        bench_ret = market_returns.loc[d]
+        
+        # Apply Volatility Control
+        if len(vol_window) >= 20:
+            current_vol = np.std(vol_window) * np.sqrt(252)
+            if current_vol > 0:
+                leverage = min(1.0, TARGET_VOL / current_vol)
+            else:
+                leverage = 1.0
+        else:
+            leverage = 1.0
+            
+        managed_ret = port_ret * leverage
+        vol_window.append(port_ret) # Track RAW volatility
         
         # Pass as Dicts
         preds_dict = day_slice.set_index('ticker')['ensemble_alpha'].to_dict()
@@ -145,8 +172,8 @@ def test_performance_tracker():
             date=d.strftime('%Y-%m-%d'),
             predictions=preds_dict,
             actual_returns=actuals_dict,
-            portfolio_return=port_ret,
-            benchmark_return=0.0005, # Dummy benchmark
+            portfolio_return=managed_ret,
+            benchmark_return=bench_ret,
             turnover=0.10, # Dummy turnover
             transaction_costs=0.001 # Dummy costs
         )

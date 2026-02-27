@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import os
 import sys
 from datetime import datetime, timedelta
+import collections
 
 # Add project root to path to allow imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
@@ -47,37 +48,103 @@ def load_data():
         
     return preds, data
 
-def run_performance_tracker(preds, data):
-    tracker = PerformanceTracker(window_days=60)
+def run_performance_tracker(preds, data, rebalance_freq, cost_bps):
+    # Use large history to capture full backtest period
+    tracker = PerformanceTracker(window_days=60, max_history=5000)
     
+    if 'pnl_return' in preds.columns:
+        preds = preds.drop(columns=['pnl_return'])
     merged = pd.merge(preds, data[['date', 'ticker', 'pnl_return']], on=['date', 'ticker'])
     merged = merged.dropna(subset=['ensemble_alpha', 'pnl_return'])
     dates = sorted(merged['date'].unique())
     
-    for d in dates:
+    # Calculate daily market return (Equal Weighted Universe)
+    market_returns = merged.groupby('date')['pnl_return'].mean()
+    
+    # Volatility Targeting (Match Backtest Engine)
+    TARGET_VOL = 0.15
+    vol_window = collections.deque(maxlen=20)
+    
+    # Strategy State
+    current_positions = []
+    days_since_rebalance = 0
+    
+    for i, d in enumerate(dates):
         day_slice = merged[merged['date'] == d]
         if day_slice.empty: continue
         
-        # Top 20 Equal Weight Strategy
-        top_picks = day_slice.sort_values('ensemble_alpha', ascending=False).head(20)
-        if top_picks.empty: continue
+        # Determine Rebalance Logic
+        should_rebalance = False
+        if rebalance_freq == 'Daily':
+            should_rebalance = True
+        elif rebalance_freq == 'Weekly' and days_since_rebalance >= 5:
+            should_rebalance = True
+            days_since_rebalance = 0
         
-        port_ret = top_picks['pnl_return'].mean()
+        # Execute Rebalance
+        daily_cost = 0.0
+        if should_rebalance or i == 0:
+            top_picks = day_slice.sort_values('ensemble_alpha', ascending=False).head(20)
+            if not top_picks.empty:
+                new_positions = top_picks['ticker'].tolist()
+                
+                # Calculate Turnover Cost (Simple approximation: 2 * cost for turnover)
+                # If completely new portfolio, turnover is 100%
+                if current_positions:
+                    # Intersection
+                    kept = set(current_positions).intersection(set(new_positions))
+                    turnover_pct = 1.0 - (len(kept) / len(current_positions))
+                    daily_cost = turnover_pct * 2 * (cost_bps / 10000)
+                
+                current_positions = new_positions
         
-        preds_dict = day_slice.set_index('ticker')['ensemble_alpha'].to_dict()
-        actuals_dict = day_slice.set_index('ticker')['pnl_return'].to_dict()
+        days_since_rebalance += 1
+        
+        # Calculate Portfolio Return (Equal Weight on Held Positions)
+        if current_positions:
+            # Filter day_slice for held tickers
+            held_slice = day_slice[day_slice['ticker'].isin(current_positions)]
+            if not held_slice.empty:
+                raw_ret = held_slice['pnl_return'].mean()
+            else:
+                raw_ret = 0.0
+        else:
+            raw_ret = 0.0
+            
+        bench_ret = market_returns.loc[d]
+        
+        # Apply Volatility Control (Risk Management)
+        if len(vol_window) >= 20:
+            current_vol = np.std(vol_window) * np.sqrt(252)
+            if current_vol > 0:
+                # Reduce leverage if volatility exceeds target
+                leverage = min(1.0, TARGET_VOL / current_vol)
+            else:
+                leverage = 1.0
+        else:
+            leverage = 1.0
+            
+        # Net Return = (Raw Return * Leverage) - Costs
+        managed_ret = (raw_ret * leverage) - daily_cost
+        vol_window.append(raw_ret) # Track RAW volatility
+        
+        # For tracking, we pass the predictions for the *current* universe
+        # This ensures IC is calculated on the active set or full set depending on preference
+        # Here we pass full set to monitor signal quality globally
         
         tracker.update(
             date=d.strftime('%Y-%m-%d'),
-            predictions=preds_dict,
-            actual_returns=actuals_dict,
-            portfolio_return=port_ret,
-            benchmark_return=0.0005 # Dummy benchmark
+            predictions=day_slice.set_index('ticker')['ensemble_alpha'].to_dict(),
+            actual_returns=day_slice.set_index('ticker')['pnl_return'].to_dict(),
+            portfolio_return=managed_ret,
+            benchmark_return=bench_ret
         )
     return tracker
 
 def run_drift_detector(preds, data):
     detector = ModelDriftDetector(rolling_window=20)
+    if 'pnl_return' in preds.columns:
+        preds = preds.drop(columns=['pnl_return'])
     merged = pd.merge(preds, data[['date', 'ticker', 'pnl_return']], on=['date', 'ticker'])
     merged = merged.dropna(subset=['ensemble_alpha', 'pnl_return'])
     dates = sorted(merged['date'].unique())
@@ -110,18 +177,27 @@ if preds is None:
 tab1, tab2, tab3 = st.tabs(["📈 Performance", "⚠️ Model Drift", "🛡️ Data Quality"])
 
 with tab1:
+    # Sidebar Controls for "What-If" Analysis
+    st.sidebar.header("Strategy Settings")
+    rebalance_freq = st.sidebar.selectbox("Rebalance Frequency", ["Weekly", "Daily"], index=0)
+    cost_bps = st.sidebar.slider("Transaction Costs (bps)", 0, 50, 10)
+    
     st.header("Live Performance Tracking")
+    st.caption(f"Simulating: {rebalance_freq} Rebalance | {cost_bps} bps Cost | 15% Vol Target")
+    
     with st.spinner("Calculating Performance Metrics..."):
-        tracker = run_performance_tracker(preds, data)
+        tracker = run_performance_tracker(preds, data, rebalance_freq, cost_bps)
         status = tracker.get_status()
         hist_df = tracker.get_history_df()
     
     # KPI Cards
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("Rolling IC (60d)", f"{status.get('ic_rolling', 0):.4f}")
     col2.metric("Sharpe Ratio", f"{status.get('sharpe_rolling', 0):.2f}")
-    col3.metric("Current Drawdown", f"{status.get('current_drawdown', 0):.2%}")
-    col4.metric("Alpha (Annual)", f"{status.get('alpha_annual', 0):.2%}")
+    col3.metric("Beta (Total)", f"{status.get('beta_total', 0):.2f}")
+    col4.metric("Alpha (Total)", f"{status.get('alpha_total', 0):.2%}")
+    col5.metric("Active Ret (Total)", f"{status.get('active_return_total_annual', 0):.2%}")
+    col6.metric("Max Drawdown", f"{status.get('max_drawdown', 0):.2%}")
     
     # Charts
     st.subheader("Cumulative Returns")
@@ -132,13 +208,14 @@ with tab1:
         fig_ret = px.line(hist_df, x='date', y=['cum_ret', 'cum_bench'], 
                           labels={'value': 'Return', 'variable': 'Series'},
                           title="Portfolio vs Benchmark")
-        st.plotly_chart(fig_ret, use_container_width=True)
+        st.plotly_chart(fig_ret, width="stretch")
         
         st.subheader("Rolling IC")
         hist_df['rolling_ic'] = hist_df['ic'].rolling(20).mean()
-        fig_ic = px.line(hist_df, x='date', y=['ic', 'rolling_ic'], title="Daily & Rolling IC")
-        fig_ic.add_hline(y=0.02, line_dash="dash", line_color="green", annotation_text="Target")
-        st.plotly_chart(fig_ic, use_container_width=True)
+        fig_ic = px.line(hist_df, x='date', y='rolling_ic', title="Rolling 20-Day Information Coefficient (IC)")
+        fig_ic.add_hline(y=0.05, line_dash="dash", line_color="green", annotation_text="Target IC (0.05)")
+        fig_ic.add_hline(y=0.02, line_dash="dot", line_color="orange", annotation_text="Minimum Threshold (0.02)")
+        st.plotly_chart(fig_ic, width="stretch")
 
 with tab2:
     st.header("Concept Drift Detection")
@@ -152,12 +229,12 @@ with tab2:
         hist_recs = pd.DataFrame(list(detector.history))
         fig_drift = px.line(hist_recs, x='date', y=['pred_mean', 'actual_mean'], 
                            title="Prediction Mean vs Actual Return Mean")
-        st.plotly_chart(fig_drift, use_container_width=True)
+        st.plotly_chart(fig_drift, width="stretch")
         
         st.subheader("MSE Degradation")
         if 'mse' in hist_recs.columns:
             fig_mse = px.line(hist_recs, x='date', y='mse', title="Model Mean Squared Error (MSE)")
-            st.plotly_chart(fig_mse, use_container_width=True)
+            st.plotly_chart(fig_mse, width="stretch")
             
         # Recent Alerts
         st.subheader("Recent Drift Alerts")
@@ -202,4 +279,4 @@ with tab3:
         fig_psi = px.bar(psi_df, x='PSI', y='Feature', orientation='h', title="Top 20 Drifted Features")
         fig_psi.add_vline(x=0.25, line_dash="dash", line_color="red", annotation_text="Critical Drift")
         fig_psi.add_vline(x=0.10, line_dash="dash", line_color="orange", annotation_text="Minor Drift")
-        st.plotly_chart(fig_psi, use_container_width=True)
+        st.plotly_chart(fig_psi, width="stretch")

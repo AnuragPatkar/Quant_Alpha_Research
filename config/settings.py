@@ -128,6 +128,11 @@ class Config:
         self.MAX_NAN_FILL_LIMIT = 5       # Max consecutive NaNs to forward fill
         self.MIN_VOLUME_THRESHOLD = 1_000_000 # Liquidity Filter ($1M+ avg volume)
 
+        # Data Refresh Settings
+        self.FUNDAMENTAL_UPDATE_FREQ = "quarterly"  # Q1, Q2, Q3, Q4
+        self.EARNINGS_UPDATE_FREQ = "daily"
+        self.NEWS_UPDATE_FREQ = "daily"
+
 
         # -------------------------------------------------------------
         # DYNAMIC UNIVERSE LOADING (FROM DISK)

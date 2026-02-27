@@ -3,12 +3,17 @@ from pathlib import Path
 import sys
 
 # Setup Paths
-PROJECT_ROOT = Path(__file__).parent.parent
-RAW_DIR = PROJECT_ROOT / "data" / "raw"
-PRICE_DIR = RAW_DIR / "sp500_prices"
-FUND_DIR = RAW_DIR / "fundamentals"
-EARN_DIR = RAW_DIR / "earnings"
-ALT_DIR = RAW_DIR / "alternative"
+# Resolve absolute path to project root (up 3 levels from scripts/data_pipeline/validate_data.py)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# Add project root to sys.path to allow importing config
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from config.settings import Config
+
+# Initialize Config
+config = Config()
 
 def validate_all():
     print("🏥 Starting MASTER DATA HEALTH CHECK...")
@@ -16,6 +21,7 @@ def validate_all():
     
     # 1. Price Validation
     print("\n1️⃣  PRICE DATA (OHLCV)")
+    PRICE_DIR = config.PRICES_DIR
     if not PRICE_DIR.exists():
         print("❌ CRITICAL: Price directory missing!")
         return
@@ -34,6 +40,7 @@ def validate_all():
     
     # 2. Fundamental Validation
     print("\n2️⃣  FUNDAMENTAL DATA")
+    FUND_DIR = config.FUNDAMENTALS_DIR
     if not FUND_DIR.exists():
         print("❌ CRITICAL: Fundamental directory missing!")
         return
@@ -53,6 +60,7 @@ def validate_all():
     
     # 3. Earnings Validation
     print("\n3️⃣  EARNINGS DATA")
+    EARN_DIR = config.EARNINGS_DIR
     if not EARN_DIR.exists():
         print("   ⚠️ Earnings directory missing. (Did you run download_earnings.py?)")
         earn_tickers = set()
@@ -64,6 +72,7 @@ def validate_all():
 
     # 4. Alternative/Macro Validation
     print("\n4️⃣  ALTERNATIVE DATA")
+    ALT_DIR = config.ALTERNATIVE_DIR
     required_macro = ["VIX", "US_10Y", "OIL", "USD", "SP500"]
     missing_macro = []
     found_macro = []

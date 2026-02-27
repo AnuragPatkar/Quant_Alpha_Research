@@ -497,10 +497,13 @@ def run_production_pipeline():
     factor_attr = FactorAttribution()
     
     # Prepare data for IC (MultiIndex required: date, ticker)
-    ic_data = final_results.dropna(subset=['ensemble_alpha', 'pnl_return'])
+    # FIX: Calculate IC against the correct 5-day forward return to match the training target.
+    # This was a mismatch causing low IC in the report.
+    ic_data = pd.merge(final_results, data[['date', 'ticker', 'raw_ret_5d']], on=['date', 'ticker'], how='left')
+    ic_data = ic_data.dropna(subset=['ensemble_alpha', 'raw_ret_5d'])
     if not ic_data.empty:
         factor_vals = ic_data.set_index(['date', 'ticker'])[['ensemble_alpha']]
-        fwd_rets = ic_data.set_index(['date', 'ticker'])[['pnl_return']]
+        fwd_rets = ic_data.set_index(['date', 'ticker'])[['raw_ret_5d']]
         
         rolling_ic = factor_attr.calculate_rolling_ic(factor_vals, fwd_rets)
         
