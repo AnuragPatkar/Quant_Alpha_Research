@@ -295,10 +295,10 @@ class PerformanceTracker:
         if 'turnover' in df.columns:
             ax2 = axes[2].twinx()
             axes[2].bar(df['date'], df['turnover'] * 100, alpha=0.3, color='gray', label='Turnover %')
-            ax2.plot(df['date'], df['transaction_costs'].cumsum(), color='red', label='Cum Costs ($)')
+            ax2.plot(df['date'], df['transaction_costs'].cumsum(), color='red', label='Cum Costs (Impact)')
             axes[2].set_title('Turnover & Transaction Costs', fontweight='bold')
             axes[2].set_ylabel('Turnover (%)')
-            ax2.set_ylabel('Cumulative Costs ($)')
+            ax2.set_ylabel('Cumulative Costs (Impact)')
         
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches='tight')

@@ -48,7 +48,7 @@ def load_data():
         
     return preds, data
 
-def run_performance_tracker(preds, data, rebalance_freq, cost_bps):
+def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.15, top_n=20):
     # Use large history to capture full backtest period
     tracker = PerformanceTracker(window_days=60, max_history=5000)
     
@@ -62,7 +62,6 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps):
     market_returns = merged.groupby('date')['pnl_return'].mean()
     
     # Volatility Targeting (Match Backtest Engine)
-    TARGET_VOL = 0.15
     vol_window = collections.deque(maxlen=20)
     
     # Strategy State
@@ -84,7 +83,7 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps):
         # Execute Rebalance
         daily_cost = 0.0
         if should_rebalance or i == 0:
-            top_picks = day_slice.sort_values('ensemble_alpha', ascending=False).head(20)
+            top_picks = day_slice.sort_values('ensemble_alpha', ascending=False).head(top_n)
             if not top_picks.empty:
                 new_positions = top_picks['ticker'].tolist()
                 
@@ -114,11 +113,11 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps):
         bench_ret = market_returns.loc[d]
         
         # Apply Volatility Control (Risk Management)
-        if len(vol_window) >= 20:
+        if target_vol is not None and len(vol_window) >= 20:
             current_vol = np.std(vol_window) * np.sqrt(252)
             if current_vol > 0:
                 # Reduce leverage if volatility exceeds target
-                leverage = min(1.0, TARGET_VOL / current_vol)
+                leverage = min(1.0, target_vol / current_vol)
             else:
                 leverage = 1.0
         else:
@@ -181,12 +180,16 @@ with tab1:
     st.sidebar.header("Strategy Settings")
     rebalance_freq = st.sidebar.selectbox("Rebalance Frequency", ["Weekly", "Daily"], index=0)
     cost_bps = st.sidebar.slider("Transaction Costs (bps)", 0, 50, 10)
+    top_n = st.sidebar.slider("Top N Stocks", 5, 50, 25)
+    enable_vol_target = st.sidebar.checkbox("Enable Volatility Targeting", value=True)
+    target_vol = st.sidebar.slider("Target Volatility", 0.05, 0.50, 0.15) if enable_vol_target else None
     
     st.header("Live Performance Tracking")
     st.caption(f"Simulating: {rebalance_freq} Rebalance | {cost_bps} bps Cost | 15% Vol Target")
+    st.caption(f"Simulating: {rebalance_freq} | Top {top_n} | Equal Weight | {cost_bps} bps Cost")
     
     with st.spinner("Calculating Performance Metrics..."):
-        tracker = run_performance_tracker(preds, data, rebalance_freq, cost_bps)
+        tracker = run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol, top_n)
         status = tracker.get_status()
         hist_df = tracker.get_history_df()
     

@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta
 import collections
+import joblib
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,8 +24,9 @@ from quant_alpha.monitoring.performance_tracker import PerformanceTracker
 from quant_alpha.monitoring.alerts import AlertSystem
 
 # --- CONFIGURATION ---
-CACHE_PRED_PATH = r"E:\coding\quant_alpha_research\data\cache\ensemble_predictions.parquet"
-CACHE_DATA_PATH = r"E:\coding\quant_alpha_research\data\cache\master_data_with_factors.parquet"
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+CACHE_PRED_PATH = os.path.join(PROJECT_ROOT, "data", "cache", "ensemble_predictions.parquet")
+CACHE_DATA_PATH = os.path.join(PROJECT_ROOT, "data", "cache", "master_data_with_factors.parquet")
 
 def load_real_data():
     if not os.path.exists(CACHE_PRED_PATH) or not os.path.exists(CACHE_DATA_PATH):
@@ -161,7 +163,10 @@ def test_performance_tracker():
         else:
             leverage = 1.0
             
-        managed_ret = port_ret * leverage
+        # Apply Transaction Costs (Simulated 10bps drag)
+        cost_drag = 0.001 
+        managed_ret = (port_ret * leverage) - cost_drag
+        
         vol_window.append(port_ret) # Track RAW volatility
         
         # Pass as Dicts
@@ -174,8 +179,8 @@ def test_performance_tracker():
             actual_returns=actuals_dict,
             portfolio_return=managed_ret,
             benchmark_return=bench_ret,
-            turnover=0.10, # Dummy turnover
-            transaction_costs=0.001 # Dummy costs
+            turnover=0.20, # Simulated 20% turnover
+            transaction_costs=cost_drag
         )
         
     status = tracker.get_status()
@@ -197,6 +202,29 @@ def test_alerts():
     alerts = AlertSystem(env='development') # Should only log
     alerts.send('WARNING', 'Test Alert', 'This is a test warning from the test script.')
     logger.info("✅ Alert sent (check logs above)")
+
+def test_model_loading():
+    """Test if .pkl files in models/production can be loaded"""
+    logger.info("\n🧪 Testing Model Loading (.pkl files)...")
+    models_dir = os.path.join(PROJECT_ROOT, "models", "production")
+    
+    if not os.path.exists(models_dir):
+        logger.warning(f"⚠️ Models directory not found: {models_dir}")
+        return
+
+    pkl_files = [f for f in os.listdir(models_dir) if f.endswith('.pkl')]
+    
+    if not pkl_files:
+        logger.warning("⚠️ No .pkl files found to test.")
+        return
+        
+    for pkl in pkl_files:
+        try:
+            path = os.path.join(models_dir, pkl)
+            _ = joblib.load(path)
+            logger.info(f"✅ Successfully loaded model: {pkl}")
+        except Exception as e:
+            logger.error(f"❌ Failed to load {pkl}: {e}")
 
 def launch_dashboard():
     logger.info("\n📊 Launching Streamlit Dashboard...")
@@ -220,6 +248,7 @@ if __name__ == "__main__":
     test_model_drift()
     test_performance_tracker()
     test_alerts()
+    test_model_loading()
     print("\n✅ All Monitoring Tests Completed.")
     
     # Launch dashboard directly
