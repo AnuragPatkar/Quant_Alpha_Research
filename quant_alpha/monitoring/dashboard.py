@@ -21,11 +21,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'
 from quant_alpha.monitoring.performance_tracker import PerformanceTracker
 from quant_alpha.monitoring.model_drift import ModelDriftDetector
 from quant_alpha.monitoring.data_quality import DataQualityMonitor
+from config.settings import config
 
 # --- CONFIG ---
 st.set_page_config(page_title="Quant Alpha Monitor", layout="wide")
-CACHE_PRED_PATH = r"E:\coding\quant_alpha_research\data\cache\ensemble_predictions.parquet"
-CACHE_DATA_PATH = r"E:\coding\quant_alpha_research\data\cache\master_data_with_factors.parquet"
+CACHE_PRED_PATH = config.CACHE_DIR / "ensemble_predictions.parquet"
+CACHE_DATA_PATH = config.CACHE_DIR / "master_data_with_factors.parquet"
 
 @st.cache_data
 def load_data():

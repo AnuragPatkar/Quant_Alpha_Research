@@ -16,10 +16,11 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 from quant_alpha.optimization.allocator import PortfolioAllocator
+from config.settings import config
 
-# Paths (Must match run_trainer_and_ensemble.py)
-CACHE_PRED_PATH = r"E:\coding\quant_alpha_research\data\cache\ensemble_predictions.parquet"
-CACHE_DATA_PATH = r"E:\coding\quant_alpha_research\data\cache\master_data_with_factors.parquet"
+# Paths (Dynamic from Config)
+CACHE_PRED_PATH = config.CACHE_DIR / "ensemble_predictions.parquet"
+CACHE_DATA_PATH = config.CACHE_DIR / "master_data_with_factors.parquet"
 
 def load_real_data():
     if not os.path.exists(CACHE_PRED_PATH) or not os.path.exists(CACHE_DATA_PATH):
@@ -35,6 +36,9 @@ def load_real_data():
     if 'date' not in data.columns:
         data = data.reset_index()
     data['date'] = pd.to_datetime(data['date'])
+    
+    # Ensure unique index for pivoting
+    data = data.drop_duplicates(subset=['date', 'ticker'])
     
     return preds, data
 

@@ -5,13 +5,15 @@ Generate PDF/HTML reports for backtest results.
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from typing import Dict, Any, Optional
 from matplotlib.backends.backend_pdf import PdfPages
-from .utils import set_style
+from matplotlib.ticker import FuncFormatter
+from .utils import set_style, format_currency
 
-def generate_tearsheet(results, save_path='tearsheet.pdf'):
+def generate_tearsheet(results: Dict[str, Any], save_path: str = 'tearsheet.pdf'):
     """Generate a PDF tearsheet with key metrics and plots."""
     set_style()
-    equity_df = results['equity_curve']
+    equity_df = results['equity_curve'].copy()
     equity_df['date'] = pd.to_datetime(equity_df['date'])
     
     # Calculate returns if not present
@@ -25,6 +27,7 @@ def generate_tearsheet(results, save_path='tearsheet.pdf'):
         plt.figure(figsize=(10, 6))
         plt.plot(equity_df['date'], equity_df['total_value'])
         plt.title('Equity Curve')
+        plt.gca().yaxis.set_major_formatter(FuncFormatter(format_currency))
         plt.grid(True, alpha=0.3)
         pdf.savefig()
         plt.close()
@@ -41,15 +44,25 @@ def generate_tearsheet(results, save_path='tearsheet.pdf'):
         plt.close()
         
         # Page 3: Monthly Heatmap
-        monthly_ret = returns_series.resample('M').apply(lambda x: (1 + x).prod() - 1)
-        monthly_ret = monthly_ret.to_frame(name='return')
-        monthly_ret['year'] = monthly_ret.index.year
-        monthly_ret['month'] = monthly_ret.index.month
-        pivot = monthly_ret.pivot(index='year', columns='month', values='return')
+        monthly_ret = returns_series.resample('ME').apply(lambda x: (1 + x).prod() - 1)
         
         plt.figure(figsize=(10, 6))
-        sns.heatmap(pivot, annot=True, fmt='.1%', cmap='RdYlGn', center=0)
-        plt.title('Monthly Returns')
+        if not monthly_ret.empty:
+            monthly_ret = monthly_ret.to_frame(name='return')
+            monthly_ret['year'] = monthly_ret.index.year
+            monthly_ret['month'] = monthly_ret.index.month
+            pivot = monthly_ret.pivot(index='year', columns='month', values='return')
+            
+            if not pivot.empty and pivot.notna().any().any():
+                sns.heatmap(pivot, annot=True, fmt='.1%', cmap='RdYlGn', center=0)
+                plt.title('Monthly Returns')
+            else:
+                plt.text(0.5, 0.5, 'Insufficient Data for Heatmap', ha='center', va='center')
+                plt.axis('off')
+        else:
+            plt.text(0.5, 0.5, 'No Data Available', ha='center', va='center')
+            plt.axis('off')
+            
         pdf.savefig()
         plt.close()
         

@@ -4,10 +4,10 @@ Visualization tools for Alpha Factors.
 
 import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
+from typing import Optional
 from .utils import set_style
 
-def plot_ic_time_series(ic_series, window=20, save_path=None):
+def plot_ic_time_series(ic_series: pd.Series, window: int = 20, save_path: Optional[str] = None):
     """Plot Information Coefficient (IC) over time with moving average."""
     set_style()
     plt.figure(figsize=(12, 6))
@@ -16,7 +16,7 @@ def plot_ic_time_series(ic_series, window=20, save_path=None):
     plt.bar(ic_series.index, ic_series, color='gray', alpha=0.3, label='Daily IC', width=1.0)
     
     # Plot moving average
-    rolling_mean = ic_series.rolling(window).mean()
+    rolling_mean = ic_series.sort_index().rolling(window).mean()
     plt.plot(rolling_mean.index, rolling_mean, color='blue', label=f'{window}-day Moving Avg', linewidth=2)
     
     plt.axhline(0, color='black', linestyle='--', linewidth=0.8)
@@ -31,11 +31,14 @@ def plot_ic_time_series(ic_series, window=20, save_path=None):
     else:
         plt.show()
 
-def plot_quantile_returns(quantile_returns, save_path=None):
+def plot_quantile_returns(quantile_returns: pd.Series, save_path: Optional[str] = None):
     """Plot mean returns by factor quantile."""
     set_style()
     plt.figure(figsize=(10, 6))
-    quantile_returns.plot(kind='bar', color='skyblue', edgecolor='black')
+    
+    # Explicitly use current axes to respect figsize
+    quantile_returns.plot(kind='bar', color='skyblue', edgecolor='black', ax=plt.gca())
+    
     plt.title('Mean Return by Factor Quantile')
     plt.xlabel('Quantile')
     plt.ylabel('Mean Forward Return')

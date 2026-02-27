@@ -23,8 +23,8 @@ from quant_alpha.backtest.attribution import SimpleAttribution, FactorAttributio
 from config.settings import config
 
 # --- CONFIGURATION ---
-CACHE_PRED_PATH = r"E:\coding\quant_alpha_research\data\cache\ensemble_predictions.parquet"
-CACHE_DATA_PATH = r"E:\coding\quant_alpha_research\data\cache\master_data_with_factors.parquet"
+CACHE_PRED_PATH = config.CACHE_DIR / "ensemble_predictions.parquet"
+CACHE_DATA_PATH = config.CACHE_DIR / "master_data_with_factors.parquet"
 
 TOP_N_STOCKS = 25
 TRANSACTION_COST = 0.001
@@ -108,7 +108,7 @@ def run_fast_backtest():
     print_metrics_report(results['metrics'])
     
     # --- NEW: Save Detailed Trade Report ---
-    trade_report_path = r"E:\coding\quant_alpha_research\results\detailed_trade_report_fast.csv"
+    trade_report_path = config.RESULTS_DIR / "detailed_trade_report_fast.csv"
     if not results['trades'].empty:
         results['trades'].to_csv(trade_report_path, index=False)
         logger.info(f"📄 Detailed Trade Report Saved: {trade_report_path}")

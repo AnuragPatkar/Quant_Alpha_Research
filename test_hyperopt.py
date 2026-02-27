@@ -196,14 +196,20 @@ def verify_all_models():
     data = data.dropna(subset=['target'])
     
     exclude = ['open', 'high', 'low', 'close', 'volume', 'target', 'date', 'ticker', 'index', 'level_0', 'raw_ret_5d']
+    
+    # Identify Numeric vs Categorical features for preprocessing
+    numeric_features = data.select_dtypes(include=[np.number]).columns.tolist()
+    numeric_features = [c for c in numeric_features if c not in exclude]
+    
+    # All features (including categorical) for model training
     features = [c for c in data.columns if c not in exclude]
     
     # Apply Winsorization (Consistency with Production)
     logger.info("🧹 Applying Winsorization before Hyperopt...")
-    data = winsorize(data, features)
+    data = winsorize(data, numeric_features)
     
     logger.info("⚖️ Applying Cross-Sectional Normalization (Consistency with Production)...")
-    data = cross_sectional_normalize(data, features)
+    data = cross_sectional_normalize(data, numeric_features)
 
     # Models to optimize
     # Note: Replace placeholders with your actual imported classes

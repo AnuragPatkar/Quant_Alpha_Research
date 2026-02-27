@@ -3,7 +3,6 @@ Interactive dashboards using Plotly.
 """
 
 import plotly.graph_objects as go
-import plotly.express as px
 import pandas as pd
 
 def plot_interactive_equity(equity_df, trades_df=None):
@@ -22,22 +21,31 @@ def plot_interactive_equity(equity_df, trades_df=None):
         y=equity_df['total_value'],
         mode='lines',
         name='Portfolio Value',
-        line=dict(color='#1f77b4', width=2)
+        line=dict(color='#1f77b4', width=2),
+        hovertemplate='$%{y:,.2f}'
     ))
     
     # Add trades if available
     if trades_df is not None and not trades_df.empty:
-        buys = trades_df[trades_df['side'].str.lower() == 'buy']
-        sells = trades_df[trades_df['side'].str.lower() == 'sell']
+        # Validate required columns
+        if not all(col in trades_df.columns for col in ['date', 'side', 'ticker']):
+            return fig
+            
+        # Safe string conversion
+        buys = trades_df[trades_df['side'].astype(str).str.lower() == 'buy']
+        sells = trades_df[trades_df['side'].astype(str).str.lower() == 'sell']
         
-        # Map trade dates to equity values for y-axis placement
-        # Note: This assumes trade dates exist in equity_df. 
-        # In production, might need merge_asof or interpolation.
+        # Create a fast lookup map: Date -> Equity Value
+        # This avoids repeated .loc lookups inside the loop
+        # FIX: Normalize to pandas Timestamp to ensure type matching
+        equity_dates = pd.to_datetime(equity_df['date']).dt.normalize()
+        date_val_map = dict(zip(equity_dates, equity_df['total_value']))
         
         if not buys.empty:
+            buy_dates = pd.to_datetime(buys['date']).dt.normalize()
             fig.add_trace(go.Scatter(
                 x=buys['date'],
-                y=[equity_df.loc[equity_df['date'] == d, 'total_value'].iloc[0] if d in equity_df['date'].values else None for d in buys['date']],
+                y=[date_val_map.get(d, None) for d in buy_dates],
                 mode='markers',
                 marker=dict(symbol='triangle-up', size=10, color='green'),
                 name='Buy',
@@ -45,9 +53,10 @@ def plot_interactive_equity(equity_df, trades_df=None):
             ))
         
         if not sells.empty:
+            sell_dates = pd.to_datetime(sells['date']).dt.normalize()
             fig.add_trace(go.Scatter(
                 x=sells['date'],
-                y=[equity_df.loc[equity_df['date'] == d, 'total_value'].iloc[0] if d in equity_df['date'].values else None for d in sells['date']],
+                y=[date_val_map.get(d, None) for d in sell_dates],
                 mode='markers',
                 marker=dict(symbol='triangle-down', size=10, color='red'),
                 name='Sell',

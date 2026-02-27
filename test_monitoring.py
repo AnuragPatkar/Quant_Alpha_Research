@@ -22,11 +22,11 @@ from quant_alpha.monitoring.data_quality import DataQualityMonitor
 from quant_alpha.monitoring.model_drift import ModelDriftDetector
 from quant_alpha.monitoring.performance_tracker import PerformanceTracker
 from quant_alpha.monitoring.alerts import AlertSystem
+from config.settings import config
 
 # --- CONFIGURATION ---
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-CACHE_PRED_PATH = os.path.join(PROJECT_ROOT, "data", "cache", "ensemble_predictions.parquet")
-CACHE_DATA_PATH = os.path.join(PROJECT_ROOT, "data", "cache", "master_data_with_factors.parquet")
+CACHE_PRED_PATH = config.CACHE_DIR / "ensemble_predictions.parquet"
+CACHE_DATA_PATH = config.CACHE_DIR / "master_data_with_factors.parquet"
 
 def load_real_data():
     if not os.path.exists(CACHE_PRED_PATH) or not os.path.exists(CACHE_DATA_PATH):
@@ -163,9 +163,12 @@ def test_performance_tracker():
         else:
             leverage = 1.0
             
-        # Apply Transaction Costs (Simulated 10bps drag)
-        cost_drag = 0.001 
-        managed_ret = (port_ret * leverage) - cost_drag
+        # Apply Transaction Costs (Simulated based on Turnover)
+        simulated_turnover = 0.20  # 20% daily turnover
+        cost_rate = 0.001          # 10 bps per trade
+        daily_cost = simulated_turnover * cost_rate
+        
+        managed_ret = (port_ret * leverage) - daily_cost
         
         vol_window.append(port_ret) # Track RAW volatility
         
@@ -179,8 +182,8 @@ def test_performance_tracker():
             actual_returns=actuals_dict,
             portfolio_return=managed_ret,
             benchmark_return=bench_ret,
-            turnover=0.20, # Simulated 20% turnover
-            transaction_costs=cost_drag
+            turnover=simulated_turnover,
+            transaction_costs=daily_cost
         )
         
     status = tracker.get_status()
@@ -206,7 +209,7 @@ def test_alerts():
 def test_model_loading():
     """Test if .pkl files in models/production can be loaded"""
     logger.info("\n🧪 Testing Model Loading (.pkl files)...")
-    models_dir = os.path.join(PROJECT_ROOT, "models", "production")
+    models_dir = config.MODELS_DIR / "production"
     
     if not os.path.exists(models_dir):
         logger.warning(f"⚠️ Models directory not found: {models_dir}")
@@ -221,8 +224,15 @@ def test_model_loading():
     for pkl in pkl_files:
         try:
             path = os.path.join(models_dir, pkl)
-            _ = joblib.load(path)
-            logger.info(f"✅ Successfully loaded model: {pkl}")
+            loaded_obj = joblib.load(path)
+            
+            # Handle custom save format (dict wrapper)
+            model = loaded_obj['model'] if isinstance(loaded_obj, dict) and 'model' in loaded_obj else loaded_obj
+            
+            if hasattr(model, 'predict'):
+                logger.info(f"✅ Successfully loaded and verified model: {pkl}")
+            else:
+                logger.error(f"❌ Loaded {pkl} but it has no 'predict' method!")
         except Exception as e:
             logger.error(f"❌ Failed to load {pkl}: {e}")
 

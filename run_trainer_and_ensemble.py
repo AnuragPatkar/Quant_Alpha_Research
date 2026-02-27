@@ -26,6 +26,13 @@ from quant_alpha.backtest.metrics import print_metrics_report
 from quant_alpha.backtest.attribution import SimpleAttribution, FactorAttribution
 from quant_alpha.optimization.allocator import PortfolioAllocator
 from config.settings import config
+from quant_alpha.visualization import (
+    plot_equity_curve,
+    plot_drawdown,
+    plot_monthly_heatmap,
+    plot_ic_time_series,
+    generate_tearsheet
+)
 
 # --- IMPORT ALL FACTOR MODULES (CRITICAL FOR REGISTRY) ---
 # Without these imports, FactorRegistry won't know how to calculate Fundamentals/Earnings
@@ -61,7 +68,7 @@ def load_and_build_full_dataset():
     # ---------------------------------------------------------
     # FIX: Check for Cached Master File (Speed up)
     # ---------------------------------------------------------
-    cache_path = r"E:\coding\quant_alpha_research\data\cache\master_data_with_factors.parquet"
+    cache_path = config.CACHE_DIR / "master_data_with_factors.parquet"
     if os.path.exists(cache_path):
         logger.info(f"⚡ Loading Cached Master Dataset from {cache_path}...")
         return pd.read_parquet(cache_path)
@@ -384,8 +391,9 @@ def run_production_pipeline():
         prod_model.fit(data[selected_features], data['target'])
         
         # Save Bridge (Model + Features)
-        os.makedirs("models/production", exist_ok=True)
-        save_path = f"models/production/{name.lower()}_latest.pkl"
+        save_dir = config.MODELS_DIR / "production"
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = save_dir / f"{name.lower()}_latest.pkl"
         payload = {'model': prod_model, 'feature_names': selected_features}
         joblib.dump(payload, save_path)
         logger.info(f"✅ Saved {name} to {save_path}")
@@ -412,8 +420,7 @@ def run_production_pipeline():
     final_results = calculate_ranks_robust(ensemble_df)
     
     # --- NEW: Save Predictions for Fast Backtesting ---
-    pred_cache_path = r"E:\coding\quant_alpha_research\data\cache\ensemble_predictions.parquet"
-    os.makedirs(os.path.dirname(pred_cache_path), exist_ok=True)
+    pred_cache_path = config.CACHE_DIR / "ensemble_predictions.parquet"
     logger.info(f"💾 Saving Ensemble Predictions to {pred_cache_path}...")
     final_results.to_parquet(pred_cache_path)
 
@@ -490,8 +497,25 @@ def run_production_pipeline():
         # Print Report for this method
         print_metrics_report(results['metrics'])
         
+        # --- VISUALIZATION ---
+        plot_dir = config.RESULTS_DIR / "plots" / method
+        os.makedirs(plot_dir, exist_ok=True)
+        logger.info(f"📊 Generating Plots for {method} in {plot_dir}...")
+        
+        # 1. Equity Curve & Drawdown
+        plot_equity_curve(results['equity_curve'], save_path=plot_dir / "equity_curve.png")
+        plot_drawdown(results['equity_curve'], save_path=plot_dir / "drawdown.png")
+        
+        # 2. Monthly Heatmap
+        eq_df = results['equity_curve'].copy()
+        eq_df['date'] = pd.to_datetime(eq_df['date'])
+        plot_monthly_heatmap(eq_df.set_index('date')['total_value'].pct_change(), save_path=plot_dir / "monthly_heatmap.png")
+        
+        # 3. Full Tearsheet
+        generate_tearsheet(results, save_path=plot_dir / "tearsheet.pdf")
+        
         # Save Trade Report
-        trade_report_path = r"E:\coding\quant_alpha_research\results\detailed_trade_report_{}.csv".format(method)
+        trade_report_path = config.RESULTS_DIR / f"detailed_trade_report_{method}.csv"
         if not results['trades'].empty:
             results['trades'].to_csv(trade_report_path, index=False)
             logger.info(f"📄 Detailed Trade Report Saved: {trade_report_path}")
@@ -521,6 +545,11 @@ def run_production_pipeline():
         fwd_rets = ic_data.set_index(['date', 'ticker'])[['raw_ret_5d']]
         
         rolling_ic = factor_attr.calculate_rolling_ic(factor_vals, fwd_rets)
+        
+        # --- VISUALIZATION (IC) ---
+        ic_plot_path = config.RESULTS_DIR / "plots" / "factor_analysis" / "ic_time_series.png"
+        os.makedirs(os.path.dirname(ic_plot_path), exist_ok=True)
+        plot_ic_time_series(rolling_ic, save_path=ic_plot_path)
         
         print(f"\n[ Factor Analysis (Ensemble Alpha) ]")
         print(f"  Mean IC:       {rolling_ic.mean():.4f}")

@@ -15,10 +15,13 @@ def set_style():
 
 def format_currency(x, pos):
     """Format axis labels as currency (K, M, B)."""
+    sign = '-' if x < 0 else ''
+    x = abs(x)
+    
     if x >= 1e9:
-        return f'${x*1e-9:1.1f}B'
+        return f'{sign}${x*1e-9:1.1f}B'
     elif x >= 1e6:
-        return f'${x*1e-6:1.1f}M'
+        return f'{sign}${x*1e-6:1.1f}M'
     elif x >= 1e3:
-        return f'${x*1e-3:1.0f}K'
-    return f'${x:1.0f}'
+        return f'{sign}${x*1e-3:1.0f}K'
+    return f'{sign}${x:1.0f}'
