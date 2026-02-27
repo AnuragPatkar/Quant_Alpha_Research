@@ -59,6 +59,16 @@ class Portfolio:
     def get_holdings(self) -> Dict[str, float]:
         return self.positions.copy()
 
+    def get_position_value(self, ticker: str) -> float:
+        """Returns current market value of a specific position."""
+        shares = self.positions.get(ticker, 0.0)
+        if shares == 0: return 0.0
+        
+        price = self.current_prices.get(ticker, 0.0)
+        if price <= 0:
+            price = self.position_costs.get(ticker, 0.0)
+        return shares * price
+
     # ==================== TRADING OPERATIONS ====================
     
     def buy(self, ticker: str, shares: float, price: float, commission: Optional[float] = None) -> Optional[float]:

@@ -116,6 +116,17 @@ def calculate_ranks_robust(df):
     df['ensemble_alpha'] = df[rank_cols].mean(axis=1, skipna=True)
     return df
 
+def sector_neutral_normalize(df, features, sector_col='sector'):
+    """Normalize features within each sector group (Vectorized)."""
+    if sector_col not in df.columns:
+        logger.warning("Sector column missing. Falling back to global normalization.")
+        return cross_sectional_normalize(df, features)
+    
+    logger.info(f"⚖️ Applying Sector-Neutral Normalization on {len(features)} features...")
+    g = df.groupby(['date', sector_col])[features]
+    df[features] = (df[features] - g.transform('mean')) / (g.transform('std') + 1e-8)
+    return df
+
 def generate_optimized_weights(predictions, prices_df, method='mean_variance'):
     """
     Runs Portfolio Optimization on a rolling basis.
@@ -251,7 +262,8 @@ def run_production_pipeline():
     # FIX: Normalize BEFORE Imputation so that 0 represents the Mean (Neutral Signal)
     # NOTE: This order is intentional. Imputing 0 before normalization would bias the mean.
     data = winsorize(data, numeric_features)
-    data = cross_sectional_normalize(data, numeric_features)
+    # OPTIMIZATION: Use Sector Neutral Normalization instead of Global
+    data = sector_neutral_normalize(data, numeric_features)
 
     # FAST Imputation: Groupby transform slow hai, isliye constant fill (0) use karein
     # Z-score normalization ke baad 0 neutral signal mana jata hai. 
@@ -423,7 +435,7 @@ def run_production_pipeline():
         data['volatility'] = 0.02
     
     # FIX: Include 'sector' for RiskManager if available
-    full_price_cols = ['date', 'ticker', 'close', 'volume', 'volatility']
+    full_price_cols = ['date', 'ticker', 'close', 'open', 'volume', 'volatility']
     if 'sector' in data.columns:
         full_price_cols.append('sector')
         
@@ -432,7 +444,8 @@ def run_production_pipeline():
     backtest_prices = backtest_prices.drop_duplicates(subset=['date', 'ticker'])
     
     # --- NEW: Loop through ALL Optimization Methods ---
-    optimization_methods = ['mean_variance', 'risk_parity', 'kelly', 'black_litterman']
+    # SPEED FIX: Only running 'mean_variance' by default. Uncomment others for full research.
+    optimization_methods = ['mean_variance'] #, 'risk_parity', 'kelly', 'black_litterman']
     
     for method in optimization_methods:
         print(f"\n{'='*60}")
@@ -462,7 +475,9 @@ def run_production_pipeline():
             use_market_impact=True,
             target_volatility=0.15,
             max_adv_participation=0.02,
-            trailing_stop_pct=getattr(config, 'TRAILING_STOP_PCT', 0.10)
+            trailing_stop_pct=getattr(config, 'TRAILING_STOP_PCT', 0.10),
+            execution_price='open', # Trade at Next Open (Realistic)
+            max_turnover=0.20       # Limit turnover to 20% per rebalance
         )
         
         # Run Simulation

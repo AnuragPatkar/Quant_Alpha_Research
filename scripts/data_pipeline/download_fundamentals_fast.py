@@ -2,16 +2,20 @@ import yfinance as yf
 import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
+import sys
 import concurrent.futures # The secret weapon for speed
 
 # ---------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------
-PROJECT_ROOT = Path(__file__).parent.parent
-RAW_FUND_DIR = PROJECT_ROOT / "data" / "raw" / "fundamentals"
-RAW_FUND_DIR.mkdir(parents=True, exist_ok=True)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
-PRICE_DIR = PROJECT_ROOT / "data" / "raw" / "sp500_prices"
+from config.settings import config
+
+RAW_FUND_DIR = config.FUNDAMENTALS_DIR
+PRICE_DIR = config.PRICES_DIR
 
 # Safety Limit: Too many workers = IP Ban from Yahoo
 MAX_WORKERS = 10 

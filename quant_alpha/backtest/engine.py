@@ -25,7 +25,9 @@ class BacktestEngine:
         use_market_impact: bool = True,
         target_volatility: float = 0.20,
         max_adv_participation: float = 0.02, # NEW: Default 2% limit
-        trailing_stop_pct: float = None      # NEW: Trailing Stop
+        trailing_stop_pct: float = None,     # NEW: Trailing Stop
+        execution_price: str = 'close',      # 'close' or 'open'
+        max_turnover: float = 0.20           # Max turnover per rebalance (20%)
     ):
         self.portfolio = Portfolio(initial_capital)
         self.executor = ExecutionSimulator(commission, spread, slippage)
@@ -37,6 +39,8 @@ class BacktestEngine:
         self.high_water_marks = {}   # Track peak price for trailing stop
         self.position_entry_map = {} # Track entry for detailed reporting
         
+        self.execution_price = execution_price
+        self.max_turnover = max_turnover
         self.initial_capital = initial_capital
         self.rebalance_freq = rebalance_freq
         self.trades = []
@@ -151,13 +155,36 @@ class BacktestEngine:
         """Phase-based execution: Sell first to free up capital, then Buy."""
         current_holdings = self.portfolio.get_holdings()
         
+        # --- TURNOVER CONSTRAINT ---
+        # Calculate implied turnover
+        current_val = self.portfolio.total_value
+        if current_val > 0:
+            current_weights = {t: self.portfolio.get_position_value(t) / current_val for t in current_holdings}
+        else:
+            current_weights = {}
+        
+        all_tickers = set(current_weights.keys()) | set(target_weights.keys())
+        turnover = sum(abs(target_weights.get(t, 0) - current_weights.get(t, 0)) for t in all_tickers) / 2.0
+        
+        if turnover > self.max_turnover:
+            scale = self.max_turnover / turnover
+            logger.info(f"⚠️ Turnover {turnover:.1%} > {self.max_turnover:.1%}. Scaling rebalance by {scale:.2f}x")
+            
+            # Shrink target weights towards current weights
+            scaled_weights = {}
+            for t in all_tickers:
+                w_c = current_weights.get(t, 0)
+                w_t = target_weights.get(t, 0)
+                scaled_weights[t] = w_c + scale * (w_t - w_c)
+            target_weights = scaled_weights
+        
         # Calculate target shares for all desired positions
         targets = {}
         for ticker, weight in target_weights.items():
             target_dollar = (self.portfolio.total_value * weight) * 0.99
             try:
                 if ticker in day_prices.index:
-                    px = day_prices.loc[ticker, 'close']
+                    px = day_prices.loc[ticker, self.execution_price]
                     if px > 0:
                         targets[ticker] = int(target_dollar // px)
             except Exception:
@@ -192,7 +219,7 @@ class BacktestEngine:
         buy_orders = []
         for ticker, target in buys:
             if ticker in day_prices.index:
-                px = day_prices.loc[ticker, 'close']
+                px = day_prices.loc[ticker, self.execution_price]
                 diff = target - self.portfolio.positions.get(ticker, 0)
                 if diff > 0:
                     total_buy_value += diff * px
@@ -241,7 +268,7 @@ class BacktestEngine:
                 ticker=ticker,
                 shares=abs(diff),
                 side=side,
-                price=mkt_data['close'],
+                price=mkt_data[self.execution_price],
                 volume=mkt_data['volume'],
                 date=date,
                 impact_rate=impact,

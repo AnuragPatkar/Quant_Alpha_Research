@@ -3,11 +3,15 @@ import pandas as pd
 from pathlib import Path
 import time
 import random
+import sys
 
 # Paths - Professional structure
-PROJECT_ROOT = Path(__file__).parent.parent
-ALT_DIR = PROJECT_ROOT / "data" / "raw" / "alternative"
-ALT_DIR.mkdir(parents=True, exist_ok=True)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from config.settings import config
+ALT_DIR = config.ALTERNATIVE_DIR
 
 # Key Macro Assets
 MACRO_TICKERS = {
@@ -21,8 +25,8 @@ MACRO_TICKERS = {
 def download_macro():
     print("🚀 Starting Alternative Data Download (Enhanced Mode)...")
     
-    start_date = "2016-01-01"
-    end_date = "2024-01-01"
+    start_date = config.BACKTEST_START_DATE
+    end_date = config.BACKTEST_END_DATE
     
     for name, ticker in MACRO_TICKERS.items():
         print(f"⬇️ Fetching {name} ({ticker})...")

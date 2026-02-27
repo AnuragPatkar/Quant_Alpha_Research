@@ -2,17 +2,22 @@ import yfinance as yf
 import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
+import sys
 import concurrent.futures
 import warnings
 
 # Suppress "No data" warnings from yfinance
 warnings.filterwarnings('ignore')
 
-# Paths
-PROJECT_ROOT = Path(__file__).parent.parent
-EARNINGS_DIR = PROJECT_ROOT / "data" / "raw" / "earnings"
-EARNINGS_DIR.mkdir(parents=True, exist_ok=True)
-PRICE_DIR = PROJECT_ROOT / "data" / "raw" / "sp500_prices"
+# Setup Paths & Config
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from config.settings import config
+
+EARNINGS_DIR = config.EARNINGS_DIR
+PRICE_DIR = config.PRICES_DIR
 
 # 🚀 Speed Config
 MAX_WORKERS = 20  # Fast but polite

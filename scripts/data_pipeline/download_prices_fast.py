@@ -10,11 +10,15 @@ import sys
 # ---------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------
-DATA_DIR = Path("data/raw/sp500_prices")
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
-START_DATE = "2016-01-01"
-END_DATE = "2024-01-01"
+from config.settings import config
+
+DATA_DIR = config.PRICES_DIR
+START_DATE = config.BACKTEST_START_DATE
+END_DATE = config.BACKTEST_END_DATE
 
 def get_sp500_tickers():
     print("📋 Fetching S&P 500 ticker list from Wikipedia (Stealth Mode)...")
