@@ -8,11 +8,22 @@ import pandas as pd
 import numpy as np
 import os
 import logging
+import sys
 import warnings
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+from quant_alpha.utils import setup_logging
+setup_logging()
+
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    root_logger.addHandler(console_handler)
+
 logger = logging.getLogger(__name__)
 
 from quant_alpha.optimization.allocator import PortfolioAllocator

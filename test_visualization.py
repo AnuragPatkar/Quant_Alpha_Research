@@ -13,7 +13,8 @@ import warnings
 from tqdm import tqdm
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+from quant_alpha.utils import setup_logging, load_parquet, calculate_returns
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # Import Visualization Components
@@ -251,7 +252,7 @@ def generate_optimized_weights(predictions, prices_df, method='mean_variance'):
         if len(hist_prices) < 60: 
             weights = {t: 1.0/len(tickers) for t in tickers}
         else:
-            returns = hist_prices.pct_change().dropna()
+            returns = calculate_returns(hist_prices).dropna()
             if returns.empty:
                 weights = {t: 1.0/len(tickers) for t in tickers}
             else:
@@ -289,8 +290,8 @@ def test_with_real_data():
     try:
         # 2. Load Data
         logger.info("   Loading cached data...")
-        preds = pd.read_parquet(pred_path)
-        data = pd.read_parquet(data_path)
+        preds = load_parquet(pred_path)
+        data = load_parquet(data_path)
         
         # Ensure types
         preds['date'] = pd.to_datetime(preds['date'])
@@ -407,4 +408,4 @@ if __name__ == "__main__":
     
     test_with_real_data()
     
-    print(f"\n✅ Visualization tests completed. Check {OUTPUT_DIR} for outputs.")
+    print(f"\n✅ Visualization tests completed.\n   - Dummy Data Plots: {OUTPUT_DIR}\n   - Real Data Plots:  {REAL_OUTPUT_DIR}")

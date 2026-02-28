@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import os
 import logging
+import sys
 import shutil
 import subprocess
 from datetime import datetime, timedelta
@@ -14,7 +15,16 @@ import collections
 import joblib
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+from quant_alpha.utils import setup_logging, load_parquet, calculate_returns
+setup_logging()
+
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    root_logger.addHandler(console_handler)
+
 logger = logging.getLogger(__name__)
 
 # Import Monitoring Components
@@ -34,8 +44,8 @@ def load_real_data():
         return None, None
     
     logger.info("📂 Loading Real Data from Cache...")
-    preds = pd.read_parquet(CACHE_PRED_PATH)
-    data = pd.read_parquet(CACHE_DATA_PATH)
+    preds = load_parquet(CACHE_PRED_PATH)
+    data = load_parquet(CACHE_DATA_PATH)
     
     # Ensure dates
     preds['date'] = pd.to_datetime(preds['date'])

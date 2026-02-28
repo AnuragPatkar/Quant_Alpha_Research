@@ -9,12 +9,22 @@ import os
 import logging
 import warnings
 import time
+import sys
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+from quant_alpha.utils import setup_logging, load_parquet
+setup_logging()
+
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    root_logger.addHandler(console_handler)
+
 logger = logging.getLogger(__name__)
 
 from quant_alpha.backtest.engine import BacktestEngine
@@ -40,8 +50,8 @@ def run_fast_backtest():
     logger.info("💡 If you changed model parameters, run 'run_trainer_and_ensemble.py' to update this cache.")
 
     logger.info("🚀 Loading Cached Data for Fast Backtest...")
-    predictions = pd.read_parquet(CACHE_PRED_PATH)
-    data = pd.read_parquet(CACHE_DATA_PATH)
+    predictions = load_parquet(CACHE_PRED_PATH)
+    data = load_parquet(CACHE_DATA_PATH)
 
     # Ensure dates are datetime
     predictions['date'] = pd.to_datetime(predictions['date'])

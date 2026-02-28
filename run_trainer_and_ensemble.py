@@ -1,17 +1,30 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
 from scipy.stats import spearmanr
 import os
 import logging
 import warnings
 import joblib
 from tqdm import tqdm
+from quant_alpha.utils import setup_logging, load_parquet, save_parquet, time_execution, calculate_returns
 
 # --- CONFIGURATION & SUPPRESSION ---
 os.environ["PYTHONWARNINGS"] = "ignore"
 warnings.filterwarnings('ignore')
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+setup_logging()
+
+# --- FIX: Force Console Logging (If setup_logging suppresses it) ---
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+# Check if a StreamHandler (Console) exists, if not, add one
+if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    root_logger.addHandler(console_handler)
+
 logger = logging.getLogger(__name__)
 
 from quant_alpha.data.DataManager import DataManager
@@ -64,6 +77,7 @@ PORTFOLIO_DD_EXIT = -0.15     # Exit strategy when DD exceeds 15%
 PORTFOLIO_DD_REENTRY = -0.05  # Re-enter when DD recovers to 5%
 
 
+@time_execution
 def load_and_build_full_dataset():
     # ---------------------------------------------------------
     # FIX: Check for Cached Master File (Speed up)
@@ -71,7 +85,7 @@ def load_and_build_full_dataset():
     cache_path = config.CACHE_DIR / "master_data_with_factors.parquet"
     if os.path.exists(cache_path):
         logger.info(f"⚡ Loading Cached Master Dataset from {cache_path}...")
-        return pd.read_parquet(cache_path)
+        return load_parquet(cache_path)
 
     logger.info("📡 Initializing DataManager and Factor Registry...")
     dm = DataManager()
@@ -100,12 +114,12 @@ def load_and_build_full_dataset():
     # Optimization: Drop any factors that are 100% NaNs (जो computation fail huye)
     data = data.dropna(axis=1, how='all')
     
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     logger.info(f"💾 Saving Master Dataset to {cache_path}...")
-    data.to_parquet(cache_path)
+    save_parquet(data, cache_path)
     
     return data
 
+@time_execution
 def calculate_ranks_robust(df):
     """Ensemble logic: Averaging percentile ranks across models."""
     pred_cols = [c for c in df.columns if c.startswith('pred_')]
@@ -123,6 +137,7 @@ def calculate_ranks_robust(df):
     df['ensemble_alpha'] = df[rank_cols].mean(axis=1, skipna=True)
     return df
 
+@time_execution
 def sector_neutral_normalize(df, features, sector_col='sector'):
     """Normalize features within each sector group (Vectorized)."""
     if sector_col not in df.columns:
@@ -134,6 +149,7 @@ def sector_neutral_normalize(df, features, sector_col='sector'):
     df[features] = (df[features] - g.transform('mean')) / (g.transform('std') + 1e-8)
     return df
 
+@time_execution
 def generate_optimized_weights(predictions, prices_df, method='mean_variance'):
     """
     Runs Portfolio Optimization on a rolling basis.
@@ -152,13 +168,31 @@ def generate_optimized_weights(predictions, prices_df, method='mean_variance'):
     # Pivot prices for covariance: Index=Date, Columns=Ticker
     price_matrix = prices_df.pivot(index='date', columns='ticker', values='close')
     
+    # --- OPTIMIZATION: Vectorized Returns Calculation ---
+    # Pre-calculate returns for the whole matrix once (Speed up)
+    returns_matrix = calculate_returns(price_matrix)
+
     # Get unique rebalance dates (Weekly)
     unique_dates = sorted(predictions['date'].unique())
     
+    # --- COLD START FIX ---
+    # Skip dates where we don't have enough lookback history
+    lookback_days = config.OPT_LOOKBACK_DAYS
+    if not unique_dates:
+        return pd.DataFrame()
+        
+    min_price_date = price_matrix.index.min()
+    start_threshold = min_price_date + pd.Timedelta(days=lookback_days)
+    
+    valid_dates = [d for d in unique_dates if d >= start_threshold]
+    
+    if len(valid_dates) < len(unique_dates):
+        logger.warning(f"⚠️ Cold Start: Skipped {len(unique_dates) - len(valid_dates)} rebalance dates due to insufficient history (Need {lookback_days}d).")
+
     optimized_allocations = []
     
     # Rolling Optimization Loop
-    for current_date in tqdm(unique_dates, desc="Optimizing Portfolio"):
+    for current_date in tqdm(valid_dates, desc="Optimizing Portfolio"):
         # 1. Get Alpha Signals for this date
         day_preds = predictions[predictions['date'] == current_date]
         if day_preds.empty: continue
@@ -172,40 +206,37 @@ def generate_optimized_weights(predictions, prices_df, method='mean_variance'):
         expected_returns = top_candidates.set_index('ticker')['ensemble_alpha'].to_dict()
         
         # 2. Calculate Historical Covariance (Lookback Window)
-        start_date = current_date - pd.Timedelta(days=config.OPT_LOOKBACK_DAYS)
+        start_date = current_date - pd.Timedelta(days=lookback_days)
         
-        # Slice price matrix for speed
-        hist_prices = price_matrix.loc[start_date:current_date, tickers]
+        # Slice pre-calculated returns for speed
+        # We only need returns for the selected tickers in the lookback window
+        hist_returns = returns_matrix.loc[start_date:current_date, tickers].dropna()
         
-        if len(hist_prices) < 60: # Need at least ~3 months for valid covariance
+        if len(hist_returns) < 60: # Need at least ~3 months for valid covariance
             # Fallback to Equal Weight if not enough history
             weights = {t: 1.0/len(tickers) for t in tickers}
         else:
             # Calculate Covariance
-            returns = hist_prices.pct_change().dropna()
-            if returns.empty:
-                weights = {t: 1.0/len(tickers) for t in tickers}
-            else:
-                cov_matrix = returns.cov() * 252 # Annualized
-                
-                # 3. Run Allocator
-                # Market Caps for Black-Litterman
-                market_caps = {}
-                if 'market_cap' in prices_df.columns:
-                    mc_slice = prices_df[(prices_df['date'] == current_date) & (prices_df['ticker'].isin(tickers))]
-                    market_caps = mc_slice.set_index('ticker')['market_cap'].to_dict()
-                
-                # Fill missing/zero caps with default to prevent BL crash
-                for t in tickers:
-                    if t not in market_caps or pd.isna(market_caps.get(t, 0)) or market_caps.get(t, 0) == 0:
-                        market_caps[t] = 1e9 # Default 1B to avoid zero division
-                
-                weights = allocator.allocate(
-                    expected_returns=expected_returns,
-                    covariance_matrix=cov_matrix,
-                    market_caps=market_caps,
-                    risk_free_rate=config.RISK_FREE_RATE
-                )
+            cov_matrix = hist_returns.cov() * 252 # Annualized
+            
+            # 3. Run Allocator
+            # Market Caps for Black-Litterman
+            market_caps = {}
+            if 'market_cap' in prices_df.columns:
+                mc_slice = prices_df[(prices_df['date'] == current_date) & (prices_df['ticker'].isin(tickers))]
+                market_caps = mc_slice.set_index('ticker')['market_cap'].to_dict()
+            
+            # Fill missing/zero caps with default to prevent BL crash
+            for t in tickers:
+                if t not in market_caps or pd.isna(market_caps.get(t, 0)) or market_caps.get(t, 0) == 0:
+                    market_caps[t] = 1e9 # Default 1B to avoid zero division
+            
+            weights = allocator.allocate(
+                expected_returns=expected_returns,
+                covariance_matrix=cov_matrix,
+                market_caps=market_caps,
+                risk_free_rate=config.RISK_FREE_RATE
+            )
         
         # 4. Store Results
         for ticker, w in weights.items():
@@ -213,6 +244,7 @@ def generate_optimized_weights(predictions, prices_df, method='mean_variance'):
             
     return pd.DataFrame(optimized_allocations)
 
+@time_execution
 def run_production_pipeline():
     logger.info("🚀 Booting Optimized Alpha-Pro Engine...")
     
@@ -422,7 +454,7 @@ def run_production_pipeline():
     # --- NEW: Save Predictions for Fast Backtesting ---
     pred_cache_path = config.CACHE_DIR / "ensemble_predictions.parquet"
     logger.info(f"💾 Saving Ensemble Predictions to {pred_cache_path}...")
-    final_results.to_parquet(pred_cache_path)
+    save_parquet(final_results, pred_cache_path)
 
     # ---------------------------------------------------------
     # FIX 4: Run Institutional Backtest Engine
@@ -474,7 +506,7 @@ def run_production_pipeline():
         # Initialize Engine
         engine = BacktestEngine(
             initial_capital=1_000_000,
-            commission=TRANSACTION_COST,
+            commission=getattr(config, 'TRANSACTION_COST_BPS', 10.0) / 10000,
             spread=0.0005,
             slippage=0.0002,
             position_limit=0.10, # FIX: Relaxed to 10%
@@ -509,7 +541,7 @@ def run_production_pipeline():
         # 2. Monthly Heatmap
         eq_df = results['equity_curve'].copy()
         eq_df['date'] = pd.to_datetime(eq_df['date'])
-        plot_monthly_heatmap(eq_df.set_index('date')['total_value'].pct_change(), save_path=plot_dir / "monthly_heatmap.png")
+        plot_monthly_heatmap(calculate_returns(eq_df.set_index('date')['total_value']), save_path=plot_dir / "monthly_heatmap.png")
         
         # 3. Full Tearsheet
         generate_tearsheet(results, save_path=plot_dir / "tearsheet.pdf")
