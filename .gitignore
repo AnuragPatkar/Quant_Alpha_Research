@@ -9,4 +9,4 @@ results/
 config/api_keys.py
 .vscode/
 .idea/
-
+.numba_cache

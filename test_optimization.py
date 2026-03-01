@@ -6,6 +6,7 @@ Loads cached predictions and master data from 'run_trainer_and_ensemble.py'.
 
 import pandas as pd
 import numpy as np
+from sklearn.covariance import LedoitWolf
 import os
 import logging
 import sys
@@ -51,6 +52,10 @@ def load_real_data():
     # Ensure unique index for pivoting
     data = data.drop_duplicates(subset=['date', 'ticker'])
     
+    # FIX: Shift predictions by 1 day (Signal at T Close -> Trade at T+1 Open)
+    preds['ensemble_alpha'] = preds.groupby('ticker')['ensemble_alpha'].shift(1)
+    preds = preds.dropna()
+    
     return preds, data
 
 def prepare_optimization_inputs(preds, data, target_date, top_n=25):
@@ -84,7 +89,8 @@ def prepare_optimization_inputs(preds, data, target_date, top_n=25):
     returns_matrix = price_matrix.pct_change().dropna()
     
     # Annualized Covariance
-    covariance_matrix = returns_matrix.cov() * 252
+    lw = LedoitWolf()
+    covariance_matrix = pd.DataFrame(lw.fit(returns_matrix).covariance_, index=returns_matrix.columns, columns=returns_matrix.columns) * 252
     
     # Handle missing data in covariance (if some stocks are new or have gaps)
     # Intersect tickers again to ensure alignment

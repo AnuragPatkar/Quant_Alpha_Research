@@ -11,6 +11,7 @@ import shutil
 from datetime import datetime, timedelta
 import warnings
 from tqdm import tqdm
+from sklearn.covariance import LedoitWolf
 
 # Configure logging
 from quant_alpha.utils import setup_logging, load_parquet, calculate_returns
@@ -229,6 +230,9 @@ def generate_optimized_weights(predictions, prices_df, method='mean_variance'):
     
     optimized_allocations = []
     
+    # Initialize Ledoit-Wolf Estimator
+    lw_estimator = LedoitWolf()
+    
     # Rolling Optimization Loop
     for current_date in tqdm(unique_dates, desc="Optimizing Portfolio"):
         # 1. Get Alpha Signals for this date
@@ -256,7 +260,8 @@ def generate_optimized_weights(predictions, prices_df, method='mean_variance'):
             if returns.empty:
                 weights = {t: 1.0/len(tickers) for t in tickers}
             else:
-                cov_matrix = returns.cov() * 252 # Annualized
+                # Use Ledoit-Wolf Shrinkage
+                cov_matrix = pd.DataFrame(lw_estimator.fit(returns).covariance_, index=tickers, columns=tickers) * 252
                 
                 weights = allocator.allocate(
                     expected_returns=expected_returns,
@@ -325,10 +330,18 @@ def test_with_real_data():
         else:
             backtest_preds = opt_weights.rename(columns={'optimized_weight': 'prediction'})
             
+        # FIX: Shift predictions by 1 day (Signal at T Close -> Trade at T+1 Open)
+        backtest_preds['prediction'] = backtest_preds.groupby('ticker')['prediction'].shift(1)
+        backtest_preds = backtest_preds.dropna()
+            
         backtest_preds = backtest_preds.drop_duplicates(subset=['date', 'ticker'])
         
         # 5. Run Backtest with Production Settings
         logger.info("   Running Backtest Engine...")
+        
+        # --- FIX: Suppress Backtest Logs (Too noisy for Viz Test) ---
+        logging.getLogger('quant_alpha.backtest').setLevel(logging.WARNING)
+        
         engine = BacktestEngine(
             initial_capital=1_000_000,
             commission=getattr(config, 'TRANSACTION_COST_BPS', 10.0) / 10000,

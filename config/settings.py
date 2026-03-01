@@ -117,7 +117,7 @@ class Config:
         
         # Date range for backtesting
         self.BACKTEST_START_DATE = '2016-01-01'
-        self.BACKTEST_END_DATE = '2024-01-01'
+        self.BACKTEST_END_DATE = '2023-12-31'
 
         # Known Biases (Documentation only)
         self.HAS_SURVIVORSHIP_BIAS = True 
