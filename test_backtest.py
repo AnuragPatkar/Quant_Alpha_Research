@@ -140,15 +140,18 @@ def run_fast_backtest():
     # FIX: Calculate 5-day forward return for IC to match training target (shift(-5))
     # Previously comparing 5-day prediction vs 1-day return caused low IC.
     data_sorted = data.sort_values(['ticker', 'date']).copy()
-    data_sorted['fwd_ret_5d'] = data_sorted.groupby('ticker')['close'].shift(-5) / data_sorted['close'] - 1
+    
+    # Use cached raw_ret_5d if available (Open-to-Open), else calc Close-to-Close
+    if 'raw_ret_5d' not in data_sorted.columns:
+        data_sorted['raw_ret_5d'] = data_sorted.groupby('ticker')['close'].shift(-5) / data_sorted['close'] - 1
     
     # Merge pnl_return into predictions
-    ic_df = pd.merge(backtest_preds, data_sorted[['date', 'ticker', 'fwd_ret_5d']], on=['date', 'ticker'], how='inner')
+    ic_df = pd.merge(backtest_preds, data_sorted[['date', 'ticker', 'raw_ret_5d']], on=['date', 'ticker'], how='inner')
     
     if not ic_df.empty:
         factor_attr = FactorAttribution()
         factor_vals = ic_df.set_index(['date', 'ticker'])[['prediction']]
-        fwd_rets = ic_df.set_index(['date', 'ticker'])[['fwd_ret_5d']]
+        fwd_rets = ic_df.set_index(['date', 'ticker'])[['raw_ret_5d']]
         
         rolling_ic = factor_attr.calculate_rolling_ic(factor_vals, fwd_rets, window=30)
         print(f"\n[ Factor Analysis (Predictive Power) ]")
