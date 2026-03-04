@@ -821,17 +821,18 @@ def run_production_pipeline():
     data = safe_winsorize(data, numeric_features)
     data = safe_sector_neutral_normalize(data, numeric_features)
 
-    data[numeric_features] = data[numeric_features].fillna(0)
+    # FIX: Do NOT fill numeric NaNs with 0. Tree models handle NaNs natively.
+    # data[numeric_features] = data[numeric_features].fillna(0)
+    
     cat_features = [c for c in all_features
                     if c not in numeric_features and c in data.columns]
     if cat_features:
         data[cat_features] = data[cat_features].fillna('Unknown')
 
-    # Feature Selection on initial training window only
-    initial_cutoff = data['date'].min() + pd.DateOffset(months=WF_MIN_TRAIN_MONTHS)
-    selection_data = data[data['date'] <= initial_cutoff].copy()
-    logger.info(f"[FEATURE_SEL] Using data up to {initial_cutoff.date()} "
-                f"({len(selection_data):,} rows, sampled to 100k for speed)...")
+    # Feature Selection: Sample from FULL dataset to capture features that appear later (e.g. Fundamentals 2020+)
+    # If we only use the start (2016-2019), we would drop fundamental features because they are empty then.
+    selection_data = data.sample(n=min(200_000, len(data)), random_state=42).copy()
+    logger.info(f"[FEATURE_SEL] Using random sample of {len(selection_data):,} rows from full history...")
 
     selected_features = select_orthogonal_features(
         selection_data,

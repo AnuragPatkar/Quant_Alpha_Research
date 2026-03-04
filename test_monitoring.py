@@ -97,7 +97,10 @@ def test_model_drift():
     # Calculate Actual Returns (Next Day Return)
     if 'pnl_return' not in data.columns:
         data = data.sort_values(['ticker', 'date'])
-        data['pnl_return'] = data.groupby('ticker')['close'].shift(-1) / data['close'] - 1
+        if 'open' in data.columns:
+            data['pnl_return'] = data.groupby('ticker')['open'].shift(-1) / data['open'] - 1
+        else:
+            data['pnl_return'] = data.groupby('ticker')['close'].shift(-1) / data['close'] - 1
     
     # Merge
     if 'pnl_return' in preds.columns:
@@ -134,7 +137,10 @@ def test_performance_tracker():
     # Calculate Actual Returns
     if 'pnl_return' not in data.columns:
         data = data.sort_values(['ticker', 'date'])
-        data['pnl_return'] = data.groupby('ticker')['close'].shift(-1) / data['close'] - 1
+        if 'open' in data.columns:
+            data['pnl_return'] = data.groupby('ticker')['open'].shift(-1) / data['open'] - 1
+        else:
+            data['pnl_return'] = data.groupby('ticker')['close'].shift(-1) / data['close'] - 1
     
     if 'pnl_return' in preds.columns:
         preds = preds.drop(columns=['pnl_return'])

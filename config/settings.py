@@ -83,6 +83,7 @@ class Config:
         # Model & Results directories
         self.MODELS_DIR = self.PROJECT_ROOT / 'models'
         self.RESULTS_DIR = self.PROJECT_ROOT / 'results'
+        self.PREDICTIONS_DIR = self.RESULTS_DIR / 'predictions'
         self.LOG_DIR = self.PROJECT_ROOT / 'logs'
         
         # Create all directories if they don't exist
@@ -101,6 +102,7 @@ class Config:
             self.ALTERNATIVE_DIR,
             self.MODELS_DIR,
             self.RESULTS_DIR,
+            self.PREDICTIONS_DIR,
             self.LOG_DIR
         ]
         
@@ -117,7 +119,7 @@ class Config:
         
         # Date range for backtesting
         self.BACKTEST_START_DATE = '2016-01-01'
-        self.BACKTEST_END_DATE = '2023-12-31'
+        self.BACKTEST_END_DATE = '2026-02-28'
 
         # Known Biases (Documentation only)
         self.HAS_SURVIVORSHIP_BIAS = True 
@@ -287,6 +289,9 @@ class Config:
         self.OPT_RISK_AVERSION = 2.5      # Mean-Variance & BL
         self.OPT_KELLY_FRACTION = 0.5     # Kelly Criterion
         self.OPT_LOOKBACK_DAYS = 252      # Covariance Lookback
+
+        # Inference Settings
+        self.INFERENCE_SCALER_LOOKBACK_YEARS = 3
 
     # ==================== LOGGING CONFIGURATION ====================
 

@@ -382,7 +382,13 @@ def test_with_real_data():
         logger.info("   Calculating Real Factor IC...")
         # Calculate 5-day forward return for IC (matching production target)
         data_sorted = data.sort_values(['ticker', 'date']).copy()
-        data_sorted['fwd_ret_5d'] = data_sorted.groupby('ticker')['close'].shift(-5) / data_sorted['close'] - 1
+        
+        if 'open' in data_sorted.columns:
+            next_open = data_sorted.groupby('ticker')['open'].shift(-1)
+            future_open = data_sorted.groupby('ticker')['open'].shift(-6)
+            data_sorted['fwd_ret_5d'] = (future_open / next_open) - 1
+        else:
+            data_sorted['fwd_ret_5d'] = data_sorted.groupby('ticker')['close'].shift(-5) / data_sorted['close'] - 1
         
         # Merge
         # Use original predictions for IC, not optimized weights

@@ -186,7 +186,13 @@ def verify_all_models():
     
     # Target & Feature Prep
     data = data.sort_values(['ticker', 'date'])
-    data['raw_ret_5d'] = data.groupby('ticker')['close'].shift(-5) / data['close'] - 1
+    
+    if 'open' in data.columns:
+        next_open = data.groupby('ticker')['open'].shift(-1)
+        future_open = data.groupby('ticker')['open'].shift(-6)
+        data['raw_ret_5d'] = (future_open / next_open) - 1
+    else:
+        data['raw_ret_5d'] = data.groupby('ticker')['close'].shift(-5) / data['close'] - 1
     
     # FIX: Align with Production (Sector Neutral Target)
     # Optimization should match the actual training target
