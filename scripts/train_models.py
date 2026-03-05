@@ -1360,9 +1360,13 @@ def run_production_pipeline(force_rebuild: bool = False,
         ic_m  = m.get("ic_mean",  0)
         ic_s  = m.get("ic_std",   1e-8)
         tstat = ic_m / (ic_s / (n_d ** 0.5)) if n_d > 0 else 0.0
-        if not (ic_m >= PROD_IC_THRESHOLD and tstat >= PROD_IC_TSTAT):
+        if not (ic_m >= MIN_OOS_IC_THRESHOLD and tstat >= MIN_OOS_IC_TSTAT):
             logger.info(
-                f"[PROD] {name} GATED from production save: "                f"IC={ic_m:+.4f} (need {PROD_IC_THRESHOLD}), "                f"t-stat={tstat:.1f} (need {PROD_IC_TSTAT}). "                "Model not reliable enough for live trading."            )
+                f"[PROD] {name} GATED from production save: "
+                f"IC={ic_m:+.4f} (need {MIN_OOS_IC_THRESHOLD}), "
+                f"t-stat={tstat:.1f} (need {MIN_OOS_IC_TSTAT}). "
+                "Model is noise (GATED)."
+            )
             continue
         logger.info(f"[PROD] Fitting {name} on full history for production save... "                    f"(IC={ic_m:+.4f}, t-stat={tstat:.1f} ✅)")
         try:

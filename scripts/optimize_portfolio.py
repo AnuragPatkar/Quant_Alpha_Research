@@ -487,6 +487,9 @@ class ProductionOptimizer:
         # ── 4. Generate orders ────────────────────────────────────────────────
         orders_df = self.generate_orders(weights, latest_prices)
 
+        # Add signal date so create_report.py can check for staleness
+        orders_df["signal_date"] = signal_date
+
         if orders_df.empty:
             logger.error("No valid orders generated. Check price data and weights.")
             return
