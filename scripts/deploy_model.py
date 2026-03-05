@@ -85,15 +85,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config.settings import config
 
-# FIXED H4: consistent import path with graceful fallback
-try:
-    from quant_alpha.utils import setup_logging
-    setup_logging()
-except ImportError:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s"
-    )
+from config.logging_config import setup_logging
+setup_logging()
 
 logger = logging.getLogger("Quant_Alpha")
 
@@ -131,9 +124,11 @@ def weighted_symmetric_mae(y_true, y_pred):
     return grad, hess
 
 
-# Best-effort injection into __main__ for standalone execution
+# Best-effort injection into __main__ for pickle compatibility.
+# This handles cases where the script is run directly OR via subprocess.
 try:
-    sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae
+    import __main__
+    setattr(__main__, "weighted_symmetric_mae", weighted_symmetric_mae)
 except Exception:
     pass   # Safe to ignore — joblib.load() try/except handles failure gracefully
 

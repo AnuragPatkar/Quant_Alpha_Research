@@ -321,21 +321,35 @@ class QuantitativeManagerReport:
         macro_files = list(config.ALTERNATIVE_DIR.glob("*.csv"))
         lines.append(f"ℹ️  Macro/Alt Data: {len(macro_files)} indicators available.")
 
-        # ── Cached predictions staleness ─────────────────────────────────────
-        pred_path = config.CACHE_DIR / "ensemble_predictions.parquet"
-        if pred_path.exists():
+        # ── Daily Inference Freshness (results/predictions) ──────────────────
+        # FIXED: Check the latest inference file, not the training cache
+        pred_dir = config.RESULTS_DIR / "predictions"
+        pred_files = sorted(pred_dir.glob("alpha_signals_*.parquet"))
+        
+        if pred_files:
+            latest_file = pred_files[-1]
+            # Filename format: alpha_signals_YYYY-MM-DD.parquet
             try:
-                preds = pd.read_parquet(pred_path, columns=["date"])
-                last_signal = pd.to_datetime(preds["date"]).max().date()
-                signal_lag  = _trading_days_old(last_signal)
-                s_status    = "✅" if signal_lag <= 5 else ("⚠️ " if signal_lag <= 21 else "❌")
+                date_str = latest_file.stem.replace("alpha_signals_", "")
+                last_signal = datetime.strptime(date_str, "%Y-%m-%d").date()
+                signal_lag = _trading_days_old(last_signal)
+                
+                # Status logic: 0-1 days=OK, >1=Stale (market moved), >5=Critical
+                if signal_lag <= 1:
+                    s_status = "✅"
+                elif signal_lag <= 5:
+                    s_status = "⚠️ "
+                else:
+                    s_status = "❌"
+                    
                 lines.append(
-                    f"{s_status} Alpha Signals: last generated {last_signal} "
-                    f"({signal_lag} trading days old)"
-                    + (" — RETRAIN RECOMMENDED" if signal_lag > 21 else "")
+                    f"{s_status} Daily Signals: last generated {last_signal} "
+                    f"({signal_lag} trading days ago)"
                 )
-            except Exception:
-                lines.append("ℹ️  Alpha Signals: Could not read cache.")
+            except ValueError:
+                lines.append(f"⚠️  Daily Signals: Could not parse date from {latest_file.name}")
+        else:
+            lines.append("❌ Daily Signals: No prediction files found in results/predictions/")
 
         self.add_section("1. System Health & Data Integrity", "\n".join(lines))
 
@@ -696,8 +710,11 @@ class QuantitativeManagerReport:
         total_val    = df["value"].sum() if "value" in df.columns else 0.0
         long_val     = longs["value"].sum() if "value" in longs.columns else 0.0
         short_val    = shorts["value"].sum() if "value" in shorts.columns else 0.0
-        gross_exp    = (long_val + abs(short_val)) / total_val if total_val > 0 else 0.0
-        net_exp      = (long_val - abs(short_val)) / total_val if total_val > 0 else 0.0
+        
+        # Calculate exposure ratios relative to Net Liquidation Value of positions
+        # Note: If holding cash, these % will be higher than % of Total Equity.
+        gross_pct = (long_val + abs(short_val)) / total_val if total_val > 0 else 0.0
+        net_pct   = (long_val - abs(short_val)) / total_val if total_val > 0 else 0.0
 
         # HHI concentration
         if "weight" in df.columns:
@@ -709,13 +726,16 @@ class QuantitativeManagerReport:
             hhi_str   = "N/A"
             hhi_label = ""
 
-        lines.append(f"Total Exposure:   {_format_currency(total_val)}")
+        lines.append(f"Net Position Val: {_format_currency(total_val)}")
+        lines.append(f"Long Value:       {_format_currency(long_val)}")
+        lines.append(f"Short Value:      {_format_currency(short_val)}")
         lines.append(
             f"Positions:        {len(df)} "
             f"({len(longs)} Long | {len(shorts)} Short)"
         )
-        lines.append(f"Gross Exposure:   {gross_exp:.1%}")
-        lines.append(f"Net Exposure:     {net_exp:.1%}")
+        if total_val > 0:
+            lines.append(f"Gross / Net:      {gross_pct:.1%} / {net_pct:.1%} (of invested equity)")
+        
         lines.append(f"HHI Concentration: {hhi_str}  {hhi_label}")
 
         # Top 5 positions

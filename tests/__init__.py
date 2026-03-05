@@ -1,0 +1,1 @@
+"""Quant Alpha Research Test Suite"""
