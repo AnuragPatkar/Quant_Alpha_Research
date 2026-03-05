@@ -40,15 +40,12 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.append(str(SCRIPTS_DIR))
 
 from config.settings import config
+from config.logging_config import setup_logging
 import download_data as dd
 
 # ERROR level only — retry noise is not actionable
-logging.basicConfig(
-    level=logging.ERROR,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger(__name__)
+setup_logging(default_level=logging.ERROR)
+log = logging.getLogger("Quant_Alpha")
 
 PRICE_DIR    = config.PRICES_DIR
 FUND_DIR     = config.FUNDAMENTALS_DIR

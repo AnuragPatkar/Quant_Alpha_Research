@@ -7,7 +7,7 @@ from pathlib import Path
 
 from config.settings import config
 
-def setup_logging(name='Quant_Alpha'):
+def setup_logging(name=None, default_level=None):
     """
     Sets up a logger that writes to both:
     1. Console (Terminal) - For quick checks
@@ -22,6 +22,10 @@ def setup_logging(name='Quant_Alpha'):
 
     # Determine Log Level from Config
     log_level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
+    if default_level:
+        log_level = default_level
+    else:
+        log_level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
 
     # 2. File Handler (Saves to disk)
     file_handler = logging.FileHandler(log_file,mode='a',encoding='utf-8')
@@ -47,4 +51,4 @@ def setup_logging(name='Quant_Alpha'):
     return logger
 
 # Create a default logger instance to import easily
-logger = setup_logging()
+logger = setup_logging(name='Quant_Alpha')

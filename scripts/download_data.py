@@ -35,15 +35,6 @@ from tqdm import tqdm
 warnings.filterwarnings("ignore")
 
 # ---------------------------------------------------------
-# LOGGING SETUP
-# ---------------------------------------------------------
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(levelname)s | %(message)s",
-)
-log = logging.getLogger(__name__)
-
-# ---------------------------------------------------------
 # PROJECT SETUP
 # ---------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -51,6 +42,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from config.settings import config
+from config.logging_config import setup_logging
+
+# ---------------------------------------------------------
+# LOGGING SETUP
+# ---------------------------------------------------------
+setup_logging(default_level=logging.WARNING)
+log = logging.getLogger("Quant_Alpha")
 
 PRICE_DIR    = config.PRICES_DIR
 FUND_DIR     = config.FUNDAMENTALS_DIR

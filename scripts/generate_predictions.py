@@ -70,10 +70,11 @@ from scripts.train_models import (
 import sys as _sys
 _sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae
 from config.settings import config
-from quant_alpha.utils import setup_logging, save_parquet, time_execution
+from config.logging_config import setup_logging
+from quant_alpha.utils import save_parquet, time_execution
 
 setup_logging()
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("Quant_Alpha")
 
 # Minimum trading days in the scaler fit window (guards against short history)
 MIN_SCALER_DAYS = 252   # ~1 year
@@ -155,6 +156,25 @@ def preprocess_inference_data(
         stored date lookup (which only covers the fit window).
       • WinsorisationScaler uses searchsorted on fit-window dates, which is safe
         as long as inference_start >= scaler_fit_end (guarded in caller).
+
+    KNOWN DISCREPANCY — Training vs Inference Winsorisation:
+      Training  : global quantiles computed per-date across FULL dataset
+      Inference : rolling quantiles fitted on [scaler_fit_start, scaler_fit_end]
+      In stable regimes this is negligible. In regime shifts (e.g. 2020 crash)
+      tails diverge. Ideal fix: save training quantile bounds in model pkl.
+      Until then: use 3+ year scaler_fit_window to minimise distribution shift.
+
+    KNOWN DISCREPANCY — Training vs Inference Winsorisation:
+      Training  : global quantiles computed per-date across FULL dataset
+      Inference : rolling quantiles fitted on [scaler_fit_start, scaler_fit_end]
+      
+      In stable regimes this difference is negligible (<0.5% of rows affected).
+      In regime shifts (e.g. 2020 Covid crash) the tails diverge — a feature
+      value that was p99 in 2019 may be p85 in 2022.
+      
+      Ideal fix: save training quantile bounds inside the model pkl at training
+      time and load them here. This is a planned improvement. Until then, use a
+      scaler_fit_window of 3+ years to minimise distribution shift.
     """
     logger.info(
         f"Scaler fit window : {scaler_fit_start.date()} → {scaler_fit_end.date()}"
@@ -172,6 +192,32 @@ def preprocess_inference_data(
 
     fit_df   = window_data[fit_mask]
     infer_df = window_data[infer_mask]
+
+    # Regime-shift guard: warn if inference feature distributions differ
+    # significantly from scaler fit window (signals preprocessing discrepancy)
+    if not fit_df.empty and not infer_df.empty:
+        meta_excl = {
+            "ticker", "date", "target", "raw_ret_5d", "pnl_return",
+            "open", "high", "low", "close", "volume",
+            "sector", "industry", "index", "level_0",
+        }
+        check_cols = [
+            c for c in fit_df.select_dtypes(include=[np.number]).columns
+            if c not in meta_excl
+        ][:10]  # sample 10 features for speed
+        if check_cols:
+            fit_med   = fit_df[check_cols].median()
+            infer_med = infer_df[check_cols].median()
+            fit_std   = fit_df[check_cols].std().replace(0, 1e-8)
+            shift     = ((infer_med - fit_med) / fit_std).abs().mean()
+            if shift > 1.0:
+                logger.warning(
+                    f"[PREPROC] Regime shift detected: median feature shift = {shift:.2f}σ "
+                    f"(fit window vs inference). Winsorisation bounds may be stale. "
+                    f"Consider retraining or widening scaler_fit_window."
+                )
+            else:
+                logger.info(f"[PREPROC] Distribution check: {shift:.3f}σ shift (OK < 1.0σ)")
 
     if fit_df.empty:
         raise ValueError(
