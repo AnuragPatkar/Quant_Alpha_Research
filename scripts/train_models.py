@@ -75,13 +75,8 @@ def _set_thread_env(n: int) -> None:
     os.environ["NUMBA_CACHE_DIR"]      = ".numba_cache"
     os.environ["PYTHONWARNINGS"]       = "ignore"
     # Only set NUMBA_NUM_THREADS if Numba thread pool not yet started
-    try:
-        import numba.np.ufunc.parallel as _nbp
-        if not getattr(_nbp, "_IS_PARALLEL_LAUNCHED", False):
-            os.environ["NUMBA_NUM_THREADS"] = str(n)
-    except Exception:
-        if "NUMBA_NUM_THREADS" not in os.environ:
-            os.environ["NUMBA_NUM_THREADS"] = str(n)
+    if "NUMBA_NUM_THREADS" not in os.environ:
+        os.environ["NUMBA_NUM_THREADS"] = str(n)
 
 _set_thread_env(CPU_CORES_TO_USE)
 
@@ -897,17 +892,33 @@ def _train_single_model(name: str,
                         train_df[_str_col] = train_df[_str_col].astype("category")
                     if _str_col in test_df.columns:
                         test_df[_str_col]  = test_df[_str_col].astype("category")
+                # FIXED ISSUE3: LightGBM requires 'category' dtype for categoricals.
+                # We slice X_train/X_test first, then explicitly cast to ensure it sticks.
+                X_train = train_df[features].copy()
+                y_train = train_df["target"]
+                X_test  = test_df[features].copy()
+
+                for _cat in ["sector", "industry"]:
+                    if _cat in X_train.columns:
+                        X_train[_cat] = X_train[_cat].astype("category")
+                    if _cat in X_test.columns:
+                        X_test[_cat]  = X_test[_cat].astype("category")
 
                 model = model_class(params=p.copy())
                 try:
                     model.fit(train_df[features], train_df["target"])
                     raw_preds = model.predict(test_df[features])
+                    model.fit(X_train, y_train)
+                    raw_preds = model.predict(X_test)
                 except Exception:
                     model.fit(
                         train_df[features].reset_index(drop=True),
                         train_df["target"].reset_index(drop=True),
+                        X_train.reset_index(drop=True),
+                        y_train.reset_index(drop=True),
                     )
                     raw_preds = model.predict(test_df[features].reset_index(drop=True))
+                    raw_preds = model.predict(X_test.reset_index(drop=True))
 
                 fold_preds = test_df[["date", "ticker"]].reset_index(drop=True).copy()
                 fold_preds["prediction"] = raw_preds
@@ -1375,11 +1386,20 @@ def run_production_pipeline(force_rebuild: bool = False,
         ic_m  = m.get("ic_mean",  0)
         ic_s  = m.get("ic_std",   1e-8)
         tstat = ic_m / (ic_s / (n_d ** 0.5)) if n_d > 0 else 0.0
-        if not (ic_m >= PROD_IC_THRESHOLD and tstat >= PROD_IC_TSTAT):
+
+        # FIXED: Save if it passes ENSEMBLE gate (needed for inference), not just PROD gate.
+        # If we only save PROD models, the inference ensemble will miss the ENSEMBLE-tier models
+        # that were used during training, causing a training/inference skew.
+        if not (ic_m >= MIN_OOS_IC_THRESHOLD and tstat >= MIN_OOS_IC_TSTAT):
             logger.info(
-                f"[PROD] {name} GATED from production save: "                f"IC={ic_m:+.4f} (need {PROD_IC_THRESHOLD}), "                f"t-stat={tstat:.1f} (need {PROD_IC_TSTAT}). "                "Model not reliable enough for live trading."            )
+                f"[SAVE] {name} GATED from save: IC={ic_m:+.4f} (need {MIN_OOS_IC_THRESHOLD}), "
+                f"t-stat={tstat:.1f} (need {MIN_OOS_IC_TSTAT}). Too weak for ensemble."
+            )
             continue
-        logger.info(f"[PROD] Fitting {name} on full history for production save... "                    f"(IC={ic_m:+.4f}, t-stat={tstat:.1f} ✅)")
+
+        tier = "PROD" if (ic_m >= PROD_IC_THRESHOLD and tstat >= PROD_IC_TSTAT) else "ENSEMBLE"
+        logger.info(f"[SAVE] Fitting {name} ({tier}) on full history... (IC={ic_m:+.4f}, t={tstat:.1f})")
+
         try:
             # FIXED: original hardcoded a 2-year cutoff contradicting the log message
             # and ignoring WF_MIN_TRAIN_MONTHS (36 months). A production model
@@ -1391,10 +1411,8 @@ def run_production_pipeline(force_rebuild: bool = False,
                         data["date"].min().strftime("%Y-%m-%d"))
             )
             p_data  = data[data["date"] >= prod_cutoff].copy()
-            logger.info(
-                f"[PROD] Training window: {prod_cutoff.date()} → {data['date'].max().date()} "
-                f"({len(p_data):,} rows — {(data['date'].max()-prod_cutoff).days//30} months)"
-            )
+            # logger.info(...) # reduced verbosity
+
             for _c in ["sector", "industry"]:
                 if _c in p_data.columns:
                     p_data[_c] = p_data[_c].astype("category")
@@ -1406,6 +1424,13 @@ def run_production_pipeline(force_rebuild: bool = False,
             prod_model = cls(params=prms.copy())
             feat_avail = [f for f in selected_features if f in p_data.columns]
             prod_model.fit(p_data[feat_avail], p_data["target"])
+            
+            X_prod = p_data[feat_avail].copy()
+            for _c in ["sector", "industry"]:
+                if _c in X_prod.columns:
+                    X_prod[_c] = X_prod[_c].astype("category")
+            
+            prod_model.fit(X_prod, p_data["target"])
 
             save_dir = config.MODELS_DIR / "production"
             os.makedirs(save_dir, exist_ok=True)
@@ -1415,9 +1440,9 @@ def run_production_pipeline(force_rebuild: bool = False,
                  "oos_metrics": m},
                 save_dir / f"{name.lower()}_latest.pkl",
             )
-            logger.info(f"[PROD] {name} saved → {save_dir / f'{name.lower()}_latest.pkl'}")
+            logger.info(f"[SAVE] {name} saved → {save_dir / f'{name.lower()}_latest.pkl'}")
         except Exception as exc:
-            logger.error(f"[PROD] {name} save failed: {exc}", exc_info=True)
+            logger.error(f"[SAVE] {name} save failed: {exc}", exc_info=True)
 
     # ── 11. ENSEMBLE ──────────────────────────────────────────────────────
     # FIXED ISSUE2: original included ALL models in ensemble regardless of IC gate.
@@ -1588,7 +1613,19 @@ def run_production_pipeline(force_rebuild: bool = False,
             if len(aligned) >= 50:
                 ex_s = aligned["strategy"]  - RISK_FREE
                 ex_b = aligned["benchmark"] - RISK_FREE
-                beta_val, alpha_d, r_val, p_val, _ = stats.linregress(ex_b, ex_s)
+
+            reg = stats.linregress(ex_b, ex_s)
+            beta_val = reg.slope
+            alpha_d  = reg.intercept
+            r_val    = reg.rvalue
+
+            # FIX: Calculate Alpha p-value (intercept significance)
+            if hasattr(reg, "intercept_stderr"):
+                t_alpha = reg.intercept / reg.intercept_stderr
+                p_val_alpha = 2 * (1 - stats.t.cdf(abs(t_alpha), df=len(ex_b)-2))
+            else:
+                p_val_alpha = np.nan
+
                 strat_ann     = aligned["strategy"].mean()  * 252
                 bench_ann     = aligned["benchmark"].mean() * 252
                 jensens_alpha = strat_ann - (0.035 + beta_val * (bench_ann - 0.035))
@@ -1610,8 +1647,8 @@ def run_production_pipeline(force_rebuild: bool = False,
                 ).assign(excess=lambda d: d.strat_ann - d.bench_ann)
 
                 print(f"  Jensen Alpha (ann.)   : {jensens_alpha:>+8.2%}  ← uses equity curve returns")
-                print(f"  Alpha p-value         : {p_val:>8.4f}  "
-                      f"{'✅ Significant' if p_val < 0.05 else '⚠️  Not significant'}")
+                print(f"  Alpha p-value         : {p_val_alpha:>8.4f}  "
+                      f"{'✅ Significant' if p_val_alpha < 0.05 else '⚠️  Not significant'}")
                 print(f"  Beta                  : {beta_val:>8.4f}  "
                       f"({'Low' if beta_val < 0.5 else 'Moderate' if beta_val < 1.0 else 'High'} mkt exp)")
                 print(f"  R² vs Benchmark       : {r_val**2:>8.4f}")
@@ -1630,8 +1667,7 @@ def run_production_pipeline(force_rebuild: bool = False,
                     icon = '✅' if row.excess > 0 else '❌'
                     print(f"  {yr:<6}  {row.strat_ann:>+8.1%}  {row.bench_ann:>+9.1%}  {row.excess:>+8.1%}  {icon}")
                 print(f"{'='*62}")
-            else:
-                logger.warning("[ALPHA] Not enough aligned days.")
+            
         except ImportError:
             logger.warning("[ALPHA] yfinance not installed: pip install yfinance")
         except Exception as exc:

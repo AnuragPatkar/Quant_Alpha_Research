@@ -471,14 +471,24 @@ Examples:
                         "Consider normalising returns to invested capital."
                     )
 
-                beta, alpha_daily, r_val, p_val, _ = stats.linregress(
+                reg = stats.linregress(
                     aligned["bench"].values.ravel() - rf_daily,
                     aligned["strat"].values.ravel() - rf_daily,
                 )
+                beta = reg.slope
+                alpha_daily = reg.intercept
+                r_val = reg.rvalue
+
+                if hasattr(reg, "intercept_stderr"):
+                    t_alpha = reg.intercept / reg.intercept_stderr
+                    p_val_alpha = 2 * (1 - stats.t.cdf(abs(t_alpha), df=len(aligned)-2))
+                else:
+                    p_val_alpha = np.nan
 
                 print(f"\n[ Alpha Metrics vs S&P 500 (^GSPC) ]")
                 print(f"  Beta:         {beta:.4f}")
                 print(f"  Alpha (Ann):  {alpha_daily * 252:.4%}")
+                print(f"  Alpha p-value:{p_val_alpha:.4f}")
                 print(f"  Correlation:  {r_val:.4f}")
                 print(f"  Note: Alpha includes cash drag if portfolio < 100% invested.")
 
