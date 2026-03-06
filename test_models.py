@@ -10,12 +10,20 @@ import time
 import traceback
 import numpy as np
 import pandas as pd
+from pathlib import Path
+
+# Ensure project root is in path so quant_alpha imports work
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # CPU throttle — set before any imports
 os.environ["OMP_NUM_THREADS"]      = "2"
 os.environ["OPENBLAS_NUM_THREADS"] = "2"
 os.environ["MKL_NUM_THREADS"]      = "2"
 os.environ["NUMBA_NUM_THREADS"]    = "2"
+os.environ["LOKY_MAX_CPU_COUNT"]   = "2"
+os.environ["NUMBA_CACHE_DIR"]      = ".numba_cache"
 
 # Suppress CatBoost Numba JIT warning — not an error, just informational
 # CatBoost tries to JIT compile calc_ders_range, fails silently, uses Python fallback
@@ -214,7 +222,7 @@ class ModelTestSuite:
             m.fit(X_train, y_train)
             assert_is_fitted(m, self.model_name)
 
-            preds = m.predict(X_test)
+            preds = m.predict(X_test[self.features])
             assert_predictions_valid(preds, len(X_test), self.model_name)
         self._run("basic fit + predict", _)
 
