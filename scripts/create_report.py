@@ -60,6 +60,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config.settings import config
 from config.logging_config import setup_logging
+setup_logging()
 
 logger = logging.getLogger("Quant_Alpha")
 

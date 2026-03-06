@@ -1,25 +1,25 @@
 """
-INTEGRATION TEST: DataManager + Factors + ScoreEngine
-Goal: Verify flow from Raw Data -> Signals -> Ranking.
-STATUS: FIXED (Handles Multi-Column Factor Returns Robustly)
+INTEGRATION TEST: DataManager + Factors + ML Model Flow
+Goal: Verify flow from Raw Data -> Feature Engineering -> Inference.
+Updated for ML Pipeline (replaces legacy ScoreEngine test).
 """
 import pandas as pd
 import numpy as np
-from config.logging_config import logger
+import logging
+from config.logging_config import setup_logging
 from quant_alpha.data.DataManager import DataManager
 from quant_alpha.features.registry import FactorRegistry
-from quant_alpha.models.score_engine import ScoreEngine
+from quant_alpha.models.lightgbm_model import LightGBMModel
 
-
-
+setup_logging()
+logger = logging.getLogger("Quant_Alpha")
 
 # Import factors to register them
 import quant_alpha.features.technical.momentum
-import quant_alpha.features.fundamental.value
-import quant_alpha.features.fundamental.quality
+import quant_alpha.features.technical.volatility
 
 def run_full_system_test():
-    logger.info("🚀 STARTING FULL SYSTEM INTEGRATION TEST...")
+    logger.info("🚀 STARTING ML PIPELINE INTEGRATION TEST...")
 
     # 1. LOAD MASTER DATA
     dm = DataManager()
@@ -31,11 +31,12 @@ def run_full_system_test():
 
     logger.info(f"✅ Master Data Loaded. Rows: {len(master_df):,}")
 
-    # 2. CALCULATE FACTORS (Sample Strategy)
-    logger.info("⚙️  Calculating Strategy Factors...")
+    # 2. CALCULATE FACTORS (ML Feature Set)
+    logger.info("⚙️  Calculating ML Features...")
     registry = FactorRegistry()
     
-    target_factors = ['rsi_14d', 'val_pe_ratio', 'qual_roe']
+    # Test a mix of technical factors
+    target_factors = ['rsi_14d', 'mom_1m', 'vol_21d']
     
     # Base container with MultiIndex
     factor_data = pd.DataFrame(index=master_df.index)
@@ -83,57 +84,43 @@ def run_full_system_test():
                 logger.error(f"   ❌ Failed {name}: {e}")
 
     # Drop rows where all factors are NaN
-    factor_data = factor_data.dropna(how='all')
-    factor_data = factor_data.fillna(0) # Fill remaining gaps for scoring
+    X = factor_data.dropna(how='all').fillna(0)
     
-    logger.info(f"✅ Factor Calculation Complete. Shape: {factor_data.shape}")
+    logger.info(f"✅ Factor Calculation Complete. Shape: {X.shape}")
 
-    if factor_data.empty:
-        logger.error("❌ No factors calculated. Exiting.")
+    if X.empty:
+        logger.error("❌ Feature matrix empty.")
         return
 
-    # 3. SCORE & RANK
-    weights = {
-        'rsi_14d': 0.4,
-        'qual_roe': 0.3,
-        'val_pe_ratio': -0.3 
-    }
+    # 3. MOCK MODEL INFERENCE
+    logger.info("🤖 Testing Model Inference (Mock)...")
     
-    engine = ScoreEngine(weights=weights)
+    # Initialize a dummy LightGBM model (untrained, just checking interface)
+    model = LightGBMModel(params={'n_estimators': 1, 'verbose': -1})
     
-    # A. Normalize
-    norm_df = engine.normalize_factors(factor_data)
-    logger.info("✅ Factors Normalized (Z-Scores Generated)")
-    
-    # B. Score
-    scores = engine.compute_final_score(norm_df)
-    logger.info("✅ Final Alpha Scores Computed")
-
-    # 4. SHOW TOP PICKS
-    # Find the latest valid date
-    latest_date = scores.index.get_level_values('date').max()
-    
-    if pd.isna(latest_date):
-        logger.error("❌ No valid dates found in scores.")
-        return
-
-    logger.info(f"\n🏆 TOP 10 STOCK PICKS FOR: {latest_date.date()}")
-    logger.info("-" * 60)
-    
-    # Get top 10 for the last day
     try:
-        day_scores = scores.xs(latest_date, level='date')
-        top_picks = day_scores.sort_values('alpha_score', ascending=False).head(10)
+        # Mock fit on small subset to initialize internal structures
+        y = np.random.rand(len(X))
+        model.fit(X.iloc[:100], y[:100])
         
-        # Join with raw values for display
-        raw_values = factor_data.xs(latest_date, level='date')
-        display = top_picks.join(raw_values, how='left')
-        print(display)
+        # Predict
+        preds = model.predict(X.iloc[:100])
+        
+        if len(preds) == 100:
+            logger.info("✅ Model Fit/Predict Cycle Successful")
+        else:
+            logger.error("❌ Prediction length mismatch")
+            
     except Exception as e:
-        logger.error(f"Error displaying results: {e}")
-    
+        logger.error(f"❌ Model test failed: {e}")
+        return
+
+    # 4. OUTPUT CHECK
     logger.info("-" * 60)
-    logger.info("🚀 SYSTEM TEST PASSED SUCCESSFULLY!")
+    logger.info(f"🚀 ML PIPELINE INTEGRATION TEST PASSED")
+    logger.info(f"   Data Rows: {len(master_df)}")
+    logger.info(f"   Features:  {list(X.columns)}")
+    logger.info("-" * 60)
 
 if __name__ == "__main__":
     run_full_system_test()

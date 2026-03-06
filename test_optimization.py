@@ -15,7 +15,7 @@ import warnings
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
 
-from quant_alpha.utils import setup_logging
+from config.logging_config import setup_logging
 setup_logging()
 
 root_logger = logging.getLogger()

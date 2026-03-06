@@ -108,9 +108,8 @@ if str(PROJECT_ROOT) not in sys.path:
 import warnings
 warnings.filterwarnings("ignore")
 
-from config.logging_config import setup_logging
 from quant_alpha.utils import (
-    load_parquet, save_parquet,
+    setup_logging, load_parquet, save_parquet,
     time_execution, calculate_returns
 )
 from config.settings import config
@@ -148,7 +147,15 @@ import quant_alpha.features.composite.system_health
 import quant_alpha.features.composite.smart_signals
 
 setup_logging()
-logger = logging.getLogger("Quant_Alpha")
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
+    import sys as _sys
+    _ch = logging.StreamHandler(_sys.stdout)
+    _ch.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    root_logger.addHandler(_ch)
+logger = logging.getLogger(__name__)
+
 # ==============================================================================
 # GLOBAL CONFIGURATION
 # ==============================================================================
@@ -887,9 +894,9 @@ def _train_single_model(name: str,
                 # pandas versions. Enforce str dtype here before every .fit().
                 for _str_col in ["sector", "industry"]:
                     if _str_col in train_df.columns:
-                        train_df[_str_col] = train_df[_str_col].astype(str)
+                        train_df[_str_col] = train_df[_str_col].astype("category")
                     if _str_col in test_df.columns:
-                        test_df[_str_col]  = test_df[_str_col].astype(str)
+                        test_df[_str_col]  = test_df[_str_col].astype("category")
 
                 model = model_class(params=p.copy())
                 try:
@@ -1265,17 +1272,25 @@ def run_production_pipeline(force_rebuild: bool = False,
     models_config = {
         "LightGBM": (LightGBMModel, {
             "n_estimators": 300, "learning_rate": 0.035675689449899364,
-            "reg_lambda": 10.0, "num_leaves": 24,
+            "reg_lambda": 18.37226620326944, "num_leaves": 24,
             "max_depth": 6, "importance_type": "gain",
             "n_jobs": MODEL_THREADS, "random_state": RANDOM_SEED,
-            "objective": weighted_symmetric_mae,
+            # FIX: weighted_symmetric_mae callable silently ignored by LGBMRegressor
+            # sklearn wrapper unpacks **params — callable objective is not forwarded
+            # to the native lgb.train(fobj=...) parameter, so LGB uses MSE default.
+            # Result: constant predictions per date → IC = 0.
+            # Fix: use built-in L1 string objective (same intent — MAE-like loss).
+            # To use custom obj properly: pass via LightGBMModel(fobj=fn) not params dict.
+            "objective": "regression_l1",
         }),
         "XGBoost": (XGBoostModel, {
-            "n_estimators": 300, "learning_rate": 0.05,
-            "max_depth": 4, "reg_lambda": 10.0,
-            "min_child_weight": 1, "subsample": 0.7,
+            "n_estimators": 300, "learning_rate": 0.03261427122370329,
+            "max_depth": 3, "reg_lambda": 67.87878943705068,
+            "min_child_weight": 1, "subsample": 0.6756485311881795,
             "n_jobs": MODEL_THREADS, "random_state": RANDOM_SEED,
-            "objective": weighted_symmetric_mae, "max_bin": 64,
+            # FIX: same issue — XGBoost sklearn wrapper may not forward callable
+            # objective correctly. Use string equivalent.
+            "objective": "reg:absoluteerror",  "max_bin": 64,
         }),
         "CatBoost": (CatBoostModel, {
             "iterations": 150, "learning_rate": 0.06, "depth": 4,
@@ -1360,13 +1375,9 @@ def run_production_pipeline(force_rebuild: bool = False,
         ic_m  = m.get("ic_mean",  0)
         ic_s  = m.get("ic_std",   1e-8)
         tstat = ic_m / (ic_s / (n_d ** 0.5)) if n_d > 0 else 0.0
-        if not (ic_m >= MIN_OOS_IC_THRESHOLD and tstat >= MIN_OOS_IC_TSTAT):
+        if not (ic_m >= PROD_IC_THRESHOLD and tstat >= PROD_IC_TSTAT):
             logger.info(
-                f"[PROD] {name} GATED from production save: "
-                f"IC={ic_m:+.4f} (need {MIN_OOS_IC_THRESHOLD}), "
-                f"t-stat={tstat:.1f} (need {MIN_OOS_IC_TSTAT}). "
-                "Model is noise (GATED)."
-            )
+                f"[PROD] {name} GATED from production save: "                f"IC={ic_m:+.4f} (need {PROD_IC_THRESHOLD}), "                f"t-stat={tstat:.1f} (need {PROD_IC_TSTAT}). "                "Model not reliable enough for live trading."            )
             continue
         logger.info(f"[PROD] Fitting {name} on full history for production save... "                    f"(IC={ic_m:+.4f}, t-stat={tstat:.1f} ✅)")
         try:
@@ -1386,7 +1397,7 @@ def run_production_pipeline(force_rebuild: bool = False,
             )
             for _c in ["sector", "industry"]:
                 if _c in p_data.columns:
-                    p_data[_c] = p_data[_c].astype(str)
+                    p_data[_c] = p_data[_c].astype("category")
             cat_fill = [c for c in p_data.columns
                         if c not in meta_cols and p_data[c].dtype == object]
             p_data[cat_fill] = p_data[cat_fill].fillna("Unknown")
