@@ -6,6 +6,7 @@ from .constraints import PortfolioConstraints
 from .allocator import PortfolioAllocator
 
 
+
 __all__ = [
     'MeanVarianceOptimizer',
     'RiskParityOptimizer',

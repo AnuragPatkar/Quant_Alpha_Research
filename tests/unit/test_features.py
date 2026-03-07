@@ -173,7 +173,6 @@ def sample_market_data():
     # FutureWarning FIX: avoid groupby().apply(lambda g: g.ffill()) which
     # triggers pandas >= 2.2 deprecation about applying on grouping columns.
     # Use groupby().transform("ffill") per column — no include_groups issue.
-    df = pd.DataFrame(rows)
     df = df.sort_values(["ticker", "date"]).reset_index(drop=True)
     for col in df.columns:
         if col not in ("date", "ticker"):
@@ -380,11 +379,15 @@ class TestFeatures:
         df.loc[mask_a, "close"] = np.linspace(100, 200, n_a)  # strong uptrend
         df.loc[mask_b, "close"] = np.linspace(200, 100, n_b)  # strong downtrend
 
-        # Force ALL price columns to match close.
-        # This ensures factors using open/high/low/adj_close ALL see the trend.
-        # Also ensure volume is valid.
-        for col in ["open", "high", "low", "adj_close", "adj_open", "adj_high", "adj_low"]:
-            df[col] = df["close"]
+        # Force ALL price columns to match close trend.
+        # FIX: Ensure High > Low to avoid zero-volatility crashes in factors (e.g. Sharpe/Sortino)
+        df["open"]      = df["close"]
+        df["high"]      = df["close"] * 1.001
+        df["low"]       = df["close"] * 0.999
+        df["adj_close"] = df["close"]
+        df["adj_open"]  = df["open"]
+        df["adj_high"]  = df["high"]
+        df["adj_low"]   = df["low"]
         
         # Ensure explicit sort order for time-series calculations
         df = df.sort_values(["ticker", "date"]).reset_index(drop=True)

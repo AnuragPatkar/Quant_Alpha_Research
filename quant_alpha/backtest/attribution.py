@@ -197,43 +197,76 @@ class SimpleAttribution:
     def analyze_pnl_drivers(self, trades_df: pd.DataFrame) -> Dict:
         """Breaks down PnL by Long/Short."""
         if trades_df.empty:
-            return {'long_pnl_contribution': 0.0, 'short_pnl_contribution': 0.0, 'hit_ratio': 0.0}
+            return {
+                'total_pnl': 0.0,
+                'gross_profit': 0.0,
+                'gross_loss': 0.0,
+                'total_trades': 0,
+                'winning_trades': 0,
+                'losing_trades': 0,
+                'hit_ratio': 0.0,
+                'avg_win': 0.0,
+                'avg_loss': 0.0,
+                'win_loss_ratio': 0.0,
+                'long_pnl_contribution': 0.0,
+                'short_pnl_contribution': 0.0
+            }
             
         if 'pnl' not in trades_df.columns:
             return {"error": "Trades DataFrame must contain 'pnl' column"}
         
-        # Filter for closed trades (non-zero PnL) to avoid skewing stats with entry orders
-        closed_trades = trades_df[trades_df['pnl'] != 0]
+        # Filter for closed trades
+        # Case-insensitive status check
+        if 'status' in trades_df.columns:
+            closed_trades = trades_df[trades_df['status'].astype(str).str.lower() == 'closed']
+        else:
+            closed_trades = trades_df[trades_df['pnl'] != 0]
         
-        # Logic: PnL is realized on the CLOSING leg.
-        # Closing a Long position involves SELLING.
-        # Closing a Short position involves BUYING.
-        # Assuming Long-Only strategy for simplicity in this report.
-        
-        # Fix: Sum PnL from all trades. In Long-Only, 'buy' has 0 PnL, 'sell' has realized PnL.
-        # If Shorting exists, 'buy' would have PnL.
-        long_pnl = trades_df[trades_df['pnl'] > 0]['pnl'].sum() + trades_df[trades_df['pnl'] < 0]['pnl'].sum()
-        short_pnl = 0.0 # Placeholder for Long-Only
+        # Gross Profit vs Net PnL Logic
+        total_pnl = closed_trades['pnl'].sum()
         
         winners = closed_trades[closed_trades['pnl'] > 0]
         losers = closed_trades[closed_trades['pnl'] < 0]
         
-        hit_ratio = len(winners) / len(closed_trades) if len(closed_trades) > 0 else 0
+        gross_profit = winners['pnl'].sum()
+        gross_loss = losers['pnl'].sum()
         
-        avg_win = winners['pnl'].mean() if not winners.empty else 0
-        avg_loss = losers['pnl'].mean() if not losers.empty else 0
+        winning_trades = len(winners)
+        losing_trades = len(losers)
+        total_trades = len(closed_trades)
+        
+        hit_ratio = winning_trades / total_trades if total_trades > 0 else 0.0
+        
+        avg_win = winners['pnl'].mean() if not winners.empty else 0.0
+        avg_loss = losers['pnl'].mean() if not losers.empty else 0.0
         
         # Safe Win/Loss Ratio
         if avg_loss != 0 and avg_win != 0:
             win_loss_ratio = abs(avg_win / avg_loss)
         else:
-            win_loss_ratio = 0
+            win_loss_ratio = 0.0
+            
+        # Legacy Support for Long/Short breakdown
+        # Assuming Long-Only if side is missing, or parsing side if present
+        long_pnl = total_pnl
+        short_pnl = 0.0
+        if 'side' in closed_trades.columns:
+             long_mask = closed_trades['side'].astype(str).str.lower() == 'long'
+             long_pnl = closed_trades[long_mask]['pnl'].sum()
+             short_pnl = closed_trades[~long_mask]['pnl'].sum()
         
+        # Standardized Keys
         return {
-            'long_pnl_contribution': long_pnl,
-            'short_pnl_contribution': short_pnl,
+            'total_pnl': total_pnl,
+            'gross_profit': gross_profit,
+            'gross_loss': gross_loss,
+            'total_trades': total_trades,
+            'winning_trades': winning_trades,
+            'losing_trades': losing_trades,
             'hit_ratio': hit_ratio,
             'avg_win': avg_win,
             'avg_loss': avg_loss,
-            'win_loss_ratio': win_loss_ratio
+            'win_loss_ratio': win_loss_ratio,
+            'long_pnl_contribution': long_pnl,
+            'short_pnl_contribution': short_pnl
         }
