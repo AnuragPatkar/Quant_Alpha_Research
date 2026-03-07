@@ -67,6 +67,8 @@ import pytest
 import pandas as pd
 import numpy as np
 import sys
+import joblib
+import io
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -258,6 +260,37 @@ class TestModels:
             f"{name} test predictions out of range: max_abs={max_abs:.2f}. "
             "Possible objective misconfiguration or feature scaling issue."
         )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # NEW: Persistence Test (Pickling)
+    # ──────────────────────────────────────────────────────────────────────────
+    @pytest.mark.parametrize("model_class, name", [
+        (LightGBMModel, "LightGBM"),
+        (XGBoostModel,  "XGBoost"),
+        (CatBoostModel, "CatBoost"),
+    ])
+    def test_model_persistence(self, model_class, name, synthetic_data):
+        """Verify model can be pickled and unpickled without losing state."""
+        if model_class is None:
+            pytest.skip(f"{name} not installed.")
+
+        df, features, target_col = synthetic_data
+        params = _build_params(name, {"n_estimators": 5, "verbose": -1})
+        
+        model = model_class(params=params)
+        model.fit(df[features], df[target_col])
+        
+        # Round-trip pickle
+        buffer = io.BytesIO()
+        joblib.dump(model, buffer)
+        buffer.seek(0)
+        loaded_model = joblib.load(buffer)
+        
+        preds_orig = model.predict(df[features])
+        preds_load = loaded_model.predict(df[features])
+        
+        np.testing.assert_array_equal(preds_orig, preds_load, 
+                                      err_msg=f"{name}: Pickled model predictions differ from original")
 
     # ──────────────────────────────────────────────────────────────────────────
     # C1 + C2 FIX: Custom objective — all 3 cases + hessian magnitude

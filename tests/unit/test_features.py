@@ -547,3 +547,32 @@ class TestFeatures:
         assert (df["low"]  <= df["open"]).all(),  "Fixture: low > open"
         assert (df["low"]  <= df["close"]).all(), "Fixture: low > close"
         assert (df["volume"] > 0).all(),          "Fixture: zero/negative volume"
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # NEW: Division by Zero Handling
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_division_by_zero_handling(self, registry):
+        """
+        Factors involving ratios (e.g. P/E) must handle zero denominators
+        without crashing, producing NaN or Inf.
+        """
+        # Create data with 0.0 in a denominator column (e.g. eps for P/E)
+        # Note: val_earnings_yield usually calculates eps / price. 
+        # Let's test a case where price is 0 (unlikely but possible in bad data).
+        bad_data = pd.DataFrame({
+            "date": pd.date_range("2023-01-01", periods=10),
+            "ticker": ["Z"] * 10,
+            "close": [0.0] * 10,  # Zero price
+            "eps": [1.0] * 10,
+            "pe_ratio": [0.0] * 10 # Zero P/E
+        })
+        
+        factor_name = "val_earnings_yield" # usually 1/PE
+        if factor_name in registry.factors:
+            factor = registry.factors[factor_name]
+            try:
+                res = factor.calculate(bad_data)
+                # Should run without error. Result might be Inf or NaN.
+                assert len(res) == 10
+            except Exception as e:
+                pytest.fail(f"{factor_name} crashed on zero input: {e}")

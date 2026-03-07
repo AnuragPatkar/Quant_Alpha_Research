@@ -331,6 +331,106 @@ class TestBacktestEngine:
             f"Expected 0 trades for empty inputs, got {len(results['trades'])}"
         )
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # NEW: Risk Management & Constraints Tests
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_trailing_stops_trigger_exit(self):
+        """
+        Price drops > trailing_stop_pct from peak -> position liquidated.
+        """
+        # Setup: Buy on day 1, Price up day 2 (peak), Price down day 3 (stop hit)
+        dates = pd.date_range("2023-01-01", periods=5, freq="B")
+        prices = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "close": 100, "open": 100, "volume": 1e6},
+            {"date": dates[1], "ticker": "A", "close": 110, "open": 100, "volume": 1e6}, # Peak 110
+            {"date": dates[2], "ticker": "A", "close": 90,  "open": 110, "volume": 1e6}, # Drop to 90 (-18%)
+            {"date": dates[3], "ticker": "A", "close": 90,  "open": 90,  "volume": 1e6},
+            {"date": dates[4], "ticker": "A", "close": 90,  "open": 90,  "volume": 1e6},
+        ])
+        # Prediction only on day 0 to enter
+        preds = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "prediction": 1.0}
+        ])
+        
+        engine = BacktestEngine(initial_capital=10000, trailing_stop_pct=0.10) # 10% stop
+        res = engine.run(preds, prices, top_n=1)
+        
+        trades = res["trades"]
+        # Should have a BUY on day 0/1 and a SELL (STOP) on day 2
+        stop_trade = trades[trades["reason"] == "TRAILING_STOP"]
+        assert not stop_trade.empty, "Trailing stop did not trigger"
+        assert stop_trade.iloc[0]["ticker"] == "A"
+
+    def test_turnover_limit_scales_weights(self):
+        """
+        If turnover exceeds max_turnover, rebalance should be scaled down.
+        """
+        dates = pd.date_range("2023-01-01", periods=3, freq="B")
+        # Day 1: Buy A. Day 2: Buy B (Sell A).
+        prices = pd.DataFrame([
+            {"date": d, "ticker": t, "close": 100, "open": 100, "volume": 1e6}
+            for d in dates for t in ["A", "B"]
+        ])
+        preds = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "prediction": 1.0},
+            {"date": dates[1], "ticker": "B", "prediction": 1.0}, # Full rotation A->B
+        ])
+        
+        # Max turnover 10% (0.1). Full rotation is 200% (Sell 100% A, Buy 100% B) -> 100% turnover.
+        # Should scale drastically.
+        engine = BacktestEngine(initial_capital=10000, max_turnover=0.10)
+        res = engine.run(preds, prices, top_n=1)
+        
+        # Check holdings on day 2. Should still hold mostly A, small B.
+        equity = res["equity_curve"]
+        # We can't easily check internal weights from result dict, but we can check trades size.
+        trades = res["trades"]
+        day2_trades = trades[trades["date"] == dates[1]]
+        
+        # If unconstrained, we'd sell ~100 shares A and buy ~100 shares B.
+        # With 10% limit, we should trade much less.
+        assert day2_trades["shares"].sum() < 50, "Turnover limit failed to restrict trading volume"
+
+    def test_cash_constraint_scales_buys(self):
+        """
+        If buy value > available cash, buys should be scaled down.
+        """
+        dates = pd.date_range("2023-01-01", periods=2, freq="B")
+        prices = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "close": 100, "open": 100, "volume": 1e6}
+        ])
+        preds = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "prediction": 1.0}
+        ])
+        
+        # Engine usually allocates 99% of equity. 
+        # We can't easily force a cash constraint without mocking, 
+        # but we can verify that we never go negative cash.
+        engine = BacktestEngine(initial_capital=1000)
+        res = engine.run(preds, prices, top_n=1)
+        
+        equity_curve = res["equity_curve"]
+        cash_col = "cash" if "cash" in equity_curve.columns else "cash_balance"
+        if cash_col in equity_curve.columns:
+            min_cash = equity_curve[cash_col].min()
+            assert min_cash >= 0, f"Cash went negative: {min_cash}"
+
+    def test_market_impact_integration(self, synthetic_market):
+        """
+        Verify use_market_impact=True runs without error and reduces performance 
+        (slightly) compared to no impact.
+        """
+        preds, prices = synthetic_market
+        engine_no_impact = BacktestEngine(initial_capital=100000, use_market_impact=False)
+        engine_impact    = BacktestEngine(initial_capital=100000, use_market_impact=True)
+        
+        res_no = engine_no_impact.run(preds, prices, top_n=2)
+        res_imp = engine_impact.run(preds, prices, top_n=2)
+        
+        val_no  = float(_get_equity_value(res_no["equity_curve"]).iloc[-1])
+        val_imp = float(_get_equity_value(res_imp["equity_curve"]).iloc[-1])
+        
+        assert val_imp <= val_no, "Market impact should reduce (or equal) performance"
 
 # ===========================================================================
 # ATTRIBUTION TESTS

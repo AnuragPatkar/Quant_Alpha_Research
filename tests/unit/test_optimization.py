@@ -36,6 +36,7 @@ import numpy as np
 import pandas as pd
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -260,6 +261,22 @@ class TestMeanVariance:
         assert isinstance(result, dict)
         assert set(result.keys()).issubset(set(mu.index))
 
+    def test_max_weight_floor_logic(self, market_data):
+        """
+        If max_weight < 1/N, optimizer should floor it to 1/N to ensure feasibility.
+        """
+        mu, cov = market_data
+        n = len(mu)
+        # Request impossible max_weight (e.g. 0.1 for 3 assets -> need 0.33)
+        allocator = PortfolioAllocator("mean_variance")
+        weights = _w(
+            allocator.allocate(mu.to_dict(), cov, constraints={"max_weight": 0.1}),
+            mu.index
+        )
+        _assert_valid_portfolio(weights)
+        # Weights should be approx 1/3 each, definitely > 0.1
+        assert (weights > 0.1).any()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. Risk Parity
@@ -349,6 +366,25 @@ class TestRiskParity:
         _assert_valid_portfolio(weights)
         assert (weights > 0).all(), "All assets must have positive weight in risk parity"
 
+    def test_fallback_on_solver_failure(self, market_data):
+        """
+        If Spinu optimization fails, should fall back to Inverse Volatility.
+        We simulate failure by mocking scipy.optimize.minimize.
+        """
+        mu, cov = market_data
+        
+        # Mock result object that indicates failure
+        mock_res = type('MockResult', (), {'success': False, 'message': 'Mock failure'})()
+        
+        with patch("quant_alpha.optimization.risk_parity.minimize", return_value=mock_res):
+            weights = _w(
+                PortfolioAllocator("risk_parity").allocate(mu.to_dict(), cov),
+                mu.index,
+            )
+        
+        _assert_valid_portfolio(weights)
+        # Inverse vol logic: Vol A=0.2, B=0.3. InvVol A=5, B=3.33. A > B.
+        assert weights["A"] > weights["B"]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 3. Kelly Criterion
@@ -457,6 +493,19 @@ class TestKellyCriterion:
         )
         assert isinstance(result, dict)
 
+    def test_heuristic_solver_fallback(self, market_data):
+        """Test the closed-form heuristic (use_solver=False)."""
+        mu, cov = market_data
+        # Use a fraction to ensure scaling logic is tested
+        allocator = PortfolioAllocator("kelly", fraction=0.5, use_solver=False)
+        weights = _w(
+            allocator.allocate(mu.to_dict(), cov, risk_free_rate=0.04),
+            mu.index
+        )
+        _assert_valid_portfolio(weights)
+        # Heuristic should still favor high excess return assets
+        assert weights["A"] > weights["C"]
+        assert weights["B"] < 0.05
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 4. Black-Litterman
@@ -606,6 +655,22 @@ class TestBlackLitterman:
         assert isinstance(result, dict)
         assert set(result.keys()).issubset(set(mu.index))
 
+    def test_linalg_error_fallback(self, bl_inputs):
+        """
+        If matrix inversion fails (LinAlgError), should fall back to prior (implied returns).
+        """
+        mu, cov, market_caps = bl_inputs
+        
+        # Mock np.linalg.inv (or pinv) to raise LinAlgError
+        with patch("numpy.linalg.inv", side_effect=np.linalg.LinAlgError("Singular matrix")):
+            weights = _w(
+                PortfolioAllocator("black_litterman").allocate(
+                    mu.to_dict(), cov, market_caps=market_caps
+                ),
+                mu.index,
+            )
+        # Should still produce a valid portfolio (likely close to market cap weights)
+        _assert_valid_portfolio(weights)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 5. PortfolioConstraints
@@ -688,6 +753,21 @@ class TestPortfolioConstraints:
         for ticker, w in equal_w.items():
             assert constrained.get(ticker, 0.0) == pytest.approx(w, abs=1e-4)
 
+    def test_unmapped_sector_handling(self, raw_weights):
+        """Tickers missing from sector_map should be handled gracefully (e.g. __other__)."""
+        from quant_alpha.optimization.constraints import PortfolioConstraints
+
+        # A and B are Tech, C is unmapped
+        sector_map = {"A": "Tech", "B": "Tech"} 
+        # Limit Tech to 0.5. A+B=0.85 initially.
+        constrained = _w(
+            PortfolioConstraints(
+                sector_limits={"Tech": 0.50}, sector_map=sector_map
+            ).apply(raw_weights.to_dict()),
+            raw_weights.index,
+        )
+        assert constrained["A"] + constrained["B"] <= 0.50 + 1e-6
+        assert constrained["C"] > 0.145  # C should receive some redistributed weight
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 6. PortfolioAllocator — Facade, Routing & Fallback
