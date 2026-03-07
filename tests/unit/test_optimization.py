@@ -386,6 +386,31 @@ class TestRiskParity:
         # Inverse vol logic: Vol A=0.2, B=0.3. InvVol A=5, B=3.33. A > B.
         assert weights["A"] > weights["B"]
 
+    def test_optimize_subset_of_tickers(self, market_data):
+        """
+        If requested tickers (keys of mu) are a subset of covariance matrix, 
+        should optimize only those tickers.
+        """
+        mu, cov = market_data
+        # Request only A and B
+        mu_subset = mu[["A", "B"]]
+        
+        weights = _w(
+            PortfolioAllocator("risk_parity").allocate(mu_subset.to_dict(), cov),
+            mu_subset.index,
+        )
+        
+        assert len(weights) == 2
+        assert "C" not in weights
+        assert weights.sum() == pytest.approx(1.0)
+
+    def test_optimize_empty_tickers(self, market_data):
+        """Empty tickers list should return empty dict."""
+        _, cov = market_data
+        optimizer = RiskParityOptimizer()
+        result = optimizer.optimize(cov, [])
+        assert result == {}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 3. Kelly Criterion
 # ══════════════════════════════════════════════════════════════════════════════

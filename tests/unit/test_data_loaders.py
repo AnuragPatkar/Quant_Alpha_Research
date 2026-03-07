@@ -324,6 +324,51 @@ class TestDataManagerIntegration:
             obj="Two successive get_master_data() calls must be identical",
         )
 
+    def test_column_dtypes(self, master):
+        """
+        All price, fundamental, and earnings columns must be numeric (float/int).
+        Object/String columns in feature data will crash ML models.
+        """
+        # Combine all expected numeric columns
+        numeric_targets = PRICE_COLS + FUND_COLS + EARNINGS_COLS
+        # Only check columns that actually exist in the master df
+        present_cols = [c for c in numeric_targets if c in master.columns]
+        
+        non_numeric = []
+        for col in present_cols:
+            if not pd.api.types.is_numeric_dtype(master[col]):
+                non_numeric.append(f"{col} ({master[col].dtype})")
+        
+        assert not non_numeric, (
+            f"Columns expected to be numeric but are not: {non_numeric}. "
+            "Check for string 'NaN', 'null', or formatting issues."
+        )
+
+    def test_no_infinite_values(self, master):
+        """
+        Numeric columns must not contain Infinite values (np.inf, -np.inf).
+        Infinity causes gradients to explode in training.
+        """
+        numeric_cols = master.select_dtypes(include=[np.number]).columns
+        # Check for inf
+        inf_counts = np.isinf(master[numeric_cols]).sum()
+        bad_cols = inf_counts[inf_counts > 0]
+        
+        assert bad_cols.empty, (
+            f"Found infinite values in columns: {bad_cols.to_dict()}. "
+            "Check for division by zero in feature engineering."
+        )
+
+    def test_date_timezone_consistency(self, master):
+        """
+        Dates should be consistently timezone-naive.
+        Mixed timezones (Naive vs UTC) cause silent failures in merging/grouping.
+        The pipeline standard is Timezone-Naive (UTC implied).
+        """
+        dates = master.index.get_level_values("date")
+        tz = dates.tz
+        assert tz is None, f"Expected timezone-naive dates, got {tz}. Check loader conversions."
+
 
 # ===========================================================================
 # UNIT TESTS  (patch.object — fully isolated from disk)

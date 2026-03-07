@@ -46,6 +46,9 @@ def get_previous_trading_day(date: pd.Timestamp, market: str = 'NYSE') -> pd.Tim
     # Get trading days in a window before the target date
     schedule = calendar.schedule(start_date=target_date_normalized - pd.Timedelta(days=10), end_date=target_date_normalized)
     
+    if schedule.empty:
+        return date - pd.tseries.offsets.BusinessDay(1)
+
     # Find the last trading day strictly before the target date
     days_before = schedule.index[schedule.index < target_date_normalized]
     

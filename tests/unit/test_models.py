@@ -516,3 +516,28 @@ class TestModels:
             f"Zero-residual gradient must be 0, got: {grad}"
         )
         assert (hess > 0).all(), "Hessian must remain positive at zero residual"
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # NEW: Feature Selector
+    # ──────────────────────────────────────────────────────────────────────────
+    def test_feature_selector_drop_low_variance(self):
+        """Verify FeatureSelector drops constant columns."""
+        try:
+            from quant_alpha.models.feature_selector import FeatureSelector
+        except ImportError:
+            pytest.skip("FeatureSelector not importable")
+
+        df = pd.DataFrame({
+            "date": pd.date_range("2023-01-01", periods=100),
+            "ticker": ["A"] * 100,
+            "target": np.random.randn(100),
+            "good": np.random.randn(100),
+            "constant": [1.0] * 100,
+        })
+        
+        selector = FeatureSelector(meta_cols=["date", "ticker", "target"])
+        if hasattr(selector, "drop_low_variance"):
+            df_out = selector.drop_low_variance(df)
+            assert "good" in df_out.columns
+            assert "constant" not in df_out.columns
+            assert "date" in df_out.columns

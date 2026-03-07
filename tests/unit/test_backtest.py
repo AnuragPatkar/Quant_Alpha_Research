@@ -347,9 +347,10 @@ class TestBacktestEngine:
             {"date": dates[3], "ticker": "A", "close": 90,  "open": 90,  "volume": 1e6},
             {"date": dates[4], "ticker": "A", "close": 90,  "open": 90,  "volume": 1e6},
         ])
-        # Prediction only on day 0 to enter
+        # Prediction needs to cover the simulation horizon to drive the engine loop
         preds = pd.DataFrame([
-            {"date": dates[0], "ticker": "A", "prediction": 1.0}
+            {"date": d, "ticker": "A", "prediction": 1.0}
+            for d in dates
         ])
         
         engine = BacktestEngine(initial_capital=10000, trailing_stop_pct=0.10) # 10% stop
@@ -431,6 +432,208 @@ class TestBacktestEngine:
         val_imp = float(_get_equity_value(res_imp["equity_curve"]).iloc[-1])
         
         assert val_imp <= val_no, "Market impact should reduce (or equal) performance"
+
+    def test_regime_filter_volatility(self):
+        """
+        Verify that the engine switches to cash (returns empty weights) 
+        when volatility is extreme (Regime Defense).
+        """
+        engine = BacktestEngine(target_volatility=0.10)
+        
+        # Case: High Volatility -> Empty Dict (Cash)
+        # current_vol = 0.20 (> 0.15 limit)
+        weights = engine._generate_smart_weights(
+            pd.DataFrame({'ticker': ['A'], 'prediction': [1.0], 'rank': [1]}),
+            top_n=5,
+            day_prices=pd.DataFrame(),
+            current_vol=0.20 
+        )
+        assert weights == {}, "Should return empty weights (Cash) when vol is high"
+
+    def test_regime_filter_drawdown(self):
+        """
+        Verify that the engine switches to cash when in deep drawdown AND below trend.
+        """
+        engine = BacktestEngine()
+        
+        # Populate equity curve to simulate drawdown
+        # Peak at 100, current at 80 (-20%), MA50 at 90.
+        # We need > 50 points.
+        history = [{'total_value': 100.0}] * 50
+        history.append({'total_value': 80.0}) # Drop
+        engine.portfolio.equity_curve = history
+        
+        weights = engine._generate_smart_weights(
+            pd.DataFrame({'ticker': ['A'], 'prediction': [1.0], 'rank': [1]}),
+            top_n=5,
+            day_prices=pd.DataFrame(),
+            current_vol=0.01
+        )
+        assert weights == {}, "Should return empty weights (Cash) when in deep drawdown"
+
+    def test_fifo_accounting_partial_sell(self):
+        """
+        Verify FIFO logic in _log_trade_detailed.
+        """
+        engine = BacktestEngine()
+        
+        # Buy 10 @ 100
+        engine._log_trade_detailed(
+            {'ticker': 'A', 'side': 'buy', 'fill_price': 100, 'shares': 10, 'date': '2023-01-01'},
+            'ENTRY', 0.0
+        )
+        # Buy 10 @ 110
+        engine._log_trade_detailed(
+            {'ticker': 'A', 'side': 'buy', 'fill_price': 110, 'shares': 10, 'date': '2023-01-02'},
+            'ENTRY', 0.0
+        )
+        
+        # Sell 15. Should consume 10 @ 100 and 5 @ 110.
+        # Avg Entry = (10*100 + 5*110) / 15 = 1550 / 15 = 103.33
+        engine._log_trade_detailed(
+            {'ticker': 'A', 'side': 'sell', 'fill_price': 120, 'shares': 15, 'date': '2023-01-03'},
+            'EXIT', 100.0 # PnL doesn't matter for entry calc check
+        )
+        
+        last_trade = engine.trades[-1]
+        assert last_trade['entry_price'] == pytest.approx(103.333, abs=0.01)
+        
+        # Remaining position should be 5 @ 110.
+        entries = engine.position_entry_map['A']
+        assert len(entries) == 1
+        assert entries[0]['shares'] == 5
+        assert entries[0]['price'] == 110
+
+    def test_partial_execution_failure(self):
+        """
+        Resilience Test: If execution fails for one ticker (e.g. exchange error), 
+        others should still trade. The engine must not crash.
+        """
+        dates = pd.date_range("2023-01-01", periods=1, freq="B")
+        prices = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "close": 100, "open": 100, "volume": 1e6},
+            {"date": dates[0], "ticker": "B", "close": 100, "open": 100, "volume": 1e6},
+        ])
+        preds = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "prediction": 1.0},
+            {"date": dates[0], "ticker": "B", "prediction": 1.0},
+        ])
+        
+        engine = BacktestEngine(initial_capital=10000)
+        
+        # Mock executor to fail for B
+        original_exec = engine.executor.execute_order
+        
+        def side_effect(**kwargs):
+            if kwargs['ticker'] == "B":
+                raise RuntimeError("Simulated Exchange Failure")
+            return original_exec(**kwargs)
+            
+        engine.executor.execute_order = side_effect
+        
+        res = engine.run(preds, prices, top_n=2)
+        trades = res["trades"]
+        
+        # A should succeed
+        assert "A" in trades["ticker"].values
+        # B should fail (not be in trades)
+        assert "B" not in trades["ticker"].values
+
+    def test_buffer_hysteresis_prevents_turnover(self):
+        """
+        Verify 'Buffer Zone' logic: Existing holdings should be kept if they 
+        drop slightly in rank but stay within buffer (Top N * 1.6).
+        """
+        # Setup: Top N = 2. Buffer = 2 * 1.6 = 3.2 -> Rank 3 is safe.
+        dates = pd.date_range("2023-01-01", periods=2, freq="B")
+        
+        # Day 1: A, B are Top 2. C is 3. -> Buy A, B.
+        # Day 2: C is Top 1. A is 2. B is 3.
+        # Without hysteresis: Sell B (Rank 3), Buy C (Rank 1).
+        # With hysteresis: B (Rank 3) <= Buffer (3). Keep B. C is ignored.
+        
+        prices = pd.DataFrame([
+            {"date": d, "ticker": t, "close": 100, "open": 100, "volume": 1e6}
+            for d in dates for t in ["A", "B", "C"]
+        ])
+        
+        preds = pd.DataFrame([
+            # Day 1 Ranks: A=1, B=2, C=3
+            {"date": dates[0], "ticker": "A", "prediction": 0.9},
+            {"date": dates[0], "ticker": "B", "prediction": 0.8},
+            {"date": dates[0], "ticker": "C", "prediction": 0.7},
+            # Day 2 Ranks: C=1, A=2, B=3
+            {"date": dates[1], "ticker": "C", "prediction": 0.95},
+            {"date": dates[1], "ticker": "A", "prediction": 0.90},
+            {"date": dates[1], "ticker": "B", "prediction": 0.85},
+        ])
+        
+        engine = BacktestEngine(initial_capital=10000)
+        res = engine.run(preds, prices, top_n=2)
+        
+        # Check Day 2 Holdings (from equity curve or trades)
+        # If hysteresis works, we should NOT see a buy for C on Day 2
+        trades = res["trades"]
+        day2_trades = trades[trades["date"] == dates[1]]
+        
+        tickers_traded_day2 = day2_trades["ticker"].unique()
+        assert "C" not in tickers_traded_day2, "Hysteresis failed: Bought C despite B being in buffer"
+        assert "B" not in tickers_traded_day2, "Hysteresis failed: Sold B despite being in buffer"
+
+    def test_position_limit_enforcement(self):
+        """
+        Verify that no single position exceeds the defined position_limit,
+        even if the signal is very strong or universe is small.
+        """
+        # 1 Asset, Limit 10%. Engine would naturally allocate 100% (1/N).
+        dates = pd.date_range("2023-01-01", periods=1, freq="B")
+        prices = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "close": 100, "open": 100, "volume": 1e9}
+        ])
+        preds = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "prediction": 1.0}
+        ])
+        
+        limit = 0.10
+        capital = 100_000
+        engine = BacktestEngine(initial_capital=capital, position_limit=limit)
+        res = engine.run(preds, prices, top_n=1)
+        
+        trades = res["trades"]
+        assert len(trades) == 1
+        
+        # Trade value should be ~10k (10%), not 100k
+        trade_val = trades.iloc[0]["shares"] * trades.iloc[0]["fill_price"]
+        expected_val = capital * limit
+        
+        # Allow small margin for rounding/cash buffer
+        assert trade_val == pytest.approx(expected_val, rel=0.05), \
+            f"Position limit failed: Trade value {trade_val} != Expected {expected_val}"
+
+    def test_adv_limit_caps_position_size(self):
+        """
+        Verify that trade size is capped by max_adv_participation (e.g. 10% of daily volume).
+        """
+        dates = pd.date_range("2023-01-01", periods=1, freq="B")
+        # Volume = 1000 shares @ $100 = $100,000 daily value
+        prices = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "close": 100, "open": 100, "volume": 1000}
+        ])
+        preds = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "prediction": 1.0}
+        ])
+        
+        # Capital 1M. Target 100% ($1M).
+        # ADV Limit 10% of $100k = $10k cap.
+        engine = BacktestEngine(initial_capital=1_000_000, max_adv_participation=0.10)
+        res = engine.run(preds, prices, top_n=1)
+        
+        trades = res["trades"]
+        assert not trades.empty
+        
+        shares_traded = trades.iloc[0]["shares"]
+        # Should be capped at 10% of 1000 volume = 100 shares
+        assert shares_traded <= 100, f"ADV limit failed: Traded {shares_traded} shares, Limit 100"
 
 # ===========================================================================
 # ATTRIBUTION TESTS
