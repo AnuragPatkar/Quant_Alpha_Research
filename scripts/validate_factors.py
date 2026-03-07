@@ -42,7 +42,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from config.settings import config
-from config.logging_config import setup_logging
+from quant_alpha.utils import setup_logging
 from quant_alpha.utils import time_execution
 from scripts.train_models import load_and_build_full_dataset, add_macro_features
 

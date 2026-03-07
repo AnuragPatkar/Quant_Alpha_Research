@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from config.logging_config import setup_logging
+from quant_alpha.utils import setup_logging
 
 setup_logging()
 logger = logging.getLogger("Quant_Alpha")

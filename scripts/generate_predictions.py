@@ -70,7 +70,7 @@ from scripts.train_models import (
 import sys as _sys
 _sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae
 from config.settings import config
-from config.logging_config import setup_logging
+from quant_alpha.utils import setup_logging
 from quant_alpha.utils import save_parquet, time_execution
 
 setup_logging()

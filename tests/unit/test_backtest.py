@@ -193,7 +193,7 @@ class TestBacktestEngine:
             spread=0.0002,
         )
         assert engine.initial_capital == 50_000,  "initial_capital not stored correctly"
-        # assert engine.commission      == 0.001,   "commission not stored correctly"
+        assert engine.commission      == 0.001,   "commission not stored correctly"
 
         # Check slippage/spread if the engine exposes them
         if hasattr(engine, "slippage"):

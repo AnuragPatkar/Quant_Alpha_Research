@@ -40,7 +40,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.append(str(SCRIPTS_DIR))
 
 from config.settings import config
-from config.logging_config import setup_logging
+from quant_alpha.utils import setup_logging
 import download_data as dd
 
 # ERROR level only — retry noise is not actionable
