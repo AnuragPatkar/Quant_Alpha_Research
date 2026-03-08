@@ -164,7 +164,7 @@ class FactorValidator:
                 tmp      = pd.DataFrame({"f": f_ranks, "t": t_ranks_raw,
                                          "date": valid["date"]})
                 daily_ic = tmp.groupby("date").apply(
-                    lambda x: x["f"].corr(x["t"]) if x["f"].std() > 1e-8 else np.nan
+                    lambda x: x["f"].corr(x["t"]) if x["f"].std() > 1e-8 and x["t"].std() > 1e-8 else np.nan
                 ).dropna()
 
                 if len(daily_ic) < 3:
@@ -185,7 +185,7 @@ class FactorValidator:
                     sn_df        = pd.DataFrame({"f": f_neutral, "t": t_neutral,
                                                   "date": valid["date"]}).dropna()
                     sn_daily     = sn_df.groupby("date").apply(
-                        lambda x: x["f"].corr(x["t"]) if x["f"].std() > 1e-8 else np.nan
+                        lambda x: x["f"].corr(x["t"]) if x["f"].std() > 1e-8 and x["t"].std() > 1e-8 else np.nan
                     ).dropna()
                     sn_mean = float(sn_daily.mean())
                     sn_std  = float(sn_daily.std()) + 1e-8
@@ -270,7 +270,7 @@ class FactorValidator:
                     t_r = tmp.groupby("date")["t"].rank(pct=True)
                     tmp2 = pd.DataFrame({"f": f_r, "t": t_r, "date": tmp["date"]})
                     ic   = tmp2.groupby("date").apply(
-                        lambda x: x["f"].corr(x["t"]) if x["f"].std() > 1e-8 else np.nan
+                        lambda x: x["f"].corr(x["t"]) if x["f"].std() > 1e-8 and x["t"].std() > 1e-8 else np.nan
                     ).dropna().mean()
                     row[f"ic_lag{lag}"] = round(float(ic), 5)
                 except Exception:
@@ -552,7 +552,7 @@ Usage:
     t_r = valid.groupby("date")["raw_ret_5d"].rank(pct=True)
     tmp = pd.DataFrame({"f": f_r, "t": t_r, "date": valid["date"]})
     daily_ic = tmp.groupby("date").apply(
-        lambda x: x["f"].corr(x["t"]) if x["f"].std() > 1e-8 else np.nan
+        lambda x: x["f"].corr(x["t"]) if x["f"].std() > 1e-8 and x["t"].std() > 1e-8 else np.nan
     ).dropna()
 
     plt.figure(figsize=(12, 5))

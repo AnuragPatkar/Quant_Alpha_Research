@@ -150,3 +150,60 @@ class TestDataUpdates:
             })
             old_dates.to_csv(csv_path, index=False)
             assert update_data._earnings_needs_update(ticker) is True
+
+    def test_macro_update_logic(self, tmp_path):
+        """Verify macro data update logic (append vs full download)."""
+        # Mock ALT_DIR
+        with patch("scripts.update_data.ALT_DIR", tmp_path):
+            ticker = "SPY"
+            name = "sp500"
+            
+            # Case 1: New file (Full Download)
+            mock_hist = MagicMock()
+            mock_hist.history.return_value = pd.DataFrame({
+                "Close": [100.0, 101.0],
+                "Volume": [1000, 1200]
+            }, index=pd.to_datetime(["2023-01-01", "2023-01-02"]))
+            
+            # Mock dd._yf_ticker and dd._retry inside update_data
+            with patch("scripts.update_data.dd") as mock_dd:
+                mock_dd._yf_ticker.return_value = mock_hist
+                mock_dd._retry.side_effect = lambda f, **k: f()
+                
+                status = update_data._update_macro_series(name, ticker, date(2023, 1, 3))
+            
+            assert status == "updated"
+            assert (tmp_path / "sp500.csv").exists()
+            
+            # Case 2: Existing file, up to date
+            # Create file with data up to today (2023-01-03)
+            df = pd.DataFrame({
+                "date": ["2023-01-03"],
+                "sp500_close": [102.0]
+            })
+            df.to_csv(tmp_path / "sp500.csv", index=False)
+            
+            status = update_data._update_macro_series(name, ticker, date(2023, 1, 3))
+            assert status == "uptodate"
+
+    def test_fundamentals_staleness(self, tmp_path):
+        """Verify fundamental staleness logic."""
+        with patch("scripts.update_data.FUND_DIR", tmp_path):
+            ticker = "AAPL"
+            ticker_dir = tmp_path / ticker
+            ticker_dir.mkdir()
+            
+            # Case 1: info.csv missing
+            assert update_data._info_age_days(ticker) == 9999
+            
+            # Case 2: Incomplete data (missing files)
+            assert update_data._fund_data_incomplete(ticker) is True
+            
+            # Case 3: Complete data (files exist with recent dates)
+            for fname in ["financials.csv", "balance_sheet.csv", "cashflow.csv"]:
+                # Create dummy csv with recent dates as columns (FMP format)
+                df = pd.DataFrame({"2023-09-30": [1], "2022-09-30": [1]}, index=["Revenue"])
+                df.to_csv(ticker_dir / fname)
+            
+            # Should be complete
+            assert update_data._fund_data_incomplete(ticker) is False

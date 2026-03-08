@@ -99,3 +99,33 @@ class TestFactorValidator:
         
         assert ac.loc["trend", "autocorr"] > 0.9
         assert abs(ac.loc["noise_factor", "autocorr"]) < 0.5
+
+    def test_check_coverage(self, dummy_data):
+        """Verify coverage statistics calculation."""
+        # Introduce some NaNs and Infs
+        df = dummy_data.copy()
+        df.loc[0, "good_factor"] = np.nan
+        df.loc[1, "good_factor"] = np.inf
+        
+        validator = validate_factors.FactorValidator(df)
+        coverage = validator.check_coverage()
+        
+        assert "good_factor" in coverage.index
+        assert coverage.loc["good_factor", "nan_count"] == 1
+        assert coverage.loc["good_factor", "inf_count"] == 1
+        assert coverage.loc["good_factor", "coverage_pct"] < 1.0
+
+    def test_ic_decay(self, dummy_data):
+        """Verify IC decay calculation."""
+        validator = validate_factors.FactorValidator(dummy_data)
+        validator.target = "raw_ret_5d"
+        
+        # Compute decay for the good factor
+        decay = validator.compute_ic_decay(["good_factor"])
+        
+        assert "good_factor" in decay.index
+        assert "ic_lag1" in decay.columns
+        assert "ic_lag5" in decay.columns
+        # Since good_factor is perfect for 5d return, lag5 might show specific behavior,
+        # but we mainly check that it computes without error and returns structure.
+        assert not decay.empty
