@@ -129,3 +129,37 @@ class TestFactorValidator:
         # Since good_factor is perfect for 5d return, lag5 might show specific behavior,
         # but we mainly check that it computes without error and returns structure.
         assert not decay.empty
+
+    def test_sector_neutral_ic_simpsons_paradox(self):
+        """
+        Institutional Check: Verify Sector-Neutral IC logic using Simpson's Paradox.
+        Scenario:
+          - Global correlation is Positive (Sector A > Sector B).
+          - Intra-sector correlation is Negative (Within A, higher factor -> lower return).
+        
+        If SN-IC works, it should be NEGATIVE, decoupling the alpha from the sector bet.
+        """
+        dates = pd.date_range("2023-01-01", periods=10)
+        data = []
+        for d in dates:
+            # Sector A: High Factor, High Return (Global +)
+            # But within A: Higher Factor (2.0) -> Lower Return (0.04) vs (1.0 -> 0.05)
+            data.append({"date": d, "ticker": "A1", "sector": "S1", "f": 1.0, "t": 0.05})
+            data.append({"date": d, "ticker": "A2", "sector": "S1", "f": 2.0, "t": 0.04})
+            
+            # Sector B: Low Factor, Low Return (Global +)
+            # But within B: Higher Factor (-1.0) -> Lower Return (-0.05) vs (-2.0 -> -0.04)
+            data.append({"date": d, "ticker": "B1", "sector": "S2", "f": -2.0, "t": -0.04})
+            data.append({"date": d, "ticker": "B2", "sector": "S2", "f": -1.0, "t": -0.05})
+            
+        df = pd.DataFrame(data)
+        
+        validator = validate_factors.FactorValidator(df, target_col="t")
+        stats = validator.compute_ic_stats()
+        res = stats.loc["f"]
+        
+        # Raw IC should be Positive (A vs B dominates)
+        assert res["ic_mean"] > 0.5, f"Raw IC should be positive (Sector Bet), got {res['ic_mean']}"
+        
+        # Sector Neutral IC should be Negative (Intra-sector trend dominates)
+        assert res["sn_icir"] < -0.5, f"SN IC should be negative (Alpha), got {res['sn_icir']}"
