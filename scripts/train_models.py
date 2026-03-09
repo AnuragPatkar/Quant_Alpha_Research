@@ -120,6 +120,7 @@ from quant_alpha.visualization import (
     plot_equity_curve, plot_drawdown, plot_monthly_heatmap,
     plot_ic_time_series, generate_tearsheet
 )
+from quant_alpha.utils.preprocessing import WinsorisationScaler, SectorNeutralScaler, winsorize_clip_nb
 
 import quant_alpha.features.technical.momentum
 import quant_alpha.features.technical.volatility
@@ -200,17 +201,6 @@ ICIR_SAMPLE_SIZE               = 50_000
 # ==============================================================================
 # NUMBA JIT KERNELS
 # ==============================================================================
-@njit(parallel=True, cache=True)
-def winsorize_clip_nb(data, lower, upper):
-    """Parallel element-wise clip to [lower, upper]."""
-    n_rows, n_cols = data.shape
-    out = np.empty_like(data)
-    for i in prange(n_rows):
-        for j in range(n_cols):
-            v = data[i, j]
-            out[i, j] = lower[i, j] if v < lower[i, j] else (upper[i, j] if v > upper[i, j] else v)
-    return out
-
 
 @njit(cache=True)
 def _rank1d(arr):
@@ -370,95 +360,6 @@ def load_and_build_full_dataset(force_rebuild: bool = False) -> pd.DataFrame:
         f.write(current_hash)
     logger.info(f"[DATA] Built: {data.shape[0]:,} rows × {data.shape[1]} cols.")
     return data
-
-
-# ==============================================================================
-# PREPROCESSING — stateful classes
-# Used by both train_models.py (fold-level) and generate_predictions.py (inference)
-# ==============================================================================
-class WinsorisationScaler:
-    """
-    Fits per-date [q_lo, q_hi] bounds. Transform uses numpy searchsorted —
-    O(log N) per row, safe for inference dates outside the fit window.
-
-    API:
-        scaler = WinsorisationScaler().fit(df, features)
-        df_out = scaler.transform(df, features)
-    """
-    def __init__(self, clip_pct: float = 0.01):
-        self.clip_pct  = clip_pct
-        self._lower    = None
-        self._upper    = None
-        self._date_arr = None
-
-    def fit(self, df: pd.DataFrame, features: list) -> "WinsorisationScaler":
-        grp            = df.groupby("date")[features]
-        self._lower    = grp.quantile(self.clip_pct)
-        self._upper    = grp.quantile(1.0 - self.clip_pct)
-        self._date_arr = self._lower.index.values
-        return self
-
-    def transform(self, df: pd.DataFrame, features: list) -> pd.DataFrame:
-        dates    = pd.to_datetime(df["date"]).values
-        idx      = np.searchsorted(self._date_arr, dates, side="right") - 1
-        idx      = np.clip(idx, 0, len(self._date_arr) - 1)
-        mapped   = self._date_arr[idx]
-        low_arr  = self._lower.loc[mapped, features].values.astype(np.float64)
-        up_arr   = self._upper.loc[mapped, features].values.astype(np.float64)
-        data_arr = df[features].values.astype(np.float64)
-        clipped  = winsorize_clip_nb(data_arr, low_arr, up_arr)
-        out      = df.copy()
-        out[features] = clipped
-        return out
-
-
-class SectorNeutralScaler:
-    """
-    Sector-neutral z-score scaler.
-
-    fit()                — stores global mean/std from fit window
-    transform()          — sector-neutral z-score using fit-window groupby stats
-    inference_transform()— cross-sectional z-score on inference data itself
-                           (no stored date lookup — correct for new dates)
-
-    API:
-        scaler = SectorNeutralScaler().fit(df, features)
-        df_out = scaler.transform(df, features)           # for fit-window rows
-        df_out = scaler.inference_transform(df, features) # for new inference rows
-    """
-    def __init__(self, sector_col: str = "sector"):
-        self.sector_col  = sector_col
-        self._features   = []
-        self._global_mean = None
-        self._global_std  = None
-
-    def fit(self, df: pd.DataFrame, features: list) -> "SectorNeutralScaler":
-        self._features    = features
-        self._has_sector  = self.sector_col in df.columns
-        numeric           = df[features].select_dtypes(include=[np.number]).columns.tolist()
-        self._global_mean = df[numeric].mean().values.astype(np.float64)
-        self._global_std  = df[numeric].std().replace(0, 1e-8).values.astype(np.float64)
-        return self
-
-    def transform(self, df: pd.DataFrame, features: list) -> pd.DataFrame:
-        """Sector-neutral z-score. Fits stats from df itself (used for fit window)."""
-        out = df.copy()
-        if self._has_sector and self.sector_col in df.columns:
-            grp   = df.groupby(["date", self.sector_col])[features]
-        else:
-            grp   = df.groupby("date")[features]
-        means = grp.transform("mean")
-        stds  = grp.transform("std").fillna(1e-8).replace(0, 1e-8)
-        out[features] = (df[features].values - means.values) / (stds.values + 1e-8)
-        return out
-
-    def inference_transform(self, df: pd.DataFrame, features: list) -> pd.DataFrame:
-        """
-        Cross-sectional z-score computed from df itself.
-        Use for inference dates that are outside the stored fit window.
-        Mathematically identical to transform() — just clarifies intent.
-        """
-        return self.transform(df, features)
 
 
 def winsorize_fold(train_df: pd.DataFrame,
@@ -1214,34 +1115,12 @@ def run_production_pipeline(force_rebuild: bool = False,
         and c != "target"
     ]
 
-    # Winsorise: 2 groupby.quantile calls total (not 1 per fold × 20 folds)
-    grouped_dates = data.groupby("date")[numeric_features]
-    lower_df      = grouped_dates.quantile(0.01)
-    upper_df      = grouped_dates.quantile(0.99)
-
-    date_arr = lower_df.index.values
-    row_dates = data["date"].values
-    idx      = np.searchsorted(date_arr, row_dates, side="right") - 1
-    idx      = np.clip(idx, 0, len(date_arr) - 1)
-    mapped   = date_arr[idx]
-    low_arr  = lower_df.loc[mapped, numeric_features].values.astype(np.float64)
-    up_arr   = upper_df.loc[mapped, numeric_features].values.astype(np.float64)
-    data_arr = data[numeric_features].values.astype(np.float64)
-    data[numeric_features] = winsorize_clip_nb(data_arr, low_arr, up_arr)
-    del lower_df, upper_df, low_arr, up_arr, data_arr
+    # Winsorise (Shared Logic)
+    data = WinsorisationScaler(clip_pct=0.01).fit(data, numeric_features).transform(data, numeric_features)
     logger.info("[PREPROC] Winsorisation done.")
 
-    # Sector-neutral z-score: 2 groupby.transform calls total
-    if "sector" in data.columns:
-        grp   = data.groupby(["date", "sector"])[numeric_features]
-        means = grp.transform("mean")
-        stds  = grp.transform("std").fillna(1e-8).replace(0, 1e-8)
-    else:
-        grp   = data.groupby("date")[numeric_features]
-        means = grp.transform("mean")
-        stds  = grp.transform("std").fillna(1e-8).replace(0, 1e-8)
-    data[numeric_features] = (data[numeric_features].values - means.values) / (stds.values + 1e-8)
-    del means, stds
+    # Sector-neutral z-score (Shared Logic)
+    data = SectorNeutralScaler(sector_col="sector").fit(data, numeric_features).transform(data, numeric_features)
     logger.info("[PREPROC] Sector-neutral normalisation done.")
 
     # Fill categoricals once

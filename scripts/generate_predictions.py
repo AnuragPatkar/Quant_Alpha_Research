@@ -57,8 +57,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.train_models import (
     load_and_build_full_dataset,
     add_macro_features,
-    WinsorisationScaler,
-    SectorNeutralScaler,
     build_ensemble_alpha,
     weighted_symmetric_mae,
     _warmup_numba,
@@ -70,6 +68,7 @@ from scripts.train_models import (
 import sys as _sys
 _sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae
 from config.settings import config
+from quant_alpha.utils.preprocessing import WinsorisationScaler, SectorNeutralScaler
 from quant_alpha.utils import setup_logging
 from quant_alpha.utils import save_parquet, time_execution
 
