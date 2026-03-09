@@ -10,9 +10,10 @@ Sequence:
 3. train_models.py       (Optional: Retrain models)
 4. deploy_model.py       (Optional: Health Check & Archive)
 5. generate_predictions.py (Inference: Generate Alpha Signals)
-6. run_backtest.py       (Optional: Simulation)
-7. optimize_portfolio.py (Portfolio Construction: Generate Orders)
-8. create_report.py      (Reporting: Executive Summary)
+6. monitor_production.py (Monitoring: Drift & Health Checks)
+7. run_backtest.py       (Optional: Simulation)
+8. optimize_portfolio.py (Portfolio Construction: Generate Orders)
+9. create_report.py      (Reporting: Executive Summary)
 """
 import sys
 import argparse
@@ -116,7 +117,10 @@ def run():
     # 5. Inference (Generate Predictions)
     run_step("generate_predictions.py")
 
-    # 6. Backtest
+    # 6. Monitoring
+    run_step("monitor_production.py")
+
+    # 7. Backtest
     if args.backtest:
         run_step("run_backtest.py", [
             "--method", args.opt_method,
@@ -125,7 +129,7 @@ def run():
     else:
         logger.info("⏭️  [PIPELINE] Skipping backtest (use --backtest to run).")
 
-    # 7. Portfolio Optimization
+    # 8. Portfolio Optimization
     opt_args = [
         "--capital", str(args.capital),
         "--method", args.opt_method,
@@ -134,7 +138,7 @@ def run():
     ]
     run_step("optimize_portfolio.py", opt_args)
 
-    # 8. Reporting
+    # 9. Reporting
     run_step("create_report.py")
 
     logger.info("=" * 60)

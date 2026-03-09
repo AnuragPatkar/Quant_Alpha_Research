@@ -10,4 +10,5 @@ Contains executable scripts for the research pipeline:
 - Backtesting         (run_backtest)
 - Reporting           (create_report)
 - Deployment          (deploy_model)
+- Monitoring          (monitor_production)
 """
