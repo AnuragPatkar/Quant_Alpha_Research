@@ -3,18 +3,6 @@ validate_factors.py
 ===================
 Factor Quality Assurance & Validation Suite  — v2 (Fixed)
 ----------------------------------------------------------
-Fixes vs original:
-  BUG1: T-stat formula was wrong (ignored IC_std). Fixed: t = ICIR * sqrt(N)
-  BUG2: Target ranks recomputed per factor (O(F×D)). Fixed: cache target ranks once
-  BUG3: Autocorrelation was panel-level. Fixed: per-ticker AR(1) averaged
-  BUG4: No sector-neutral IC — value/size factors inflated by sector bias. Added.
-  BUG5: No multiple-testing correction. Added Benjamini-Hochberg FDR.
-  BUG6: pos_ic_pct computed but never used in PASS logic. Now included.
-  BUG7: IC decay (lag 1..21) missing. Added — tells you rebalance frequency.
-  BUG8: Random sample for correlation breaks time structure. Fixed: year-stratified.
-  BUG9: coverage() was column-by-column loop. Vectorized.
-  BUG10: main() called compute_ic_stats() twice. Fixed.
-  BUG11: Typo "heatmap Generating..." in log. Fixed.
 
 Usage:
     python scripts/validate_factors.py

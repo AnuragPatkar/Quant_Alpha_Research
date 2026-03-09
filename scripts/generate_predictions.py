@@ -160,13 +160,6 @@ def preprocess_inference_data(
     KNOWN DISCREPANCY — Training vs Inference Winsorisation:
       Training  : global quantiles computed per-date across FULL dataset
       Inference : rolling quantiles fitted on [scaler_fit_start, scaler_fit_end]
-      In stable regimes this is negligible. In regime shifts (e.g. 2020 crash)
-      tails diverge. Ideal fix: save training quantile bounds in model pkl.
-      Until then: use 3+ year scaler_fit_window to minimise distribution shift.
-
-    KNOWN DISCREPANCY — Training vs Inference Winsorisation:
-      Training  : global quantiles computed per-date across FULL dataset
-      Inference : rolling quantiles fitted on [scaler_fit_start, scaler_fit_end]
       
       In stable regimes this difference is negligible (<0.5% of rows affected).
       In regime shifts (e.g. 2020 Covid crash) the tails diverge — a feature

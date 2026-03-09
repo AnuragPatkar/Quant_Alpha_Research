@@ -1,3 +1,13 @@
+"""
+run_hyperopt.py
+===============
+Hyperparameter Optimization Script
+----------------------------------
+Runs Bayesian optimization (Optuna) for LightGBM, XGBoost, and CatBoost models
+using a walk-forward validation scheme.
+"""
+
+import sys
 import optuna
 import pandas as pd
 import numpy as np
@@ -5,19 +15,24 @@ import logging
 from scipy.stats import spearmanr
 from typing import Dict, Any, List
 import inspect
+from pathlib import Path
+
+# --- Project Setup ---
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
 # Core Quant Alpha Imports
 from quant_alpha.data.DataManager import DataManager
 from quant_alpha.models.lightgbm_model import LightGBMModel
 from quant_alpha.models.trainer import WalkForwardTrainer
-# Tip: Import your other model wrappers here
 from quant_alpha.models.xgboost_model import XGBoostModel
 from quant_alpha.models.catboost_model import CatBoostModel
-from quant_alpha.features.utils import winsorize, cross_sectional_normalize
+from quant_alpha.utils import setup_logging
 
 # Logging setup
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+setup_logging()
+logger = logging.getLogger("Hyperopt")
 
 class HyperparameterOptimizer:
     """
@@ -166,10 +181,7 @@ class HyperparameterOptimizer:
             
         return {}
 
-# =============================================
-# RUNNER: Optimize Everything
-# =============================================
-def verify_all_models():
+def run_hyperopt():
     logger.info("🚀 Starting Full Ensemble Optimization...")
     dm = DataManager()
     data = dm.get_master_data()
@@ -179,8 +191,9 @@ def verify_all_models():
         data = data.reset_index()
     
     if 'date' not in data.columns:
-        # Agar abhi bhi nahi mila, matlab column ka naam 'Date' (capital) ho sakta hai
-        data.rename(columns={'Date': 'date'}, inplace=True)
+        # Fallback for potential capitalization issues
+        if 'Date' in data.columns:
+            data.rename(columns={'Date': 'date'}, inplace=True)
         
     data['date'] = pd.to_datetime(data['date'])
     
@@ -194,8 +207,7 @@ def verify_all_models():
     else:
         data['raw_ret_5d'] = data.groupby('ticker')['close'].shift(-5) / data['close'] - 1
     
-    # FIX: Align with Production (Sector Neutral Target)
-    # Optimization should match the actual training target
+    # Align with Production (Sector Neutral Target)
     sector_mean = data.groupby(['date', 'sector'])['raw_ret_5d'].transform('mean')
     data['target'] = data['raw_ret_5d'] - sector_mean
     
@@ -211,6 +223,10 @@ def verify_all_models():
     features = [c for c in data.columns if c not in exclude]
     
     # Apply Winsorization (Consistency with Production)
+    # Note: We import these from features.utils if available, or define locally if needed.
+    # Assuming they are available as per test_hyperopt.py imports.
+    from quant_alpha.features.utils import winsorize, cross_sectional_normalize
+    
     logger.info("🧹 Applying Winsorization before Hyperopt...")
     data = winsorize(data, numeric_features)
     
@@ -218,19 +234,18 @@ def verify_all_models():
     data = cross_sectional_normalize(data, numeric_features)
 
     # Models to optimize
-    # Note: Replace placeholders with your actual imported classes
     models_to_run = {
         "LightGBM": LightGBMModel,
-        "XGBoost": XGBoostModel,   # Uncomment when ready
-        "CatBoost": CatBoostModel  # Uncomment when ready
+        "XGBoost": XGBoostModel,
+        "CatBoost": CatBoostModel
     }
 
     global_best_params = {}
 
     for name, m_class in models_to_run.items():
         opt = HyperparameterOptimizer(model_class=m_class, model_name=name)
-        # Testing with 10 trials per model
-        best = opt.optimize(data, features, 'target', n_trials=10)
+        # Testing with 20 trials per model
+        best = opt.optimize(data, features, 'target', n_trials=20)
         global_best_params[name] = best
 
     print("\n" + "═"*45)
@@ -241,4 +256,4 @@ def verify_all_models():
     print("═"*45)
 
 if __name__ == "__main__":
-    verify_all_models()
+    run_hyperopt()
