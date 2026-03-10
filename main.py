@@ -1,37 +1,81 @@
 """
 main.py
 =======
-Central Entry Point for Quant Alpha Research Platform.
+Central Command-Line Interface (CLI) for the Quant Alpha Research Platform.
 
-This script unifies all research, production, and maintenance workflows into a single
-institutional-grade CLI. It handles environment setup, logging configuration,
-subcommand dispatch, and error propagation.
+Purpose
+-------
+Serves as the unified entry point and orchestration layer for the quantitative research
+lifecycle. It abstracts complex underlying scripts into a consistent command structure,
+managing the transition from Data Ingestion $\rightarrow$ Alpha Research $\rightarrow$
+Production Deployment.
 
 Usage:
-    python main.py [command] [options]
+-------
+    $ python main.py <command> [options]
+
+Importance
+----------
+1.  **Operational Discipline**: Enforces a standardized interface for all research activities,
+    reducing "fat-finger" errors in production.
+2.  **Process Isolation**: Dispatches heavy computational tasks (e.g., Model Training,
+    Backtesting) to separate subprocesses. This ensures a clean memory heap for each stage,
+    preventing memory fragmentation and side-effects from global state (e.g., Numba JIT
+    compilation artifacts).
+3.  **Environment Control**: Pre-configures critical environment variables for BLAS/LAPACK
+    threading (e.g., `OMP_NUM_THREADS`) to prevent CPU oversubscription during
+    matrix operations.
+
+Tools & Frameworks
+------------------
+*   **`argparse`**: Implements the Subcommand Pattern for robust CLI argument parsing.
+*   **`subprocess`**: Manages child processes for script execution, ensuring GIL release
+    and memory isolation.
+*   **`logging`**: Provides centralized telemetry and error reporting.
+*   **`os` / `sys`**: Handles low-level environment configuration for numerical libraries
+    (NumPy, SciPy, Numba).
 
 Commands:
-    pipeline    Run the full end-to-end research pipeline.
-    data        Update market data and fundamentals.
-    validate    Run factor validation and quality assurance.
-    train       Train or retrain alpha models (Walk-Forward).
-    predict     Generate alpha signals for the latest data (Inference).
-    monitor     Run production health checks and drift detection.
-    backtest    Run a simulation on cached predictions.
-    optimize    Run portfolio optimization (Mean-Variance, Black-Litterman, etc.).
-    report      Generate the executive summary report.
-    hyperopt    Run hyperparameter optimization for models.
-    deploy      Manage model deployment (check, archive, prune).
-    test        Run unit and integration tests (pytest).
-    clean       Clean cache and temporary files.
+---------
+    pipeline    : Orchestrates the full lifecycle (Data -> Train -> Backtest).
+    data        : Ingests and normalizes market data (Prices, Fundamentals).
+    validate    : Performs statistical validation (IC, Turnover) on alpha factors.
+    train       : Executes Walk-Forward Cross-Validation for ML models.
+    predict     : Generates alpha signals (Inference) using production models.
+    monitor     : Checks for concept drift (PSI) and signal staleness.
+    backtest    : Simulates strategy performance (Vectorized & Event-Driven).
+    optimize    : Solves for optimal portfolio weights (Mean-Variance, Risk Parity).
+    report      : Compiles executive summaries and performance metrics.
+    hyperopt    : Runs Bayesian Optimization for hyperparameter tuning.
+    deploy      : Manages model artifacts (Archival, Pruning, Health Checks).
+    test        : Executes the automated test suite (Unit & Integration).
+    clean       : Purges temporary artifacts and caches.
 
 Examples:
-    python main.py pipeline --all
-    python main.py train --parallel-models
-    python main.py predict --last-day-only
-    python main.py monitor
-    python main.py hyperopt
-    python main.py test
+---------
+    # Run the entire pipeline: data -> validate -> train -> deploy -> backtest -> report
+    $ python main.py pipeline --all
+
+    # Train models using parallel processing (for multi-core machines)
+    $ python main.py train --parallel-models
+
+    # Generate new alpha signals for the most recent day of data
+    $ python main.py predict --last-day-only
+
+    # Generate a target portfolio of 50 stocks using risk parity optimization
+    $ python main.py optimize --method risk_parity --top-n 50
+
+    # Check the health of currently deployed models and the signal cache
+    $ python main.py deploy --action check
+
+    # Run production monitoring for signal drift (Population Stability Index)
+    $ python main.py monitor
+
+    # Launch a hyperparameter search for the models
+    $ python main.py hyperopt
+
+    # Run the full unit and integration test suite
+    $ python main.py test
 """
 
 import os
@@ -42,9 +86,14 @@ import subprocess
 import shutil
 from pathlib import Path
 
-# --- 1. Environment Setup (Must be first) ---
-# Set threading environment variables before any heavy imports (numpy, pandas, numba)
-# to prevent thread contention and ensure consistent behavior.
+# --- 1. Environment Configuration (Critical Initialization) ---
+# Configure linear algebra backends (MKL, OpenBLAS) prior to importing numerical libraries.
+# This prevents thread oversubscription (Context Switching Thrashing) when multiple
+# parallel processes are spawned.
+#
+# Default: 4 threads.
+# Rationale: Limits CPU contention in multi-process environments (e.g., concurrent backtests).
+# Specific scripts (e.g., `train_models.py`) may override this for dedicated HPC tasks.
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
 os.environ["MKL_NUM_THREADS"] = "4"
@@ -62,7 +111,16 @@ from config.settings import config
 # --- 2. Command Handlers ---
 
 def _run_script(script_name: str, args: list[str]):
-    """Helper to run a script as a subprocess with the current environment."""
+    """
+    Executes a target script within an isolated subprocess.
+
+    Architectural Note:
+        Using `subprocess.run` guarantees a pristine memory heap for each task.
+        This prevents:
+        1.  Global state pollution (e.g., Singleton configurations, Numba JIT caches).
+        2.  Memory fragmentation from long-running processes (e.g., Training).
+        3.  GIL (Global Interpreter Lock) contention between disparate modules.
+    """
     script_path = PROJECT_ROOT / "scripts" / script_name
     if not script_path.exists():
         logging.error(f"Script not found: {script_path}")
@@ -82,7 +140,13 @@ def _run_script(script_name: str, args: list[str]):
         sys.exit(130)
 
 def handle_pipeline(args):
-    """Run the full end-to-end pipeline."""
+    """
+    Orchestrates the full end-to-end research pipeline.
+    
+    Mapping Logic:
+        Translates high-level CLI flags (e.g., `--all`) into granular arguments
+        required by the underlying `run_pipeline.py` script.
+    """
     script_args = []
     # run_pipeline.py does not accept --all; map it to specific steps
     if args.all:
@@ -95,76 +159,89 @@ def handle_pipeline(args):
     _run_script("run_pipeline.py", script_args)
 
 def handle_data(args):
-    """Update market data."""
+    """Dispatches the Market Data Ingestion process."""
     _run_script("update_data.py", [])
 
 def handle_validate(args):
-    """Run factor validation."""
+    """Dispatches the Factor Validation (IC/Turnover analysis) process."""
     _run_script("validate_factors.py", [])
 
 def handle_train(args):
-    """Train models."""
+    """Dispatches the Walk-Forward Model Training process."""
     script_args = []
     if args.force_rebuild: script_args.append("--force-rebuild")
     if args.parallel_models: script_args.append("--parallel-models")
     if args.all: script_args.append("--all")
-    
+
     _run_script("train_models.py", script_args)
 
 def handle_predict(args):
-    """Generate predictions (inference)."""
+    """Dispatches the Alpha Signal Generation (Inference) process."""
     script_args = []
     if args.last_day_only: script_args.append("--last-day-only")
-    
+
     _run_script("generate_predictions.py", script_args)
 
 def handle_monitor(args):
-    """Run production monitoring."""
+    """Dispatches the Production Health Monitoring process (Drift/Staleness)."""
     script_args = []
     if args.psi_threshold: script_args.extend(["--psi-threshold", str(args.psi_threshold)])
-    
+
     _run_script("monitor_production.py", script_args)
 
 def handle_backtest(args):
-    """Run backtest simulation."""
+    """Dispatches the Historical Simulation Engine."""
     script_args = []
     if args.method: script_args.extend(["--method", args.method])
     if args.top_n: script_args.extend(["--top-n", str(args.top_n)])
-    
+
     _run_script("run_backtest.py", script_args)
 
 def handle_optimize(args):
-    """Run portfolio optimization."""
+    """Dispatches the Portfolio Construction & Optimization Engine."""
     script_args = []
     if args.capital: script_args.extend(["--capital", str(args.capital)])
     if args.method: script_args.extend(["--method", args.method])
     if args.target_vol: script_args.extend(["--target-vol", str(args.target_vol)])
     if args.top_n: script_args.extend(["--top-n", str(args.top_n)])
-    
+
     _run_script("optimize_portfolio.py", script_args)
 
 def handle_report(args):
-    """Generate executive report."""
+    """Dispatches the Executive Reporting module."""
     script_args = []
     if args.output: script_args.extend(["--output-file", args.output])
-    
+
     _run_script("create_report.py", script_args)
 
 def handle_hyperopt(args):
-    """Run hyperparameter optimization."""
+    """Dispatches the Bayesian Hyperparameter Optimization process."""
     _run_script("run_hyperopt.py", [])
 
 def handle_deploy(args):
-    """Manage deployment."""
-    script_args = ["--action", args.action]
+    """Dispatches the Model Lifecycle Manager (Archive/Prune)."""
+    script_args = []
+    # The --all flag takes precedence over a specific action.
+    if args.all:
+        script_args.append("--all")
+    else:
+        # The parser for this command sets a default of 'check'.
+        script_args.extend(["--action", args.action])
+
+    # These options are relevant for 'prune' and 'all' actions.
     if args.keep: script_args.extend(["--keep", str(args.keep)])
     if args.dry_run: script_args.append("--dry-run")
-    if args.all: script_args.append("--all")
 
     _run_script("deploy_model.py", script_args)
 
 def handle_test(args):
-    """Run unit and integration tests."""
+    """
+    Executes the automated test suite via Pytest.
+    
+    Scope:
+        - Unit Tests: Verify individual component logic (e.g., Factor calculations).
+        - Integration Tests: Validate cross-module workflows (e.g., Data -> Model -> Signal).
+    """
     logger = logging.getLogger("TestRunner")
     logger.info("🚀 Running Tests (pytest)...")
     try:
@@ -178,15 +255,15 @@ def handle_test(args):
         sys.exit(e.returncode)
 
 def handle_clean(args):
-    """Clean cache and temporary files."""
+    """Purges temporary artifacts, caches, and logs to reset the environment."""
     logger = logging.getLogger("Cleaner")
     logger.info("🧹 Cleaning cache and temporary files...")
-    
+
     targets = [
         PROJECT_ROOT / ".numba_cache",
         PROJECT_ROOT / "results" / "logs",
     ]
-    
+
     if args.all:
         targets.append(config.CACHE_DIR)
         logger.warning(f"⚠️  Also cleaning data cache: {config.CACHE_DIR}")
@@ -203,15 +280,19 @@ def handle_clean(args):
                 logger.error(f"   Failed to remove {t}: {e}")
         else:
             logger.info(f"   Skipped (not found): {t}")
-            
+
     logger.info("✅ Clean complete.")
 
 # --- 3. Main Entry Point ---
 
 def setup_logging():
     """
-    Configure logging locally to avoid importing heavy dependencies
-    (pandas/numpy) from quant_alpha.utils during CLI startup.
+    Initializes the logging subsystem with minimal overhead.
+    
+    Optimization:
+        Configures logging locally to avoid importing heavy numerical dependencies
+        (Pandas, NumPy) located in `quant_alpha.utils`. This ensures the CLI
+        starts in $O(1)$ time relative to the project size.
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -282,8 +363,8 @@ def main():
 
     # Deploy
     p_dep = subparsers.add_parser("deploy", help="Manage model deployment")
-    p_dep.add_argument("--action", type=str, choices=["check", "archive", "prune"], default="check", help="Action to perform")
-    p_dep.add_argument("--all", action="store_true", help="Run check -> archive -> prune sequence")
+    p_dep.add_argument("--action", type=str, choices=["check", "archive", "prune"], default="check", help="Action to perform (defaults to 'check')")
+    p_dep.add_argument("--all", action="store_true", help="Run check -> archive -> prune sequence. Overrides --action.")
     p_dep.add_argument("--keep", type=int, default=5, help="Archives to keep when pruning")
     p_dep.add_argument("--dry-run", action="store_true", help="Simulate pruning without deleting")
     p_dep.set_defaults(func=handle_deploy)
