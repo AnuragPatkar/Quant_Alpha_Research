@@ -1,0 +1,29 @@
+# Python virtual environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE and editor folders
+.vscode/
+.idea/
+
+# Git folder
+.git/
+
+# Data, results, and logs should be mounted as volumes, not copied into the image
+data/
+results/
+logs/
+.numba_cache/
+
+# Old/redundant files
+run_trainer_and_ensemble.py
+summary.txt
+
+# Build artifacts
+*.egg-info/
+dist/
+build/

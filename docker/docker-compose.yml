@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  quant-alpha:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: quant_alpha_system
+    volumes:
+      # Mount data and results to persist them outside container
+      - ../data:/app/data
+      - ../models:/app/models
+      - ../results:/app/results
+      - ../logs:/app/logs
+      # Mount config for live updates
+      - ../config:/app/config
+      - ../.env:/app/.env
+    environment:
+      - ENV=production
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - ../.env
+    restart: unless-stopped
+    ports:
+      - "8050:8050"  # Expose port for potential dashboard/monitoring

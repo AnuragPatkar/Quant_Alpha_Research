@@ -211,9 +211,7 @@ class DeploymentManager:
     def __init__(self):
         self.prod_dir    = config.MODELS_DIR / "production"
         self.archive_dir = config.MODELS_DIR / "archive"
-        self.prod_dir.mkdir(parents=True, exist_ok=True)
-        self.archive_dir.mkdir(parents=True, exist_ok=True)
-
+        self.prod_dir
     # --------------------------------------------------------------------------
     # HEALTH CHECK
     # --------------------------------------------------------------------------

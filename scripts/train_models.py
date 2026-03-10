@@ -3,6 +3,11 @@ train_models.py
 ===============
 Production Walk-Forward Training Pipeline  —  v4 (Memory-Safe Edition)
 ------------------------------------------------------------------------
+Production Walk-Forward Training Pipeline — v4 (Memory-Safe Edition)
+----------------------------------------------------------------------
+This script is the core of the alpha modeling system. It performs a rigorous
+walk-forward cross-validation to train and evaluate multiple GBDT models,
+gates them based on performance, and saves production-ready artifacts.
 
 KEY ARCHITECTURE CHANGES vs v3 (which caused 28GB OOM):
 
@@ -11,9 +16,12 @@ KEY ARCHITECTURE CHANGES vs v3 (which caused 28GB OOM):
     3 parallel models × 20 folds × 482MB/copy = ~28GB peak RAM.
     Fix: fold boundaries are date-tuples only. Data is sliced INSIDE the fold
     loop, one fold at a time, then immediately freed.
+    Fix: Fold boundaries are now lightweight date-tuples. Data is sliced
+    INSIDE the fold loop, one fold at a time, then immediately freed.
 
   PARALLEL → SERIAL (default):
     3 parallel models each calling _generate_folds() = triple the RAM.
+    3 parallel models each holding data copies = triple the RAM.
     Serial = 1/3 peak RAM. Use --parallel-models only on 32GB+ machines.
 
   PREPROCESSING MOVED PER-FOLD (no global preprocessing leak):
@@ -22,6 +30,7 @@ KEY ARCHITECTURE CHANGES vs v3 (which caused 28GB OOM):
 
   FEATURE SELECTION CACHED (not re-run every fold):
     ICIR re-runs every FEATURE_RESELECT_EVERY_N_FOLDS folds.
+    ICIR-based feature selection re-runs every FEATURE_RESELECT_EVERY_N_FOLDS folds.
 
   PRODUCTION MODEL SAVES:
     Gate-passing models saved to models/production/ with feature_names.
@@ -1105,6 +1114,10 @@ def run_production_pipeline(force_rebuild: bool = False,
     #
     # No leakage concern: winsorisation/normalisation uses FULL dataset stats.
     # This matches v3's approach and is standard in production alpha pipelines.
+    # The scalers are fitted on the entire dataset once, and then the transform
+    # is applied. This is significantly faster than fitting per-fold. While
+    # theoretically less pure, the practical impact on signal quality is
+    # negligible compared to the massive speed gain.
     # Per-fold stats (v4-original) would have been slightly purer but the
     # marginal benefit is negligible vs 100x speed penalty.
     logger.info("[PREPROC] Global winsorisation + sector-neutral normalisation...")
@@ -1250,6 +1263,10 @@ def run_production_pipeline(force_rebuild: bool = False,
         # Ensemble gate: IC > MIN_OOS_IC_THRESHOLD AND t-stat > MIN_OOS_IC_TSTAT
         ensemble_ok = ic >= MIN_OOS_IC_THRESHOLD and tstat >= MIN_OOS_IC_TSTAT
         # Production save gate: stricter
+        # A "PROD" model is considered high-quality enough to be used standalone.
+        # An "ENSEMBLE" model has a real signal but might be too weak or noisy
+        # on its own; it's only used as part of the blended ensemble.
+        # A "GATED" model is considered noise and is excluded from everything.
         prod_ok = ic >= PROD_IC_THRESHOLD and tstat >= PROD_IC_TSTAT
         status  = "✅ PROD" if prod_ok else ("🟡 ENSEMBLE" if ensemble_ok else "❌ GATED")
         print(f"  {mname:<12}  IC={ic:+.6f}  t={tstat:+.1f}  "
@@ -1375,6 +1392,9 @@ def run_production_pipeline(force_rebuild: bool = False,
         # The backtest engine executes at Open(T+1), not Open(T).
         # Trading Open(T) on Close(T) signal = lookahead bias → inflated returns.
         # Fix: shift predictions forward by 1 trading day per ticker.
+        # This is a CRITICAL fix for realistic backtesting. The signal generated
+        # at the close of day T is only actionable on the open of day T+1.
+        # The `shift(1)` operation correctly models this one-day delay.
         # Without this shift the backtest showed ~230% returns (unrealistic).
         # With shift: returns reflect real achievable alpha.
         raw_preds = final_results[["date", "ticker", "ensemble_alpha"]].copy()
