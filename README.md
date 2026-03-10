@@ -1,6 +1,4 @@
 # 🏆 Institutional-Grade Quantitative Equity Alpha Platform
-
-[![CI/CD Pipeline](https://github.com/your-org/your-repo/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/your-org/your-repo/actions/workflows/ci_cd.yml)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![Docker](https://img.shields.io/badge/docker-ready-green.svg)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -79,7 +77,7 @@ We implement a diverse library of alpha factors across multiple time horizons an
 ### Installation
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/quant-alpha-platform.git
+git clone https://github.com/AnuragPatkar/quant-alpha-platform.git
 cd quant-alpha-platform
 
 # 2. Configure Environment
