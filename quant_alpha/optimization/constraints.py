@@ -1,32 +1,50 @@
 """
-Portfolio Constraints - Production Grade
-Two interfaces in one module:
+Portfolio Constraint Management & Enforcement
+=============================================
+Dual-interface library for defining and enforcing portfolio mandate limits.
 
-  1. Static CVXPY factory methods (original):
-     Used during optimization to build CVXPY constraint lists.
-     e.g. PortfolioConstraints.long_only(w)
+Purpose
+-------
+This module provides two distinct mechanisms for constraint management:
+1.  **Declarative API (Pre-Optimization)**: Static factory methods that generate
+    CVXPY constraint objects for convex optimization problems.
+2.  **Imperative API (Post-Optimization)**: An instance-based engine that applies
+    iterative projection algorithms to enforce constraints on raw weight vectors.
+    This is critical for handling numerical precision errors or enforcing
+    non-convex heuristics after the primary solver step.
 
-  2. Instance-based post-processing API (new):
-     Used after optimization to enforce weight-space constraints on a
-     {ticker: weight} dict returned by any optimizer.
-     e.g. PortfolioConstraints(max_weight=0.40).apply(weights_dict)
+Usage
+-----
+**1. CVXPY Optimization Construction:**
 
-BUGS FIXED:
-  BUG-PC-01 [CRITICAL]: PortfolioConstraints had no __init__ and no .apply()
-    method. Tests that called PortfolioConstraints(max_weight=0.40) received
-    "TypeError: PortfolioConstraints() takes no arguments" because the class
-    only contained @staticmethod factory methods for CVXPY variables.
+.. code-block:: python
 
-    Fix: Add __init__ accepting (max_weight, min_weight, sector_limits,
-    sector_map) and an apply(weights: Dict[str, float]) → Dict[str, float]
-    method that enforces all constraints sequentially and re-normalises.
+    w = cp.Variable(n)
+    constraints = [
+        *PortfolioConstraints.long_only(w),
+        *PortfolioConstraints.sector_exposure_limit(w, tickers, sector_map, 0.20)
+    ]
 
-    The static methods are fully preserved — this is an additive change.
+**2. Post-Processing Enforcement:**
 
-  BUG-PC-02 [MEDIUM]: sector_exposure_limit static method used cp.abs() to
-    constrain magnitude (net-exposure limit). The new instance apply() method
-    enforces a gross long-only sector cap, which is the common equity use case.
-    Both are valid depending on the mandate; documented clearly below.
+.. code-block:: python
+
+    # Corrects floating-point drift and enforces strict caps
+    pc = PortfolioConstraints(max_weight=0.10, sector_limits={'Tech': 0.30})
+    final_weights = pc.apply(raw_weights)
+
+Importance
+----------
+-   **Risk Control**: Enforces hard limits on Gross Leverage, Sector Exposure, and Concentration.
+-   **Feasibility Guarantee**: The iterative projection methods ensure that output portfolios
+    strictly adhere to mandate limits even if the upstream solver returns $\epsilon$-infeasible results.
+-   **Flexibility**: Supports both Gross Exposure constraints (Long-Only) and Net Exposure
+    constraints (Long/Short).
+
+Tools & Frameworks
+------------------
+-   **CVXPY**: Construction of convex constraint sets ($Ax \leq b$).
+-   **NumPy**: Vectorized operations for iterative proportional fitting.
 """
 
 import numpy as np
@@ -39,28 +57,21 @@ logger = logging.getLogger(__name__)
 
 class PortfolioConstraints:
     """
-    Two-in-one portfolio constraint utility.
+    Unified utility for portfolio constraint definition and enforcement.
 
-    ── Instance API (post-processing) ──────────────────────────────────────
-    Enforces weight-space constraints on an already-optimised portfolio dict.
+    Interface Overview:
+    -------------------
+    1.  **Instance Methods**: Apply heuristics to dict-based weights (Post-Processing).
+        Uses **Iterative Proportional Fitting** to enforce limits while maintaining
+        full investment ($\sum w_i = 1.0$).
+        
+        *Execution Order:*
+        1. Minimum Weight Floor (Cardinality reduction)
+        2. Maximum Weight Cap (Concentration limit)
+        3. Sector Exposure Limits (Risk bucket caps)
 
-    Usage:
-        pc = PortfolioConstraints(max_weight=0.40, min_weight=0.01)
-        clean_weights = pc.apply(raw_weights_dict)
-
-    Constraint application order (order matters for idempotency):
-        1. min_weight: zero out assets below the floor, re-normalise
-        2. max_weight: iterative capping — excess weight redistributed
-           proportionally to uncapped assets until convergence
-        3. sector_limits: iterative sector-level capping with redistribution
-
-    ── Static CVXPY API (during optimization) ──────────────────────────────
-    Factory methods that return lists of CVXPY constraints.
-
-    Usage:
-        w = cp.Variable(n)
-        cons = PortfolioConstraints.long_only(w)
-        cons += PortfolioConstraints.position_limit(w, max_weight=0.10)
+    2.  **Static Methods**: Generate `cvxpy.Constraint` objects (Optimization).
+        Used to define the feasible region $\mathcal{F}$ for the solver.
     """
 
     def __init__(
@@ -72,10 +83,10 @@ class PortfolioConstraints:
     ):
         """
         Args:
-            max_weight:    Maximum allowed weight for any single asset (0 < x ≤ 1).
-            min_weight:    Minimum weight threshold; assets below are zeroed.
-            sector_limits: {sector_name: max_weight} — aggregate sector caps.
-            sector_map:    {ticker: sector_name} — maps each asset to a sector.
+            max_weight (float): Maximum allowed weight $w_{max}$ per asset ($0 < w_{max} \le 1$).
+            min_weight (float): Minimum weight threshold $w_{min}$; assets with $w_i < w_{min}$ are truncated to 0.
+            sector_limits (Optional[Dict]): Aggregate sector caps {sector: $L_{sector}$}.
+            sector_map (Optional[Dict]): Mapping from ticker to sector label.
         """
         if not (0 < max_weight <= 1.0):
             raise ValueError(f"max_weight must be in (0, 1], got {max_weight}")
@@ -93,36 +104,35 @@ class PortfolioConstraints:
 
     def apply(self, weights: Dict[str, float]) -> Dict[str, float]:
         """
-        Apply all configured constraints to a weight dictionary.
+        Sequentially enforces constraints on a weight vector via iterative projection.
 
         Args:
-            weights: {ticker: weight} — need not sum to 1 on input (will
-                     be re-normalised after each constraint pass).
+            weights (Dict[str, float]): Input portfolio weights. Input need not sum to 1.0.
 
         Returns:
-            {ticker: weight} summing to 1.0 with all constraints satisfied.
+            Dict[str, float]: Normalized weights ($\sum w_i = 1.0$) adhering to all limits.
         """
         if not weights:
             return {}
 
         w = dict(weights)
 
-        # Step 1: Min-weight floor — zero out tiny positions
+        # Step 1: Cardinality Constraint (Min Weight Floor)
         if self.min_weight > 0:
             w = self._apply_min_weight(w)
 
-        # Step 2: Max-weight cap — iterative re-distribution
+        # Step 2: Concentration Constraint (Max Weight Cap)
         if self.max_weight < 1.0:
             w = self._apply_max_weight(w)
 
-        # Step 3: Sector limits — iterative re-distribution
+        # Step 3: Risk Bucket Constraint (Sector Limits)
         if self.sector_limits:
             w = self._apply_sector_limits(w)
 
         return w
 
     def _normalise(self, w: Dict[str, float]) -> Dict[str, float]:
-        """Normalise weights to sum to 1.0; return as-is if sum is zero."""
+        """Renormalizes weights to satisfy the budget constraint $\sum w_i = 1.0$."""
         total = sum(w.values())
         if total <= 0:
             return w
@@ -130,11 +140,12 @@ class PortfolioConstraints:
 
     def _apply_min_weight(self, w: Dict[str, float]) -> Dict[str, float]:
         """
-        Zero out all assets below min_weight, then re-normalise.
+        Truncates positions below `min_weight` and renormalizes.
+        Functions as a soft cardinality constraint.
         """
         filtered = {k: v for k, v in w.items() if v >= self.min_weight}
         if not filtered:
-            # All assets below floor — keep the largest to avoid empty portfolio
+            # Fallback: Retain the largest position if all are below floor to verify solvability.
             logger.warning(
                 "All assets below min_weight floor. Retaining the largest position."
             )
@@ -144,12 +155,13 @@ class PortfolioConstraints:
 
     def _apply_max_weight(self, w: Dict[str, float]) -> Dict[str, float]:
         """
-        Iteratively cap each asset at max_weight and redistribute the excess
-        proportionally among uncapped assets until convergence.
-
-        This guarantees exact enforcement regardless of how many assets need
-        capping — a single-pass clip would under-enforce when multiple assets
-        exceed the cap simultaneously.
+        Enforces upper bounds via Iterative Proportional Fitting.
+        
+        Algorithm:
+        1. Identify assets exceeding $w_{max}$.
+        2. Clip to $w_{max}$.
+        3. Distribute excess weight proportionally to assets below $w_{max}$.
+        4. Repeat until convergence or max iterations.
         """
         cap = self.max_weight
         w = self._normalise(w)
@@ -159,17 +171,17 @@ class PortfolioConstraints:
             under = {k: v for k, v in w.items() if v <= cap + 1e-9}
 
             if not over:
-                break                   # all weights within cap — done
+                break                   # Convergence reached
 
             # Compute excess to redistribute
             excess = sum(v - cap for v in over.values())
             under_total = sum(under.values())
 
-            # Pin over-weight assets exactly at cap
+            # Clamp over-weight assets
             for k in over:
                 w[k] = cap
 
-            # Distribute excess proportionally to uncapped assets
+            # Redistribute excess proportionally
             if under_total > 1e-12:
                 scale = 1.0 + excess / under_total
                 for k in under:
@@ -181,8 +193,8 @@ class PortfolioConstraints:
 
     def _apply_sector_limits(self, w: Dict[str, float]) -> Dict[str, float]:
         """
-        Iteratively cap each sector at its limit and redistribute excess to
-        assets outside the over-weight sector, proportionally.
+        Enforces aggregate sector caps via Iterative Redistribution.
+        Excess weight from sector $S$ is flowed to assets $\notin S$.
         """
         for _ in range(200):
             changed = False
@@ -208,7 +220,7 @@ class PortfolioConstraints:
                 for k in sector_tickers:
                     w[k] *= scale_down
 
-                # Distribute excess to out-of-sector assets proportionally
+                # Redistribute excess to the rest of the universe
                 other_tickers = [
                     k for k in w if self.sector_map.get(k, "__other__") != sector
                 ]
@@ -228,22 +240,31 @@ class PortfolioConstraints:
 
     @staticmethod
     def long_only(w: cp.Variable) -> List[cp.Constraint]:
-        """Constraint: Weights must be non-negative (Long Only)."""
+        """
+        Constraint: $w_i \ge 0, \forall i$.
+        """
         return [w >= 0]
 
     @staticmethod
     def fully_invested(w: cp.Variable) -> List[cp.Constraint]:
-        """Constraint: Sum of weights must equal 1.0."""
+        """
+        Constraint: $\sum w_i = 1.0$.
+        """
         return [cp.sum(w) == 1.0]
 
     @staticmethod
     def dollar_neutral(w: cp.Variable) -> List[cp.Constraint]:
-        """Constraint: Sum of weights must equal 0.0 (Market Neutral)."""
+        """
+        Constraint: $\sum w_i = 0.0$ (Market Neutral).
+        """
         return [cp.sum(w) == 0.0]
 
     @staticmethod
     def leverage_limit(w: cp.Variable, limit: float = 1.0) -> List[cp.Constraint]:
-        """Constraint: Gross leverage (sum of absolute weights) <= limit."""
+        """
+        Constraint: $\|w\|_1 \le L$.
+        Enforces Gross Leverage limit.
+        """
         return [cp.norm(w, 1) <= limit]
 
     @staticmethod
@@ -253,8 +274,8 @@ class PortfolioConstraints:
         min_weight: float = 0.0
     ) -> List[cp.Constraint]:
         """
-        Constraint: Individual position limits.
-        min_weight <= w_i <= max_weight
+        Constraint: Box constraints on individual weights.
+        $w_{min} \le w_i \le w_{max}$
         """
         constraints = []
         if max_weight < 1.0:
@@ -270,11 +291,10 @@ class PortfolioConstraints:
         max_sector_weight: float = 0.30
     ) -> List[cp.Constraint]:
         """
-        Constraint: Limit net sector exposure magnitude (long/short safe).
-        |Sum(w_sector)| <= max_sector_weight
+        Constraint: Net Sector Exposure Limit.
+        $|\sum_{i \in S} w_i| \le L_{sector}$
 
-        Note: for long-only mandates with a gross cap, use the instance
-        .apply() method with sector_limits instead.
+        Note: Uses L1 norm of the sum, appropriate for Long/Short mandates.
         """
         constraints = []
         sector_indices: Dict[str, List[int]] = {}
@@ -295,7 +315,7 @@ class PortfolioConstraints:
         turnover_cap: float
     ) -> List[cp.Constraint]:
         """
-        Constraint: Limit turnover from current portfolio.
-        sum(|w - w_current|) <= turnover_cap
+        Constraint: Maximum Turnover Limit.
+        $\|w - w_{current}\|_1 \le T_{cap}$
         """
         return [cp.norm(w - current_weights, 1) <= turnover_cap]

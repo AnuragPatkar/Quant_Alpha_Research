@@ -1,3 +1,46 @@
+"""
+Market Regime Detection Engine
+==============================
+Identifies latent market states using heuristic and probabilistic models.
+
+Purpose
+-------
+The `RegimeDetector` classifies market environments into distinct regimes (e.g.,
+Bull/Bear, High/Low Volatility). Strategies often perform differently depending
+on the regime; this module provides the signals to switch logic dynamically
+(Regime Switching models).
+
+It offers two approaches:
+1.  **Heuristic**: Deterministic intersection of Trend (Moving Average) and Volatility filters.
+2.  **Probabilistic**: Gaussian Hidden Markov Model (HMM) to infer latent states from observed returns.
+
+Usage
+-----
+.. code-block:: python
+
+    detector = RegimeDetector(benchmark_prices=spy_close)
+
+    # 1. Heuristic: Trend + Volatility Quadrants
+    regimes = detector.detect_trend_vol_regime(trend_window=200, vol_window=20)
+
+    # 2. Probabilistic: Hidden Markov Model (Unsupervised)
+    hmm_states = detector.detect_hmm_regime(n_components=2)
+
+Importance
+----------
+-   **Risk Management**: "Risk-off" signals during High Volatility/Bear states prevent
+    large drawdowns ($MaxDD$).
+-   **Alpha Preservation**: Momentum strategies often fail in mean-reverting (choppy) regimes;
+    identifying these states prevents whipsaw losses.
+-   **Complexity**: The vectorised heuristic runs in $O(N)$, while the HMM relies on
+    Expectation-Maximization (Baum-Welch) with complexity $O(N \cdot K^2)$.
+
+Tools & Frameworks
+------------------
+-   **hmmlearn**: Implementation of Hidden Markov Models with Gaussian Emissions.
+-   **Pandas/NumPy**: Time-series alignment and vectorized conditional logic (`np.select`).
+"""
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,34 +50,43 @@ logger = logging.getLogger(__name__)
 
 class RegimeDetector:
     """
-    Detects market regimes based on Trend and Volatility.
+    Engine for classifying market conditions into discrete states.
     """
 
     def __init__(self, benchmark_prices: pd.Series):
         """
-        benchmark_prices: Series of S&P 500 (or equivalent) close prices.
+        Initialize the detector with a benchmark asset.
+
+        Args:
+            benchmark_prices (pd.Series): Time-series of close prices (e.g., SPY).
         """
-        self.prices  = benchmark_prices.sort_index()
+        self.prices = benchmark_prices.sort_index()
         self.regimes = None
 
     def detect_trend_vol_regime(self, trend_window=200, vol_window=20):
         """
-        Classifies regimes into 4 quadrants:
-        1. Bull_LowVol  — Ideal
-        2. Bull_HighVol — Risky Rally
-        3. Bear_LowVol  — Slow Bleed
-        4. Bear_HighVol — Crash
+        Classifies regimes using a deterministic 4-Quadrant Heuristic.
 
-        BUG-2 FIX: Replaced slow .apply(axis=1) with vectorized np.select()
-        ~10x faster on large data.
+        Logic:
+        1.  **Trend**: Price > Simple Moving Average ($SMA_{200}$).
+        2.  **Volatility**: Realized Volatility > Median Historical Volatility.
+
+        States:
+        -   **Bull_LowVol**: Ideal conditions for leverage/beta.
+        -   **Bull_HighVol**: Risky Rally (possible top formation).
+        -   **Bear_LowVol**: Slow Bleed / Stagnation.
+        -   **Bear_HighVol**: Crash / Panic (Risk-Off).
+
+        Returns:
+            pd.Series: Categorical series of regime labels.
         """
-        ma           = self.prices.rolling(trend_window).mean()
-        trend_signal = (self.prices > ma).astype(int)   # 1=Bull, 0=Bear
+        ma = self.prices.rolling(trend_window).mean()
+        trend_signal = (self.prices > ma).astype(int)  # 1=Bull, 0=Bear
 
-        returns      = self.prices.pct_change()
-        vol          = returns.rolling(vol_window).std() * np.sqrt(252)
+        returns = self.prices.pct_change()
+        vol = returns.rolling(vol_window).std() * np.sqrt(252)
         vol_threshold = vol.rolling(252).median()
-        vol_signal   = (vol > vol_threshold).astype(int) # 1=HighVol, 0=LowVol
+        vol_signal = (vol > vol_threshold).astype(int)  # 1=HighVol, 0=LowVol
 
         self.regimes = pd.DataFrame({
             'trend':     trend_signal,
@@ -42,7 +94,8 @@ class RegimeDetector:
             'vol_val':   vol,
         }, index=self.prices.index)
 
-        # BUG-2 FIX: vectorized np.select instead of .apply(axis=1)
+        # Performance Optimization: Vectorized conditional assignment ($O(N)$)
+        # replaces row-wise .apply(), reducing overhead on large datasets.
         conditions = [
             (self.regimes['trend'] == 1) & (self.regimes['vol_state'] == 0),
             (self.regimes['trend'] == 1) & (self.regimes['vol_state'] == 1),
@@ -56,11 +109,20 @@ class RegimeDetector:
 
     def detect_hmm_regime(self, n_components=2):
         """
-        Uses Gaussian HMM to detect latent regimes.
-        Requires: pip install hmmlearn
+        Infers latent regimes using a Gaussian Hidden Markov Model (HMM).
 
-        BUG-5 FIX: Use returns.index after dropna() instead of prices.index[1:]
-        prices.index[1:] assumed exactly 1 NaN from pct_change — not guaranteed.
+        Model Assumption:
+        Returns are generated by a mixture of Gaussian distributions, where the
+        selection of the distribution depends on a hidden state $S_t$ that follows
+        a Markov process.
+
+        .. math::
+            P(R_t | S_t=k) \\sim \\mathcal{N}(\\mu_k, \\sigma_k^2)
+
+        Requires: `pip install hmmlearn`
+
+        Returns:
+            pd.Series: Integer series representing the hidden state (0 to K-1).
         """
         try:
             from hmmlearn.hmm import GaussianHMM
@@ -70,9 +132,10 @@ class RegimeDetector:
 
         returns = self.prices.pct_change().dropna()
 
-        # BUG-5 FIX: use returns.index directly — not prices.index[1:]
-        # pct_change().dropna() may drop more than 1 row if NaNs exist in prices
-        dates  = returns.index
+        # Data Alignment: Extract valid indices post-transformation.
+        # Note: pct_change() introduces initial NaNs, and intermediate NaNs
+        # in raw prices would also be dropped here.
+        dates = returns.index
         values = returns.values.reshape(-1, 1)
 
         model = GaussianHMM(
@@ -84,7 +147,7 @@ class RegimeDetector:
         model.fit(values)
         hidden_states = model.predict(values)
 
-        # Align with correct dates
+        # State persistence: Align hidden states with the original DataFrame index.
         if self.regimes is None:
             self.regimes = pd.DataFrame(index=dates)
         self.regimes = self.regimes.reindex(self.regimes.index.union(dates))
@@ -93,7 +156,12 @@ class RegimeDetector:
         return pd.Series(hidden_states, index=dates, name='hmm_state')
 
     def plot_regimes(self, save_path=None):
-        """Plots price colored by regime."""
+        """
+        Visualizes the benchmark price series colored by the detected regime.
+
+        Args:
+            save_path (Optional[str]): File path to save the plot image.
+        """
         if self.regimes is None or 'regime' not in self.regimes.columns:
             logger.warning("Run detect_trend_vol_regime first.")
             return

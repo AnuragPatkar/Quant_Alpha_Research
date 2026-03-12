@@ -1,3 +1,45 @@
+"""
+Alpha Decay Analysis Engine
+===========================
+Quantifies the persistence of predictive power (Information Coefficient) over varying time horizons.
+
+Purpose
+-------
+The `AlphaDecayAnalyzer` evaluates how quickly a factor's signal degrades. This is critical for
+determining the optimal rebalancing frequency and estimating portfolio turnover. A factor with
+rapid decay requires high-frequency trading (high transaction costs), while slow decay implies
+capacity for larger AUM and lower turnover.
+
+Usage
+-----
+.. code-block:: python
+
+    # Initialize with price and factor data
+    analyzer = AlphaDecayAnalyzer(data=factor_df, factor_col='momentum_rsi')
+
+    # Compute IC decay profile up to 10 days
+    decay_profile = analyzer.calculate_decay(max_horizon=10)
+
+    # Estimate signal half-life (e.g., t where IC_t = 0.5 * IC_1)
+    half_life = analyzer.get_half_life()
+
+Importance
+----------
+- **Turnover Estimation**: Factors with short half-lives (< 5 days) drive high portfolio turnover,
+  necessitating strict transaction cost controls ($TC < \\alpha$).
+- **Alpha Persistence**: Measures the orthogonality of the signal across time lags:
+  .. math::
+      IC(h) = \\text{corr}(F_t, R_{t+h})
+- **Execution Timing**: Helps determining if trade execution can be delayed without significant
+  alpha loss (implementation shortfall mitigation).
+
+Tools & Frameworks
+------------------
+- **Pandas**: Time-series manipulation and lag generation (`shift`).
+- **SciPy (stats)**: Spearman Rank Correlation for non-linear dependency checks.
+- **Matplotlib**: Visualization of the decay curve.
+"""
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,50 +48,67 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class AlphaDecayAnalyzer:
     """
-    Analyzes how the predictive power (IC) of a factor decays over longer horizons.
+    Engine for analyzing the temporal structure of alpha signals.
+    Computes the term structure of the Information Coefficient (IC) and estimates signal half-life.
     """
 
     def __init__(self, data: pd.DataFrame, factor_col: str):
         """
-        data: DataFrame with 'date', 'ticker', 'factor_col', and 'close' price.
+        Initialize the analyzer with market and factor data.
+
+        Args:
+            data (pd.DataFrame): Input dataset containing 'date', 'ticker', 'close', and the factor column.
+            factor_col (str): The name of the column containing the alpha signal.
         """
-        self.data         = data.copy()   # BUG-3 FIX: copy at init to prevent mutation
-        self.factor_col   = factor_col
+        # State Isolation: Defensive copy ensures immutability of the source dataset.
+        # Prevents side effects from subsequent lag generation operations.
+        self.data = data.copy()
+        self.factor_col = factor_col
         self.decay_results = {}
 
     def calculate_decay(self, max_horizon=10):
         """
-        Calculates Rank IC for horizons 1 to max_horizon days.
+        Calculates the Information Coefficient (IC) profile across multiple time horizons.
 
-        BUG-3 FIX: Method was modifying self.data in-place by adding fwd_ret_Nd columns.
-        Calling twice caused columns to accumulate (fwd_ret_1d, fwd_ret_2d already exist
-        on second call → shift(-h) applied to wrong data).
-        Fix: work on a local copy, never mutate self.data.
+        Generates forward returns $R_{t, t+h}$ for $h \in [1, \text{max\_horizon}]$
+        and computes the Spearman Rank Correlation with the factor value at time $t$.
+
+        Args:
+            max_horizon (int): The maximum number of days to look forward.
+
+        Returns:
+            Dict[int, float]: Mapping of horizon (days) to Mean Rank IC.
         """
         logger.info(f"Calculating Alpha Decay up to {max_horizon} days...")
 
-        # BUG-3 FIX: work on local copy — never mutate self.data
+        # Idempotency Guarantee: Work on a transient copy to ensure the method
+        # produces consistent results regardless of how many times it is called.
+        # Previous implementations suffered from column accumulation (fwd_ret_Nd)
+        # which caused shift alignment errors on subsequent runs.
         work_df = self.data.sort_values(['ticker', 'date']).copy()
 
         self.decay_results = {}
 
         for h in range(1, max_horizon + 1):
-            col_name = f'fwd_ret_{h}d'
+            col_name = f"fwd_ret_{h}d"
 
-            # Calculate forward return on local copy only
+            # Vectorized Lag Generation: R_{t+h} / R_t - 1
             work_df[col_name] = (
                 work_df.groupby('ticker')['close'].shift(-h)
                 / work_df['close'] - 1
             )
 
+            # Filter: Ensure strict alignment of factor and future return
             valid = work_df.dropna(subset=[self.factor_col, col_name])
 
             if valid.empty:
                 self.decay_results[h] = 0.0
                 continue
 
+            # Cross-Sectional Rank IC: Average daily Spearman correlation
             daily_ic = valid.groupby('date').apply(
                 lambda x: stats.spearmanr(
                     x[self.factor_col], x[col_name]
@@ -58,15 +117,20 @@ class AlphaDecayAnalyzer:
 
             self.decay_results[h] = daily_ic.mean()
 
-            # Drop the column from work_df after use — keeps memory clean
+            # Memory Management: Prune temporary columns immediately to maintain O(N) memory usage.
             work_df.drop(columns=[col_name], inplace=True)
 
         return self.decay_results
 
     def get_half_life(self):
         """
-        Returns the horizon at which IC drops to half of Day-1 IC.
-        Useful for determining optimal holding period.
+        Estimates the Alpha Half-Life.
+
+        Defined as the time horizon $h$ where the magnitude of the Information Coefficient
+        decays to 50% of its initial strength ($|IC_h| \leq 0.5 \times |IC_1|$).
+
+        Returns:
+            Optional[int]: The day $h$ where decay threshold is breached, or None if signal persists.
         """
         if not self.decay_results:
             self.calculate_decay()
@@ -82,7 +146,13 @@ class AlphaDecayAnalyzer:
         return None  # IC never decays to half
 
     def plot_decay(self, save_path=None):
-        """Plots the IC decay curve with half-life annotation."""
+        """
+        Visualizes the Alpha Decay Term Structure.
+
+        Args:
+            save_path (Optional[str]): File path to save the plot image.
+                                     If None, displays interactively.
+        """
         if not self.decay_results:
             self.calculate_decay()
 
@@ -96,7 +166,7 @@ class AlphaDecayAnalyzer:
         plt.fill_between(horizons, ics, alpha=0.1, color='purple')
         plt.axhline(0, color='black', linewidth=0.5)
 
-        # Half-life line
+        # Annotation: Half-life threshold
         ic_day1 = ics[0] if ics else 0
         half_ic = ic_day1 / 2.0
         plt.axhline(half_ic, color='gray', linestyle='--',

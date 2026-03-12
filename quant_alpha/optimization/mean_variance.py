@@ -1,24 +1,44 @@
 """
-Mean-Variance Optimization (Markowitz) - Production Grade
-Mathematically sound formulation using CVXPY with dynamic constraints.
+Mean-Variance Portfolio Optimization Engine
+===========================================
+Convex optimization solver for modern portfolio theory (MPT) construction.
 
-BUGS FIXED:
-  BUG-MV-01 [CRITICAL]: ECOS solver not installed — solve_max_sharpe always fell back to
-    Equal Weight, causing Sharpe to be 0.48 instead of ≥ 0.75.
-    Fix: Try ECOS first, then fall back to SCS, then CLARABEL. CLARABEL ships with
-    modern CVXPY (≥1.3) and handles QCQP/SOCP natively without extra install.
+Purpose
+-------
+The `MeanVarianceOptimizer` translates financial objectives (maximize return, minimize risk)
+into convex optimization problems. It supports two primary formulations:
+1.  **Quadratic Programming (QP)**: Minimizes portfolio variance for a given risk aversion ($\lambda$).
+2.  **Second-Order Cone Programming (SOCP)**: Maximizes the Sharpe Ratio directly via the
+    Charnes-Cooper transformation, avoiding heuristic grid searches.
 
-  BUG-MV-02 [HIGH]: dynamic_max_w override in optimize() destroyed the max-weight
-    constraint intent. For n=3 assets, max(0.05, 1/3+0.01) = 0.343, capping ALL
-    assets at the same ceiling and forcing equal allocation even when one asset clearly
-    dominates — making test_mean_variance_dominant_asset impossible to pass.
-    Fix: Only apply the dynamic floor if the user explicitly passes no constraints.
-    When constraints are provided, respect the requested max_weight and only
-    raise a floor of 1/n (not 1/n+0.01) as a strict infeasibility guard.
+Usage
+-----
+Intended for use via the `PortfolioAllocator` facade.
 
-  BUG-MV-03 [HIGH]: Same dynamic_max_w bug existed in solve_max_sharpe, applied to
-    the y <= dynamic_max_w * kappa constraint, distorting Charnes-Cooper weights.
-    Fix: Same treatment as BUG-MV-02 — only apply floor when no constraints given.
+.. code-block:: python
+
+    optimizer = MeanVarianceOptimizer(risk_aversion=1.0)
+    weights = optimizer.optimize(
+        expected_returns={'AAPL': 0.12, ...},
+        covariance_matrix=cov_df,
+        constraints={'max_weight': 0.10}
+    )
+
+Importance
+----------
+-   **Convexity Guarantees**: Utilizes `cvxpy` to ensure that if a solution exists, it is the global optimum.
+-   **Solver Robustness**: Implements a cascade of solvers (OSQP, ECOS, SCS, CLARABEL) to handle
+    numerical instability in ill-conditioned covariance matrices.
+-   **Defensive Feasibility**: Automatically relaxes weight caps in concentrated universes ($N < 1/w_{max}$)
+    to prevent infeasibility errors.
+
+Tools & Frameworks
+------------------
+-   **CVXPY**: Domain-specific language for convex optimization.
+-   **Solvers**:
+    -   **OSQP**: Operator Splitting Quadratic Program solver (Primary for QP).
+    -   **ECOS/CLARABEL**: Embedded Conic Solver (Primary for SOCP).
+    -   **SCS**: Splitting Conic Solver (Fallback).
 """
 
 import pandas as pd
@@ -36,6 +56,7 @@ def _get_available_solvers() -> List[str]:
 
 
 class MeanVarianceOptimizer:
+    """Implementation of Markowitz portfolio optimization via convex programming."""
     def __init__(self, risk_aversion: float = 1.0):
         """
         Initializes the optimizer. Market variables like risk_free_rate
@@ -49,8 +70,8 @@ class MeanVarianceOptimizer:
         covariance_matrix: pd.DataFrame
     ) -> Tuple[List[str], np.ndarray, np.ndarray, int]:
         """
-        Centralized data preparation to prevent DRY violations.
-        Assumes covariance_matrix is pre-calculated (and shrunk if necessary) upstream.
+        Aligns and vectorizes input maps for linear algebra operations.
+        Pre-condition: Covariance matrix must be positive semi-definite (PSD).
         """
         available_tickers = set(covariance_matrix.index) & set(covariance_matrix.columns)
         tickers = [t for t in expected_returns.keys() if t in available_tickers]
@@ -68,8 +89,8 @@ class MeanVarianceOptimizer:
 
     def _safe_normalize(self, optimized_w: np.ndarray, tickers: List[str]) -> Dict[str, float]:
         """
-        Safely extracts and normalizes weights.
-        Raises an error if the solver returned severely infeasible weights.
+        Extracts weights and enforces the simplex constraint $\sum w_i = 1$.
+        Filters numerical noise ($\epsilon < 1e-6$) and validates solver feasibility.
         """
         n = len(tickers)
         weight_dict = {
@@ -88,18 +109,12 @@ class MeanVarianceOptimizer:
 
     def _resolve_max_weight(self, n: int, constraints: Optional[Dict]) -> float:
         """
-        FIX BUG-MV-02 / BUG-MV-03:
-        Compute the effective per-asset max weight.
-
-        Rules:
-        - If no constraints provided, use a generous default of 1.0 (unconstrained).
-          This allows the optimizer to freely pick dominant assets.
-        - If constraints provided, use the requested max_weight.
-        - In both cases, apply a strict infeasibility floor of 1/n so the problem
-          is always feasible (every asset can at least hold its equal-weight share).
-        - We intentionally DO NOT add the +0.01 buffer that caused the original bug:
-          that buffer turned an infeasibility guard into a hard cap that smothered
-          dominant assets when n is small (e.g. n=3 → cap = 0.343).
+        Dynamic Constraint Relaxation: Ensures the feasible set $\mathcal{F}$ is non-empty.
+        
+        Logic:
+        If $N \cdot w_{max} < 1$, the budget constraint $\sum w_i = 1$ strictly cannot be satisfied.
+        We enforce $w_i \le \max(w_{req}, 1/N)$ to guarantee solvability in small/concentrated
+        universes while respecting user intent where possible.
         """
         if constraints is None:
             requested = 1.0  # unconstrained: let optimizer decide freely
@@ -116,9 +131,11 @@ class MeanVarianceOptimizer:
         constraints: Optional[Dict] = None
     ) -> Dict[str, float]:
         """
-        Standard Mean-Variance Optimization.
-        Maximizes:  mu^T w  -  lambda * w^T Sigma w
-        Subject to: sum(w) == 1, w >= 0 (long-only by default), w <= max_weight
+        Solves the Standard Mean-Variance Quadratic Program (QP).
+
+        .. math::
+            \text{maximize} \quad \mu^T w - \lambda w^T \Sigma w \\
+            \text{subject to} \quad \mathbf{1}^T w = 1, \quad w \ge 0, \quad w \le w_{max}
         """
         try:
             tickers, mu, Sigma, n = self._prepare_data(expected_returns, covariance_matrix)
@@ -137,7 +154,7 @@ class MeanVarianceOptimizer:
         if not constraints or not constraints.get('allow_short', False):
             constraints_list.append(w >= 0)
 
-        # FIX BUG-MV-02: use _resolve_max_weight instead of inline dynamic_max_w
+        # Feasibility Guard: Ensure max_weight doesn't break sum(w)=1
         effective_max_w = self._resolve_max_weight(n, constraints)
         constraints_list.append(w <= effective_max_w)
 
@@ -165,24 +182,17 @@ class MeanVarianceOptimizer:
         constraints: Optional[Dict] = None
     ) -> Dict[str, float]:
         """
-        Direct Sharpe Maximization using Charnes-Cooper transformation.
+        Direct Sharpe Ratio Maximization via Second-Order Cone Programming (SOCP).
 
-        Solves the equivalent QCQP/SOCP:
-            max  (mu - rf)^T y
-            s.t. y^T Sigma y <= 1
-                 sum(y) == kappa
-                 y >= 0
-                 y <= max_weight * kappa
-                 kappa >= 0
-        Then recovers weights as w = y / kappa.
+        Utilizes the **Charnes-Cooper transformation** to linearize the fractional objective:
+        Let $y = \kappa w$ where $\kappa > 0$.
 
-        FIX BUG-MV-01: ECOS is not always installed. We try a chain of solvers
-        that can handle quadratic constraints / SOCP problems:
-            1. ECOS   — preferred, handles QCQP natively
-            2. SCS    — open-source, ships with CVXPY, handles SOCP
-            3. CLARABEL — default solver in CVXPY ≥1.3, handles SOCP/QCQP
-
-        FIX BUG-MV-03: per-asset cap uses _resolve_max_weight (same fix as optimize).
+        .. math::
+            \text{maximize} \quad (\mu - r_f)^T y \\
+            \text{subject to} \quad y^T \Sigma y \le 1 \\
+            \quad \mathbf{1}^T y = \kappa, \quad y \ge 0, \quad \kappa \ge 0
+            
+        Recovered Weights: $w^* = y^* / \kappa^*$.
         """
         try:
             tickers, mu, Sigma, n = self._prepare_data(expected_returns, covariance_matrix)
@@ -195,11 +205,11 @@ class MeanVarianceOptimizer:
 
         objective = cp.Maximize((mu - risk_free_rate) @ y)
 
-        # FIX BUG-MV-03: use _resolve_max_weight instead of inline dynamic_max_w
+        # Feasibility Guard: Scale constraints by variable kappa
         effective_max_w = self._resolve_max_weight(n, constraints)
 
         constraints_list = [
-            cp.quad_form(y, Sigma) <= 1,   # Quadratic Constraint (QCQP / SOCP cone)
+            cp.quad_form(y, Sigma) <= 1,   # Risk constraint (Unit Variance in transformed space)
             cp.sum(y) == kappa,
             y >= 0,
             y <= effective_max_w * kappa,
@@ -208,7 +218,11 @@ class MeanVarianceOptimizer:
 
         prob = cp.Problem(objective, constraints_list)
 
-        # FIX BUG-MV-01: solver priority chain for QCQP-capable solvers
+        # Solver Cascade Strategy:
+        # QCQP/SOCP problems require conic solvers. We attempt dispatch in order of reliability:
+        # 1. ECOS: Best for SOCP.
+        # 2. SCS: Robust first-order solver.
+        # 3. CLARABEL: Modern interior-point solver (CVXPY default).
         qcqp_solvers = ["ECOS", "SCS", "CLARABEL"]
         installed = _get_available_solvers()
         solver_chain = [s for s in qcqp_solvers if s in installed]

@@ -1,18 +1,46 @@
 """
-Portfolio Allocator - Strategy Facade
-Unified interface for portfolio construction methods.
+Portfolio Optimization Strategy Facade
+======================================
+Unified orchestration layer for portfolio construction and capital allocation algorithms.
 
-BUGS FIXED:
-  BUG-AL-01 [HIGH]: When MeanVarianceOptimizer._prepare_data finds zero ticker
-    intersection it raises ValueError internally, catches it, logs it, and
-    returns {} — without raising. The allocator's outer except-block never
-    fires so the empty dict propagates silently to the caller.
+Purpose
+-------
+The `PortfolioAllocator` implements the **Strategy Pattern** to abstract specific optimization
+engines (Mean-Variance, Risk Parity, Kelly Criterion, Black-Litterman) behind a consistent
+application programming interface (API). It acts as the switchboard for the portfolio
+construction process, handling method selection, parameter injection, and defensive
+fallback logic.
 
-    Fix: After every optimizer call, check whether the result is empty and,
-    if so, fall back to Equal Weight using the input expected_returns keys.
-    This is the correct defensive posture: an empty optimizer result is always
-    a failure mode (no ticker overlap, degenerate input, etc.) and the safest
-    recovery is equal weight rather than crashing downstream portfolio logic.
+Usage
+-----
+Intended for use within the rebalancing loop of a backtesting engine or live trading system.
+
+.. code-block:: python
+
+    # Initialize with Mean-Variance preference
+    allocator = PortfolioAllocator(method='mean_variance', risk_aversion=2.5)
+
+    # Execute allocation
+    target_weights = allocator.allocate(
+        expected_returns=alpha_signals,
+        covariance_matrix=risk_model
+    )
+
+Importance
+----------
+- **Architectural Decoupling**: Separates the *intention* (allocate capital) from the
+  *implementation* (quadratic programming vs. numerical optimization).
+- **Operational Resilience**: Enforces "Defensive Optimization" principles. If a complex
+  solver fails (e.g., non-positive semi-definite covariance), the system gracefully
+  degrades to a Maximum Entropy (Equal Weight) solution rather than halting execution.
+- **Protocol Standardization**: Guarantees that all optimizers return normalized,
+  fully-invested weight vectors ($\sum w_i = 1.0$), simplifying downstream execution logic.
+
+Tools & Frameworks
+------------------
+- **Pandas**: Alignment of index-aware data structures (Tickers $\times$ Dates).
+- **Optimization Engines**: Wraps internal modules (`mean_variance`, `risk_parity`, etc.)
+  which utilize **CVXPY** and **SciPy**.
 """
 
 import pandas as pd
@@ -29,20 +57,22 @@ logger = logging.getLogger(__name__)
 
 class PortfolioAllocator:
     """
-    High-level interface for Portfolio Allocation.
-    Selects and runs the appropriate optimization strategy based on config.
-
-    Usage:
-        allocator = PortfolioAllocator(method='mean_variance', risk_aversion=2.5)
-        weights = allocator.allocate(expected_returns, covariance_matrix)
+    Facade class for dynamically instantiating and executing portfolio optimizers.
+    
+    Implements the Strategy design pattern, allowing the client to select algorithms
+    at runtime via configuration strings.
     """
 
     def __init__(self, method: str = 'mean_variance', **kwargs):
         """
         Args:
-            method: Optimization method
-                    ('mean_variance', 'risk_parity', 'kelly', 'black_litterman')
-            **kwargs: Arguments passed to the specific optimizer constructor.
+            method (str): The optimization strategy identifier. Options:
+                - ``'mean_variance'``: Classical Markowitz Mean-Variance.
+                - ``'risk_parity'``: Equal Risk Contribution (ERC).
+                - ``'kelly'``: Kelly Criterion (Geometric Growth Maximization).
+                - ``'black_litterman'``: Bayesian view blending.
+            **kwargs: Keyword arguments passed directly to the optimizer's constructor
+                (e.g., `risk_aversion`, `target_risk`, `tau`).
         """
         self.method = method.lower()
         self.kwargs = kwargs
@@ -50,7 +80,7 @@ class PortfolioAllocator:
         logger.info(f"PortfolioAllocator initialized with method: {self.method}")
 
     def _get_optimizer(self, method: str, kwargs: Dict[str, Any]):
-        """Factory method to instantiate the specific optimizer."""
+        """Factory method: Instantiates the concrete optimization strategy class."""
         if method == 'mean_variance':
             return MeanVarianceOptimizer(
                 risk_aversion=kwargs.get('risk_aversion', 1.0)
@@ -77,7 +107,7 @@ class PortfolioAllocator:
             )
 
     def _equal_weight(self, tickers: List[str]) -> Dict[str, float]:
-        """Equal-weight fallback across all input tickers."""
+        """Maximum Entropy Fallback: Assigns $w_i = 1/N$ to all assets."""
         n = len(tickers)
         if n == 0:
             return {}
@@ -91,19 +121,20 @@ class PortfolioAllocator:
         **kwargs
     ) -> Dict[str, float]:
         """
-        Generate target portfolio weights using the selected strategy.
+        Executes the optimization strategy to generate target portfolio weights.
 
         Args:
-            expected_returns: Dictionary of expected returns (Alpha)
-            covariance_matrix: DataFrame of asset covariance
-            constraints: Dictionary of constraints (passed to optimizer where applicable)
-            **kwargs: Additional runtime arguments
-                      (e.g., market_caps for BL, risk_free_rate for Kelly)
+            expected_returns (Dict[str, float]): Expected returns vector ($\mu$).
+            covariance_matrix (pd.DataFrame): Asset covariance matrix ($\Sigma$).
+            constraints (Optional[Dict]): Optimization constraints (e.g., leverage limits).
+            **kwargs: Runtime parameters (e.g., `market_caps` for BL, `risk_free_rate` for Kelly).
 
         Returns:
-            Dict[str, float]: Target weights {ticker: weight}.
-            Always returns a fully-invested portfolio (sums to 1.0).
-            Falls back to Equal Weight if optimizer returns empty or raises.
+            Dict[str, float]: Normalized target weights where $\sum w_i = 1.0$.
+            
+        Note:
+            Automatically falls back to Equal Weight allocation if the underlying
+            optimizer fails or returns an empty set due to data misalignment.
         """
         tickers = list(expected_returns.keys())
 
@@ -150,10 +181,10 @@ class PortfolioAllocator:
             else:
                 return {}
 
-            # FIX BUG-AL-01: guard against empty optimizer result.
-            # Optimizers catch their own errors and return {} — without raising.
-            # An empty result here always indicates a failure mode (zero ticker
-            # overlap, degenerate inputs, etc.) so we substitute Equal Weight.
+            # Defensive Optimization: Check for solver failure / empty results.
+            # Underlying optimizers may return {} on convergence failure or data mismatch
+            # (e.g. zero intersection between returns and covariance).
+            # We treat this as a failure mode and degrade to Equal Weight (Max Entropy).
             if not result:
                 logger.warning(
                     f"{self.method} optimizer returned empty weights. "

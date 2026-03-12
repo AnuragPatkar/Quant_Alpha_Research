@@ -1,47 +1,52 @@
 """
-Risk Parity Portfolio Optimization
-Equal risk contribution from each asset.
+Risk Parity Portfolio Optimization Engine
+=========================================
+Convex optimization solver for Equal Risk Contribution (ERC) portfolio construction.
 
-BUGS FIXED:
-  BUG-RP-01 [CRITICAL]: SLSQP with sum-of-squared-deviations objective has a
-    mathematically provable zero-gradient trap when any asset is uncorrelated
-    with all others (block-diagonal covariance).
+Purpose
+-------
+The `RiskParityOptimizer` constructs portfolios where each asset contributes
+proportionally to the total portfolio risk, controlled by a risk budget vector $b$.
+Unlike Mean-Variance optimization, Risk Parity does not require expected return
+estimates ($\mu$), making it robust to estimation errors.
 
-    Root cause (mathematical):
-      risk_contrib_i = w_i * (Sigma @ w)_i / port_vol
+This implementation utilizes the **Spinu (2013)** convex formulation, which maps the
+classic non-convex Risk Parity problem into a strictly convex minimization problem
+using a log-barrier term. This guarantees a unique global optimum and avoids the
+numerical instability (zero-gradient traps) associated with standard SQP solvers
+on the marginal risk contribution metric.
 
-      For a block-diagonal asset A where Sigma[A,j]=0 for all j≠A:
-        (Sigma @ w)_A = Sigma[A,A] * w_A     (only the diagonal term survives)
-        risk_contrib_A = Sigma[A,A] * w_A^2 / port_vol
+Usage
+-----
+Intended for use via the `PortfolioAllocator` facade or standalone analysis.
 
-      At the boundary w_A = 0:
-        d(risk_contrib_A)/d(w_A) = 0          ← EXACT zero gradient
+.. code-block:: python
 
-      The squared-deviation objective (risk_contrib_A - target_A)^2 therefore
-      also has zero gradient w.r.t. w_A at the boundary. SLSQP — and any other
-      gradient-based method, including random restarts — CANNOT escape this trap;
-      the solver sees a perfectly flat surface and declares convergence at w_A=0.
+    # Standard Equal Risk Contribution (ERC)
+    optimizer = RiskParityOptimizer()
+    weights = optimizer.optimize(
+        covariance_matrix=cov_df,
+        tickers=['AAPL', 'MSFT', 'GOOG']
+    )
 
-    Fix: Replace SLSQP + squared-deviation with the Spinu (2013) log-barrier
-    formulation, which is STRICTLY CONVEX with a UNIQUE global minimum that is
-    guaranteed to be interior (all weights > 0):
+    # Custom Risk Budgets (e.g., higher risk tolerance for Tech)
+    optimizer = RiskParityOptimizer(target_risk={'AAPL': 0.4, 'MSFT': 0.4})
 
-      Objective:  f(y) = -sum_i[ b_i * log(y_i) ]  +  (1/2) * y^T Sigma y
-      Solver:     L-BFGS-B  (bounds enforce y_i > 0; analytic gradient provided)
-      Recovery:   w_i = y_i / sum(y)
+Importance
+----------
+-   **Convexity Guarantee**: The Spinu formulation transforms the problem into:
+    .. math::
+        \\min_{y} \\quad \\frac{1}{2} y^T \\Sigma y - \\sum_{i=1}^N b_i \\ln(y_i)
+    This strictly convex objective ensures reliable convergence even with block-diagonal
+    covariance matrices, where gradient-based methods (e.g., SLSQP) often encounter
+    zero-gradient traps at the boundary ($w_i=0$).
+-   **Numerical Stability**: Analytic gradients are supplied to the L-BFGS-B solver,
+    reducing iterations and improving precision to $10^{-10}$.
 
-    Properties:
-      - No boundary traps: log(y_i) → -inf forces y_i strictly > 0
-      - Strictly convex: single global optimum, zero local minima
-      - Works for any covariance structure, including block-diagonal
-      - Exact equal risk contributions (MRC_A == MRC_B == MRC_C confirmed)
-
-    Reference: Spinu, F. (2013). "An Algorithm for Computing Risk Parity Weights."
-               SSRN: https://ssrn.com/abstract=2297383
-
-  BUG-RP-02 [LOW]: Inverse-volatility fallback was only triggered on SLSQP
-    convergence failure, not on degenerate-weight solutions. Retained as a
-    last-resort safety net; with Spinu it is essentially unreachable.
+Tools & Frameworks
+------------------
+-   **SciPy (optimize)**: L-BFGS-B solver for bound-constrained minimization.
+-   **NumPy/Pandas**: Linear algebra operations and data alignment.
 """
 
 import numpy as np
@@ -52,44 +57,38 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_WEIGHT_FLOOR = 1e-8   # prune weights below this threshold after normalisation
+_WEIGHT_FLOOR = 1e-8  # Epsilon threshold to prune negligible weights post-normalization
 
 
 class RiskParityOptimizer:
     """
     Risk Parity Optimization using the Spinu (2013) log-barrier formulation.
 
-    Goal: Each asset contributes equally to portfolio risk.
+    Theoretical Foundation:
+    -----------------------
+    The problem of equating risk contributions:
+    .. math::
+        RC_i = w_i \\frac{(\\Sigma w)_i}{\\sqrt{w^T \\Sigma w}} = b_i
 
-        Risk Contribution_i = w_i * (Σw)_i / sqrt(w^T Σ w)  =  b_i  for all i
+    Is isomorphic to the strictly convex minimization problem in variable $y$ (where $w = y / \\sum y_i$):
+    .. math::
+        \\text{minimize} \\quad \\frac{1}{2} y^T \\Sigma y - \\sum_{i=1}^N b_i \\ln(y_i)
+        \\text{subject to} \\quad y > 0
 
-    Method: Solves the strictly-convex unconstrained problem
-        min_y  -sum_i[ b_i * log(y_i) ]  +  (1/2) * y^T Sigma y
-    then recovers weights as w = y / sum(y).
-
-    Unlike squared-deviation + SLSQP, the log-barrier objective has a provably
-    unique global minimum with all weights strictly positive — no boundary traps,
-    no local minima, no random restarts required.
-
-    Example:
-        optimizer = RiskParityOptimizer()
-        weights = optimizer.optimize(
-            covariance_matrix=cov_matrix,
-            tickers=['AAPL', 'MSFT', 'GOOGL']
-        )
+    This formulation guarantees a unique, strictly positive solution vector $y^*$.
     """
 
     def __init__(self, target_risk: Optional[Dict[str, float]] = None):
         """
+        Initializes the optimizer with specific risk budgets.
+
         Args:
-            target_risk: Optional target risk budget per ticker (unnormalised).
-                         If None, equal budgets (1/N) are used.
+            target_risk (Optional[Dict]): Target risk contribution per ticker (unnormalized).
+                If None, defaults to Equal Risk Contribution (ERC), i.e., $b_i = 1/N$.
         """
         self.target_risk = target_risk
 
-    # ------------------------------------------------------------------ #
-    # Public API                                                           #
-    # ------------------------------------------------------------------ #
+    # ==================== PUBLIC API ====================
 
     def optimize(
         self,
@@ -97,21 +96,21 @@ class RiskParityOptimizer:
         tickers: List[str],
     ) -> Dict[str, float]:
         """
-        Optimize for risk parity using the Spinu log-barrier method.
+        Executes the optimization routine to derive risk-balanced weights.
 
         Args:
-            covariance_matrix: Annualised covariance matrix (DataFrame).
-            tickers: List of asset tickers to include.
+            covariance_matrix (pd.DataFrame): Asset covariance matrix ($\Sigma$).
+            tickers (List[str]): Universe of assets to optimize.
 
         Returns:
-            Dictionary of {ticker: weight}.
+            Dict[str, float]: Normalized weight vector summing to 1.0.
         """
-        # ── 1. Safety: intersect with available data ──────────────────── #
+        # 1. Data Alignment: Intersect requested tickers with covariance data
         available_tickers = [t for t in tickers if t in covariance_matrix.index]
         if len(available_tickers) != len(tickers):
             missing = set(tickers) - set(available_tickers)
             logger.warning(
-                f"⚠️ Missing covariance data for: {missing}. "
+                f"⚠️ Missing covariance data for assets: {missing}. "
                 "Optimizing available assets only."
             )
 
@@ -121,28 +120,33 @@ class RiskParityOptimizer:
         n = len(available_tickers)
         Sigma = covariance_matrix.loc[available_tickers, available_tickers].values
 
-        # ── 2. Risk budgets ───────────────────────────────────────────── #
+        # 2. Risk Budget Construction
         if self.target_risk is None:
-            b = np.ones(n) / n                          # equal budgets
+            b = np.ones(n) / n  # Default: Equal Risk Contribution (ERC)
         else:
             b = np.array([self.target_risk.get(t, 1.0 / n) for t in available_tickers])
-            b = b / b.sum()                             # normalise
+            b = b / b.sum()  # Normalize budgets to sum to 1.0
 
-        # ── 3. Spinu (2013) log-barrier objective & analytic gradient ─── #
-        #
-        # FIX BUG-RP-01: strictly convex — guaranteed unique interior minimum
-        #
-        # f(y)  = -sum_i[ b_i * log(y_i) ]  +  (1/2) * y^T Sigma y
-        # f'(y) = -b / y  +  Sigma @ y       (element-wise / for first term)
+        # 3. Spinu (2013) Optimization
+        # Solver: L-BFGS-B (Bound-constrained Quasi-Newton)
+        # The log-barrier term naturally enforces y > 0, but explicit bounds aid stability.
 
         def _objective(y: np.ndarray) -> float:
+            """
+            Convex objective function.
+            .. math:: J(y) = \\frac{1}{2} y^T \\Sigma y - b^T \\ln(y)
+            """
             return -float(b @ np.log(y)) + 0.5 * float(y @ Sigma @ y)
 
         def _gradient(y: np.ndarray) -> np.ndarray:
+            """
+            Analytic gradient for L-BFGS-B.
+            .. math:: \\nabla J(y) = \\Sigma y - b \\oslash y
+            """
             return -b / y + Sigma @ y
 
-        y0 = np.ones(n) / n                            # any interior point
-        bounds = [(1e-8, None)] * n                    # enforce y_i > 0
+        y0 = np.ones(n) / n          # Initial guess (Centroid)
+        bounds = [(1e-8, None)] * n  # Bounds: y_i >= epsilon
 
         result = minimize(
             _objective,
@@ -153,25 +157,26 @@ class RiskParityOptimizer:
             options={'maxiter': 1000, 'ftol': 1e-15, 'gtol': 1e-10},
         )
 
-        # ── 4. Recover portfolio weights:  w = y / sum(y) ────────────── #
+        # 4. Weight Recovery: w = y / sum(y)
         if result.success and result.x is not None and result.x.sum() > 0:
             return self._pack_weights(result.x / result.x.sum(), available_tickers)
 
-        # ── 5. Fallback: Inverse-Volatility (BUG-RP-02: safety net) ──── #
+        # 5. Defensive Fallback: Inverse-Volatility
+        # Triggered only on numerical convergence failure.
         logger.warning(
             f"⚠️ Spinu optimisation did not converge ({result.message}). "
             "Using Inverse Volatility fallback."
         )
         return self._inverse_vol_fallback(Sigma, available_tickers)
 
-    # ------------------------------------------------------------------ #
-    # Private helpers                                                      #
-    # ------------------------------------------------------------------ #
+    # ==================== PRIVATE HELPERS ====================
 
     def _pack_weights(
         self, normalised_w: np.ndarray, tickers: List[str]
     ) -> Dict[str, float]:
-        """Prune sub-floor weights, re-normalise, and return as dict."""
+        """
+        Formatting utility: filters numerical noise and maps array to ticker dict.
+        """
         weight_dict = {
             tickers[i]: float(w)
             for i, w in enumerate(normalised_w)
@@ -180,13 +185,18 @@ class RiskParityOptimizer:
         total = sum(weight_dict.values())
         if total > 0:
             weight_dict = {k: v / total for k, v in weight_dict.items()}
+        
         logger.info(f"Risk parity optimised: {len(weight_dict)} positions")
         return weight_dict
 
     def _inverse_vol_fallback(
         self, Sigma: np.ndarray, tickers: List[str]
     ) -> Dict[str, float]:
-        """Inverse-volatility weights — robust closed-form fallback."""
+        """
+        Heuristic Fallback: Weights proportional to inverse standard deviation.
+        .. math:: w_i \\propto \\frac{1}{\\sigma_i}
+        Used when the primary solver fails to converge.
+        """
         variances = np.diag(Sigma)
         volatilities = np.sqrt(np.maximum(variances, 1e-8))
         inv_vol = 1.0 / volatilities

@@ -1,21 +1,42 @@
 """
-Kelly Criterion Position Sizing - Production Grade
-Optimal bet size for maximum geometric growth, incorporating covariance.
+Kelly Criterion Portfolio Optimization
+======================================
+Derives optimal position sizes to maximize the geometric growth rate of capital
+(Log-Utility Maximization).
 
-BUGS FIXED:
-  BUG-KC-01 [HIGH]: When all excess returns are negative (e.g. rf=0.99), the
-    CVXPY solver correctly sets all weights to zero (the long-only constraint
-    w >= 0 and leverage cap cp.sum(w) <= max_leverage admit the trivial solution
-    w=0 as optimal). The result_dict ends up empty, calculate_portfolio returns
-    {} rather than a valid portfolio, and the allocator fallback is never reached
-    because no exception is raised — just a silent empty dict.
+Purpose
+-------
+The `KellyCriterion` module implements a covariance-aware formulation of the
+Kelly Criterion. Unlike the simple "Edge/Odds" formula, this implementation
+solves a Quadratic Program (QP) to handle correlation structure between assets.
+It effectively maps to a Mean-Variance optimization problem where the risk
+aversion coefficient $\lambda$ is the reciprocal of the Kelly fraction.
 
-    Fix: After solver or heuristic completes, check whether the sum of all
-    optimal weights is below a minimum threshold (1e-6). If so, fall back to
-    Equal Weight explicitly and log a warning. This is financially correct:
-    when Kelly says "hold no risky assets" and a long-only constraint is in
-    force, the only valid fully-invested response is to hold equal weight
-    (100% cash surrogate if available, or equal weight across assets).
+Usage
+-----
+Intended for use within the `PortfolioAllocator` or standalone analysis.
+
+.. code-block:: python
+
+    kc = KellyCriterion(fraction=0.5, max_leverage=1.5)
+    weights = kc.calculate_portfolio(
+        expected_returns={'AAPL': 0.12, 'GOOG': 0.15},
+        covariance_matrix=cov_df,
+        risk_free_rate=0.04
+    )
+
+Importance
+----------
+-   **Growth Optimality**: Asymptotically maximizes wealth over infinite trials ($g^*$).
+-   **Risk Control**: "Fractional Kelly" ($f < 1.0$) is implemented to mitigate
+    the extreme volatility and drawdown risks associated with "Full Kelly".
+-   **Edge Case Resilience**: Includes defensive fallbacks for non-positive
+    excess return regimes (where the theoretical Kelly weight is zero).
+
+Tools & Frameworks
+------------------
+-   **CVXPY**: Solves the constrained Quadratic Program (QP) for portfolio weights.
+-   **NumPy/Pandas**: Linear algebra for the heuristic fallback and data alignment.
 """
 
 import numpy as np
@@ -31,13 +52,21 @@ class KellyCriterion:
     """
     Multi-Asset Kelly Criterion Position Sizing.
 
-    Mathematically equivalent to maximizing the geometric growth rate:
-    Maximize: r - 0.5 * σ^2
+    Theoretical Foundation:
+    -----------------------
+    Maximizes the expected geometric growth rate $g$. By Taylor expansion of the
+    expected log-utility function $E[\ln(1 + r)]$:
+    
+    .. math::
+        g \approx r - \frac{1}{2}\sigma^2
 
-    This can be solved as a Quadratic Program (Mean-Variance) with:
-    Risk Aversion (λ) = 1 / Fraction
+    In a multi-asset context with correlations, this is equivalent to Mean-Variance
+    optimization with specific risk aversion:
+    
+    .. math::
+        \text{maximize} \quad w^T (\mu - r_f) - \frac{1}{2} \lambda w^T \Sigma w
 
-    Note: Fractional Kelly (e.g., 0.5) is strongly recommended.
+    Where the risk aversion coefficient $\lambda = \frac{1}{\text{fraction}}$.
     """
 
     def __init__(
@@ -48,9 +77,10 @@ class KellyCriterion:
     ):
         """
         Args:
-            fraction: Fraction of Kelly to use (0.25–0.5 recommended)
-            max_leverage: Maximum total portfolio leverage
-            use_solver: Use CVXPY solver (True) or numpy heuristic (False)
+            fraction (float): Kelly multiplier $f$ (Recommended: $0.25 \le f \le 0.5$).
+            max_leverage (float): Gross leverage limit constraint ($\sum w_i \le L$).
+            use_solver (bool): If True, uses CVXPY (Quadratic Programming). 
+                               If False, uses unconstrained closed-form solution.
         """
         if fraction <= 0:
             raise ValueError("Kelly fraction must be > 0. Recommended range: 0.1 to 1.0")
@@ -64,7 +94,8 @@ class KellyCriterion:
         self,
         expected_returns: Dict[str, float],
         covariance_matrix: pd.DataFrame
-    ) -> Tuple[List[str], np.ndarray, np.ndarray, int]:
+    ) -> Tuple[List[str], np.ndarray, np.ndarray, int]: 
+        """Aligns input data to the intersection of tickers in returns and covariance."""
 
         available_tickers = set(covariance_matrix.index) & set(covariance_matrix.columns)
         tickers = list(expected_returns.keys())
@@ -80,7 +111,7 @@ class KellyCriterion:
         return valid_tickers, mu, Sigma, n
 
     def _equal_weight_fallback(self, tickers: List[str]) -> Dict[str, float]:
-        """Equal-weight fallback when Kelly fractions are all non-positive."""
+        """Maximum Entropy Fallback: Used when the theoretical optimal allocation is zero/cash."""
         n = len(tickers)
         logger.warning(
             "⚠️ All Kelly fractions are zero or negative (all excess returns ≤ 0). "
@@ -95,15 +126,15 @@ class KellyCriterion:
         risk_free_rate: float = 0.04
     ) -> Dict[str, float]:
         """
-        Calculates the covariance-aware optimal Kelly allocation.
+        Calculates the covariance-aware optimal Kelly allocation vector.
 
         Args:
-            expected_returns: Dict of expected annualized returns
-            covariance_matrix: Annualized covariance matrix (preferably shrunk)
-            risk_free_rate: Annualized risk-free rate
+            expected_returns (Dict): Expected annualized returns vector $\mu$.
+            covariance_matrix (DataFrame): Annualized covariance matrix $\Sigma$.
+            risk_free_rate (float): Annualized risk-free rate $r_f$.
 
         Returns:
-            Dict of position weights. Always fully invested (sums to 1.0).
+            Dict[str, float]: Position weights. Always fully invested (sums to 1.0).
         """
         try:
             tickers, mu, Sigma, n = self._prepare_data(expected_returns, covariance_matrix)
@@ -115,7 +146,7 @@ class KellyCriterion:
 
         try:
             if self.use_solver:
-                # --- SOLVER APPROACH (Production Grade) ---
+                # --- Quadratic Programming Formulation ---
                 w = cp.Variable(n)
                 risk_aversion = 1.0 / self.fraction
 
@@ -136,26 +167,29 @@ class KellyCriterion:
                 optimal_weights = w.value
 
             else:
-                # --- HEURISTIC APPROACH (Legacy/Fallback) ---
+                # --- Heuristic (Unconstrained Closed-Form) ---
+                # w* = f * Sigma^-1 * (mu - rf)
                 inv_sigma = np.linalg.pinv(Sigma)
                 full_kelly = inv_sigma @ excess_returns
                 optimal_weights = full_kelly * self.fraction
                 optimal_weights = np.maximum(optimal_weights, 0.0)
+                
+                # Apply leverage cap scaling
                 total_lev = np.sum(optimal_weights)
                 if total_lev > self.max_leverage:
                     optimal_weights = optimal_weights * (self.max_leverage / total_lev)
 
-            # ── FIX BUG-KC-01: guard against all-zero solution ────────────── #
-            # When all excess returns are negative, the QP optimal is w=0
-            # (the trivial feasible point). This is mathematically correct for
-            # an unconstrained leveraged account (hold cash), but for a
-            # fully-invested long-only mandate we must return a valid portfolio.
+            # Trivial Solution Guard:
+            # When all excess returns are negative ($\mu < r_f$), the optimal QP solution 
+            # is the zero vector $w=0$ (holding 100% cash).
+            # For a fully-invested long-only mandate, this is invalid. We fallback 
+            # to Equal Weight to maintain market exposure if cash is not an option.
             total_invested = float(np.sum(np.maximum(optimal_weights, 0.0)))
             if total_invested < 1e-6:
                 return self._equal_weight_fallback(tickers)
 
-            # Build weight dict — NOTE: no renormalization per Kelly theory.
-            # If sum(w) < 1 the remainder is implicitly held as cash.
+            # Build weight dict.
+            # Note: Kelly weights are absolute. If sum(w) < 1, remainder is cash.
             weight_dict = {
                 tickers[i]: round(float(w), 8)
                 for i, w in enumerate(optimal_weights)

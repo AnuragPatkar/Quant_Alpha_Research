@@ -1,41 +1,47 @@
 """
-Black-Litterman Optimization Model - Production Grade
-Blends market equilibrium returns with ML-based Alpha views.
+Black-Litterman Portfolio Optimization Framework
+================================================
+Bayesian portfolio construction blending market equilibrium assumptions with
+proprietary alpha views.
 
-BUGS FIXED:
-  BUG-BL-01 [HIGH]: tau parameter had no observable effect on portfolio weights.
+Purpose
+-------
+The `BlackLittermanModel` refines the Mean-Variance Optimization (MVO) framework by
+addressing its sensitivity to input estimates. Instead of optimizing directly on raw
+predictions, it calculates a posterior distribution of expected returns by combining:
+1.  **The Prior**: Market Equilibrium Returns ($\Pi$) derived from the Capital Asset
+    Pricing Model (CAPM).
+2.  **The Likelihood**: Investor Views ($Q$) with associated confidence matrices ($\Omega$).
 
-    Root cause:
-      BlackLittermanModel.optimize() calls self.mvo.optimize(...) without passing
-      any constraints, so MeanVarianceOptimizer._resolve_max_weight() receives
-      constraints=None and defaults to max_weight=1.0 (since the BUG-MV-02 fix).
+Usage
+-----
+Intended for generating robust return vectors for downstream Mean-Variance optimization.
 
-      Wait — actually the issue is the opposite. Looking at the test output:
-        tau=0.001 → [0.600, 0.092, 0.308]
-        tau=5.000 → [0.594, 0.093, 0.314]
-        max diff  = 0.006  (within atol=0.02)
+.. code-block:: python
 
-      The tau effect on posterior_er IS significant (max diff ~0.07 on returns)
-      but the MVO maps these to weights via a risk-aversion-scaled quadratic
-      program that naturally compresses return differences. The compression
-      happens because MVO is parametrised by risk_aversion=2.5 (the BL delta),
-      and on a 3-asset universe with small differences in posterior returns, the
-      optimizer converges to similar market-cap-like weights regardless of tau.
+    bl = BlackLittermanModel(tau=0.05, risk_aversion=2.5)
+    
+    # Generate posterior estimates
+    weights = bl.optimize(
+        ml_predictions=alpha_signals,
+        covariance_matrix=risk_model,
+        market_caps=caps
+    )
 
-    Fix (two-part):
+Importance
+----------
+-   **Estimation Error Mitigation**: Shrinks ML predictions towards the market consensus
+    where signal confidence is low, reducing "extremal" weights common in standard MVO.
+-   **Intuitive Priors**: Ensures that in the absence of views, the portfolio defaults
+    to the market portfolio (CAPM), guaranteeing a sensible baseline.
+-   **Bayesian Updating**: Formally incorporates the precision of alpha signals ($\Omega$)
+    into the portfolio construction process.
 
-      Part 1 — optimizer side (this file):
-        Pass constraints={'max_weight': 1.0} explicitly to mvo.optimize() so
-        that the optimizer is genuinely unconstrained and can fully express the
-        tau sensitivity. Without this, any future re-introduction of a default
-        cap in MeanVarianceOptimizer would again mask the BL model's tau signal.
-
-      Part 2 — test side (test_optimization.py):
-        Use tau=0.001 vs tau=50.0 (a 50,000× range) instead of 0.001 vs 5.0.
-        At tau=50.0 the prior is nearly ignored and views fully dominate,
-        while at tau=0.001 the prior dominates completely. This produces a
-        max weight diff of ~0.065 which comfortably exceeds atol=0.05.
-        See test_optimization.py for the corrected assertion.
+Tools & Frameworks
+------------------
+-   **NumPy**: Linear algebra operations for matrix inversion and posterior derivation.
+-   **Pandas**: Data alignment for tickers and time-series.
+-   **MeanVarianceOptimizer**: Solves the final quadratic program using the posterior inputs.
 """
 
 import numpy as np
@@ -49,16 +55,21 @@ logger = logging.getLogger(__name__)
 
 class BlackLittermanModel:
     """
-    Black-Litterman Model for Portfolio Optimization.
+    Implementation of the Black-Litterman asset allocation model.
 
-    Mathematical Formulation:
-    1. Implied Returns (Prior):
-       Pi = delta * Sigma * w_mkt
+    Theoretical Foundation:
+    -----------------------
+    The model treats expected returns as a random variable distributed as:
+    .. math::
+        E[R] \sim N(\Pi, \tau \Sigma)
 
-    2. Posterior Distribution N(E[R], Sigma_post):
-       Updates both Expected Returns and Covariance based on View Confidence.
-       tau controls the uncertainty in the prior — small tau = tight prior
-       (market equilibrium dominates), large tau = loose prior (views dominate).
+    Views are expressed as:
+    .. math::
+        P \cdot E[R] = Q + \epsilon, \quad \epsilon \sim N(0, \Omega)
+
+    The posterior distribution is derived via Bayesian updating:
+    .. math::
+        E[R]_{post} = [(\tau \Sigma)^{-1} + P^T \Omega^{-1} P]^{-1} [(\tau \Sigma)^{-1} \Pi + P^T \Omega^{-1} Q]
     """
 
     def __init__(
@@ -68,10 +79,10 @@ class BlackLittermanModel:
     ):
         """
         Args:
-            tau: Scalar indicating uncertainty of the prior (market equilibrium).
-                 Small tau (≈0.01): prior dominates, views are discounted.
-                 Large tau (≈1.0+): views dominate, prior is ignored.
-            risk_aversion: Market risk aversion parameter (delta).
+            tau (float): Scalar indicating uncertainty of the prior (market equilibrium).
+                 - Small $\tau$ ($\approx 0.01$): Prior dominates, views are discounted.
+                 - Large $\tau$ ($\approx 1.0+$): Views dominate (Diffuse Prior).
+            risk_aversion (float): Market risk aversion coefficient ($\delta$).
         """
         self.tau = tau
         self.risk_aversion = risk_aversion
@@ -84,8 +95,11 @@ class BlackLittermanModel:
         market_caps: Dict[str, float]
     ) -> pd.Series:
         """
-        Calculates the Market Implied Returns (Pi) based on current market-cap weights.
-        Pi = delta * Sigma * w_mkt
+        Calculates the Market Implied Returns ($\Pi$) via Reverse Optimization.
+        
+        Math:
+        .. math::
+            \Pi = \delta \Sigma w_{mkt}
         """
         tickers = list(covariance_matrix.columns)
 
@@ -123,10 +137,13 @@ class BlackLittermanModel:
         """
         Converts ML Alpha predictions into Black-Litterman view matrices.
 
+        Constructs:
+        - **P**: Pick matrix ($K \times N$) mapping views to assets.
+        - **Q**: View vector ($K \times 1$) containing expected returns.
+        - **Omega**: Uncertainty matrix ($K \times K$), diagonalized by confidence.
+
         Returns:
-            P: Pick matrix (K x N)
-            Q: View vector (K,)
-            Omega: Diagonal uncertainty matrix (K x K)
+            Tuple[np.ndarray, np.ndarray, np.ndarray]: (P, Q, Omega)
         """
         n = len(tickers)
 
@@ -165,11 +182,13 @@ class BlackLittermanModel:
         Omega: np.ndarray
     ) -> Tuple[pd.Series, pd.DataFrame]:
         """
-        Calculates Posterior Expected Returns AND Covariance.
+        Computes the Bayesian Posterior distribution.
 
-        M     = (tau*Sigma)^{-1} + P^T Omega^{-1} P
-        E[R]  = M^{-1} [ (tau*Sigma)^{-1} Pi + P^T Omega^{-1} Q ]
-        Sigma_post = Sigma + M^{-1}
+        Math:
+        .. math::
+            M = (\tau \Sigma)^{-1} + P^T \Omega^{-1} P
+            E[R]_{post} = M^{-1} [ (\tau \Sigma)^{-1} \Pi + P^T \Omega^{-1} Q ]
+            \Sigma_{post} = \Sigma + M^{-1}
         """
         tickers = pi.index
         Sigma = covariance_matrix.loc[tickers, tickers].values
@@ -211,15 +230,11 @@ class BlackLittermanModel:
         """
         End-to-end Black-Litterman optimization.
 
-        Steps:
-          1. Compute market-implied returns (prior anchor).
-          2. Formulate views from ML predictions.
-          3. Bayesian update → posterior returns + covariance.
-          4. Feed into MeanVarianceOptimizer.
-
-        FIX BUG-BL-01: pass constraints with max_weight=1.0 by default so the
-        MVO is unconstrained and tau sensitivity is fully expressed in weights.
-        Caller-supplied constraints override this default.
+        Workflow:
+          1. Compute Market-Implied Returns ($\Pi$) as the Prior.
+          2. Transform ML predictions into Views ($Q$) and Uncertainty ($\Omega$).
+          3. Perform Bayesian Update to derive Posterior $E[R]$.
+          4. Execute Mean-Variance Optimization using Posterior Return vector.
         """
         tickers = list(covariance_matrix.columns)
 
@@ -234,35 +249,24 @@ class BlackLittermanModel:
             pi, covariance_matrix, P, Q, Omega
         )
 
-        # 4. Mean-Variance Optimization on posterior estimates
+        # Optimization Strategy:
+        # We utilize the Posterior Expected Returns ($E[R]_{post}$) as the signal vector,
+        # but retain the Prior Covariance ($\Sigma$) as the risk model.
         #
-        # FIX BUG-BL-02: use PRIOR covariance_matrix (not post_covariance) for MVO.
-        #
-        # Root cause of tau insensitivity:
-        #   Sigma_post = Sigma + M^{-1}
-        #   At large tau, M^{-1} is large → Sigma_post >> Sigma.
-        #   MVO divides by Sigma_post via Sigma_post^{-1}, making it ultra-conservative
-        #   and compressing ALL weight differences to near-zero regardless of tau.
-        #   The actual test showed max_diff=0.0145 even with tau=0.001 vs 50.0.
-        #
-        # Standard BL practice (He & Litterman 1999, Idzorek 2005):
-        #   Use posterior returns E[R] as the signal, but use the PRIOR covariance Sigma
-        #   as the risk model for portfolio construction. Sigma_post captures the
-        #   uncertainty in our *estimate* of expected returns (epistemic uncertainty),
-        #   not the uncertainty in asset returns themselves (aleatoric uncertainty).
-        #   Mixing them inflates the risk model and destroys the tau signal.
-        #
-        # With this fix: tau=0.001 vs 50.0 produces max_weight_diff ≈ 0.065 (>> 0.05).
-        #
-        # FIX BUG-BL-01 (retained): default to max_weight=1.0 so unconstrained MVO
-        # can fully express the posterior return difference in weights.
+        # Rationale:
+        # The Posterior Covariance ($\Sigma_{post} = \Sigma + M^{-1}$) incorporates
+        # 'Epistemic Uncertainty' (uncertainty in the estimate of the mean).
+        # Including this in the MVO risk model often results in overly conservative
+        # portfolios that dampen the signal strength of the views ($\tau$ sensitivity).
+        # Standard practitioner approaches (e.g., Idzorek) recommend optimizing
+        # on ($E[R]_{post}$, $\Sigma_{prior}$).
         effective_constraints = constraints if constraints is not None else {"max_weight": 1.0}
 
         logger.info(
             "Feeding Black-Litterman posterior returns + prior covariance "
             "into Mean-Variance Optimizer."
         )
-        # Use post_returns (BL-adjusted) with covariance_matrix (prior Sigma)
+        # Execute MVO with Posterior Returns and Prior Covariance
         return self.mvo.optimize(
             post_returns.to_dict(), covariance_matrix, effective_constraints
         )
