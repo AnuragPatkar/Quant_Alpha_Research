@@ -1,6 +1,47 @@
 """
-Risk Manager (Finalized Version)
-Portfolio risk controls, sector constraints, and liquidity-adjusted limits.
+Risk Management System
+======================
+Enforces portfolio construction constraints and risk limits.
+
+Purpose
+-------
+The `RiskManager` serves as the final gatekeeper in the portfolio construction
+process. It applies a hierarchical set of constraints—ranging from hard regulatory
+limits (concentration, leverage) to soft liquidity checks (ADV participation).
+Unlike optimization-based approaches (e.g., quadratic programming), this module uses
+a greedy, heuristic waterfall ($O(N)$) to ensure robust and deterministic behavior
+during market stress.
+
+Usage
+-----
+.. code-block:: python
+
+    risk_manager = RiskManager(
+        position_limit=0.05,        # 5% max per ticker
+        leverage_limit=1.0,         # 100% gross exposure
+        max_adv_participation=0.02  # Max 2% of daily volume
+    )
+
+    safe_weights = risk_manager.apply_constraints(
+        target_weights=raw_signals,
+        portfolio_value=1_000_000,
+        adv_map={"AAPL": 50_000_000},
+        price_map={"AAPL": 150.0},
+        current_volatility=0.25
+    )
+
+Importance
+----------
+- **Tail Risk Mitigation**: Prevents single-name blowups via strict concentration caps.
+- **Liquidity Management**: Ensures position sizes are realistic relative to market
+  depth ($Position_{\$} \le \alpha \times ADV_{\$}$), preventing high market impact costs.
+- **Regime Adaptation**: Dynamically de-leverages the portfolio when realized volatility
+  exceeds target thresholds ($\sigma_{realized} > \sigma_{target}$).
+
+Tools & Frameworks
+------------------
+- **Pandas/NumPy**: Used for efficient vector aggregation and logic masking.
+- **Collections (defaultdict)**: Optimized grouping for sector-level aggregation.
 """
 
 import pandas as pd
@@ -13,21 +54,23 @@ logger = logging.getLogger(__name__)
 
 class RiskManager:
     """
-    Portfolio risk management system.
-    Enforces Position, Leverage, Sector, and Liquidity limits.
+    Orchestrates constraint application for equity portfolios.
+
+    Implements a multi-stage filter pipeline to transform raw signal weights
+    into execution-ready, compliant portfolio weights.
     """
     
     def __init__(
         self,
-        position_limit: float = 0.05,        # Max 5% per stock
-        leverage_limit: float = 1.0,         # Max 100% total exposure
-        max_positions: Optional[int] = None, # Max count of holdings
-        min_position_size: float = 0.001,    # Minimum tradeable size (0.1%)
-        sector_limit: float = 0.30,          # Max 30% per sector
-        max_adv_participation: float = 0.10, # Max 10% of Daily Volume
+        position_limit: float = 0.05,        # Single-name concentration cap (5%)
+        leverage_limit: float = 1.0,         # Gross exposure limit (100%)
+        max_positions: Optional[int] = None, # Hard cardinality constraint
+        min_position_size: float = 0.001,    # Minimum tradeable threshold (0.1%)
+        sector_limit: float = 0.30,          # GICS Sector exposure cap (30%)
+        max_adv_participation: float = 0.10, # Liquidity constraint (10% of ADV)
         enable_sector_limits: bool = False,
-        target_volatility: float = 0.20,     # NEW: Target 20% Annual Volatility
-        max_drawdown_limit: float = 0.20     # NEW: Max Drawdown Limit
+        target_volatility: float = 0.20,     # Annualized Volatility Target (20%)
+        max_drawdown_limit: float = 0.20     # Peak-to-Trough Decline Limit
     ):
         self.position_limit = position_limit
         self.leverage_limit = leverage_limit
@@ -50,72 +93,82 @@ class RiskManager:
         adv_map: Optional[Dict[str, float]] = None,
         sector_map: Optional[Dict[str, str]] = None,
         price_map: Optional[Dict[str, float]] = None,
-        current_volatility: Optional[float] = None # NEW: Input for Vol Targeting
+        current_volatility: Optional[float] = None # Realized volatility for regime checks
     ) -> Dict[str, float]:
         """
-        Filters and scales weights to meet all risk criteria.
+        Transforms target weights to comply with all active constraints.
+        
+        Algorithm:
+        1. Clip individual weights to `position_limit`.
+        2. Cap weights based on Average Daily Volume (ADV) liquidity.
+        3. Truncate tail to enforce `max_positions`.
+        4. Normalize sector exposures to `sector_limit`.
+        5. Scale gross exposure if `current_volatility` > `target_volatility`.
+        6. Global leverage normalization.
         """
         self.violations = [] # Reset violations for this run
         
         if not target_weights: return {}
         
-        # 1. Position Limits (Individual Cap)
+        # 1. Single-Name Constraint (Hard Cap)
+        # $w_i = \min(w_i, L_{pos})$
         constrained = {t: min(w, self.position_limit) for t, w in target_weights.items()}
         
-        # 2. Liquidity Cap (ADV Limit)
-        # Prevents taking a position that would take too long to exit
+        # 2. Liquidity Constraint (ADV Participation)
+        # Ensures exit capability: $Pos_{\$} \le \gamma \times ADV_{\$}$
         if adv_map and price_map:
             constrained = self._apply_liquidity_limits(constrained, portfolio_value, adv_map, price_map)
 
-        # 3. Max Positions Count
+        # 3. Cardinality Constraint
         if self.max_positions:
             constrained = self._apply_max_positions(constrained)
 
-        # 4. Sector Exposure
+        # 4. Sector Risk Control
         if self.enable_sector_limits and sector_map:
             constrained = self._apply_sector_limits(constrained, sector_map)
 
         # 5. Volatility Targeting (Dynamic De-leverage)
-        # Agar market volatility target se zyada hai, to exposure kam karo
+        # Regime-Conditional Scaling: $\sigma_{realized} > \sigma_{target} \implies L_{new} = L_{old} \times \frac{\sigma_{target}}{\sigma_{realized}}$
         if current_volatility and current_volatility > self.target_volatility:
             vol_scalar = self.target_volatility / current_volatility
-            # Cap scalar at 1.0 (Hum leverage badhayenge nahi, sirf ghatayenge)
+            # Asymmetric Scaling: Only de-leverage during high vol; do not re-leverage in low vol.
             vol_scalar = min(vol_scalar, 1.0)
             constrained = {t: w * vol_scalar for t, w in constrained.items()}
 
-        # 6. Global Leverage Scaling
+        # 6. Global Gross Leverage Normalization
         constrained = self._apply_leverage_limit(constrained)
         
-        # 6b. Final Sector Check (Prevent Leakage from Scaling)
+        # 6b. Re-verify Sector Constraints (Prevent drift from scaling)
         if self.enable_sector_limits and sector_map:
             constrained = self._apply_sector_limits(constrained, sector_map)
         
-        # 7. HHI Concentration Monitor
-        # Warn if portfolio is effectively holding < 5 stocks
+        # 7. Herfindahl-Hirschman Index (HHI) Check
+        # Monitoring effective breadth ($N_{eff}$) to detect over-concentration.
         if self.check_concentration(constrained):
             self.violations.append(('concentration', 'portfolio', 0.0, 0.0))
-            # Note: We log violation but don't block trade to avoid stuck positions, 
-            # but this flag can be used by Engine to halt new entries.
+            # Note: Violation logged for audit; soft constraint does not block execution.
 
-        # 8. Final cleanup (Remove dust)
+        # 8. Clean up micro-positions (Dust Pruning)
         return self._remove_tiny_positions(constrained)
 
     def _apply_liquidity_limits(self, weights, p_value, adv_map, price_map):
-        """Caps position weight based on its dollar-liquidity."""
+        """
+        Caps position weight to a fraction of daily dollar volume.
+        Constraint: $w_i \times V_{port} \le Limit_{adv} \times P_i \times Vol_i$
+        """
         constrained = weights.copy()
         for t, w in weights.items():
-            # Default to 0 if data missing, which forces weight to 0 (Safe)
+            # Zero-weight policy for missing data to ensure conservative execution.
             adv = adv_map.get(t, 0)
             price = price_map.get(t, 0)
             stock_adv_usd = adv * price
             
             if stock_adv_usd <= 0:
-                # Fix: Treat missing volume as illiquid -> Force exit
+                # Asset is effectively illiquid or data is stale; force exit.
                 constrained[t] = 0.0
                 self.violations.append(('liquidity_missing', t, w, 0.0))
                 continue
             
-            # Max $ position = X% of Daily $ Volume
             max_pos_usd = stock_adv_usd * self.max_adv_participation
             max_weight_liq = max_pos_usd / p_value if p_value > 0 else 0
             
@@ -126,6 +179,7 @@ class RiskManager:
         return constrained
 
     def _apply_leverage_limit(self, weights: Dict[str, float]) -> Dict[str, float]:
+        """Scales weights pro-rata if sum exceeds leverage limit."""
         total = sum(weights.values())
         if total <= self.leverage_limit + 1e-6: return weights
         
@@ -133,18 +187,19 @@ class RiskManager:
         return {t: w * scale for t, w in weights.items()}
 
     def _apply_max_positions(self, weights: Dict[str, float]) -> Dict[str, float]:
+        """Enforces cardinality constraint by retaining Top-N largest weights."""
         if len(weights) <= self.max_positions: return weights
-        # Keep top N
         sorted_items = sorted(weights.items(), key=lambda x: x[1], reverse=True)
         return dict(sorted_items[:self.max_positions])
 
     def _apply_sector_limits(self, weights, sector_map):
+        """Groups exposures by sector and scales down violations pro-rata."""
         sector_totals = defaultdict(float)
         for t, w in weights.items():
             s = sector_map.get(t, 'Other')
             sector_totals[s] += w
             
-        # Data Hygiene: Warn if unclassified exposure is high
+        # Data Integrity Check: Monitor residual 'Other' exposure.
         if 'Other' in sector_totals and sector_totals['Other'] > 0.10 and not self._warned_other_sector:
             logger.warning(f"⚠️ High unclassified sector exposure: {sector_totals['Other']:.1%}. Check data quality. (Logged once)")
             self._warned_other_sector = True
@@ -166,18 +221,28 @@ class RiskManager:
         return constrained
         
     def check_concentration(self, weights: Dict[str, float]) -> bool:
-        """Returns True if portfolio is too concentrated (HHI check)."""
+        """
+        Returns True if portfolio breadth ($N_{eff}$) is critically low.
+        Uses Herfindahl-Hirschman Index (HHI) inverse.
+        """
         metrics = self.get_concentration_metrics(weights)
-        # If effective N < 5, it's too risky
+        # Threshold: Effective breadth < 5 stocks indicates extreme idiosyncratic risk.
         if metrics['effective_n'] < 5 and len(weights) > 5:
             return True
         return False
 
     def _remove_tiny_positions(self, weights):
+        """Prunes sub-threshold positions to minimize operational overhead (Dust cleanup)."""
         return {t: w for t, w in weights.items() if w >= self.min_position_size}
 
     def get_concentration_metrics(self, weights: Dict[str, float]) -> Dict:
-        """HHI calculation: Higher = More concentrated (Risky)"""
+        """
+        Calculates concentration metrics.
+        
+        Formula:
+        $HHI = \sum_{i} w_i^2$ (Normalized weights)
+        $N_{eff} = 1 / HHI$
+        """
         if not weights: return {'hhi': 0, 'effective_n': 0}
         total_w = sum(weights.values())
         if total_w == 0: return {'hhi': 0, 'effective_n': 0}
@@ -186,5 +251,5 @@ class RiskManager:
         hhi = sum(w**2 for w in normalized_w)
         return {
             'hhi': hhi,
-            'effective_n': 1/hhi if hhi > 0 else 0 # How many stocks it 'feels' like you own
+            'effective_n': 1/hhi if hhi > 0 else 0
         }

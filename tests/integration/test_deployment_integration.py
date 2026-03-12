@@ -11,6 +11,10 @@ import numpy as np
 from pathlib import Path
 import sys
 import joblib
+import warnings
+
+# Suppress PyArrow extension warnings
+warnings.filterwarnings("ignore", message=".*pyarrow.*")
 
 # Setup paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

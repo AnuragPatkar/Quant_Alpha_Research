@@ -103,7 +103,7 @@ class TestValidationIntegration:
         if master_data.empty:
             pytest.skip("Master data is empty, skipping integration test.")
 
-        validator = FactorValidator(master_data, target_col="raw_ret_5d")
+        validator = FactorValidator(master_data.reset_index(), target_col="raw_ret_5d")
 
         # Relaxed assertion: ensure at least some factors are found
         assert len(validator.factors) > 0, "Expected to identify factors from real data."
@@ -125,7 +125,7 @@ class TestValidationIntegration:
         if master_data.empty:
             pytest.skip("Master data is empty, skipping integration test.")
 
-        validator = FactorValidator(master_data, target_col="raw_ret_5d")
+        validator = FactorValidator(master_data.reset_index(), target_col="raw_ret_5d")
         
         if not validator.factors:
             pytest.skip("No factors found in master data.")

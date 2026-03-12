@@ -26,6 +26,7 @@ import concurrent.futures
 import argparse
 import logging
 from pathlib import Path
+from typing import Callable
 
 import yfinance as yf
 import pandas as pd
@@ -411,7 +412,7 @@ def validate_all(force: bool = False) -> None:
 # =========================================================
 # MAIN
 # =========================================================
-STEPS: dict[str, callable] = {
+STEPS: dict[str, Callable] = {
     "prices":       download_prices,
     "fundamentals": download_fundamentals,
     "earnings":     download_earnings,

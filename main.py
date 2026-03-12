@@ -49,6 +49,7 @@ Commands:
     hyperopt    : Runs Bayesian Optimization for hyperparameter tuning.
     deploy      : Manages model artifacts (Archival, Pruning, Health Checks).
     test        : Executes the automated test suite (Unit & Integration).
+    typecheck   : Runs static type checking (mypy) using mypy.ini config.
     clean       : Purges temporary artifacts and caches.
 
 Examples:
@@ -76,6 +77,9 @@ Examples:
 
     # Run the full unit and integration test suite
     $ python main.py test
+
+    # Run static type checking to catch bugs
+    $ python main.py typecheck
 """
 
 import os
@@ -254,6 +258,28 @@ def handle_test(args):
         logger.error(f"❌ Tests failed (Exit Code: {e.returncode})")
         sys.exit(e.returncode)
 
+def handle_typecheck(args):
+    """
+    Executes static type checking via Mypy.
+    """
+    logger = logging.getLogger("TypeCheck")
+
+    # Pre-flight check: ensure mypy is installed
+    try:
+        import mypy
+    except ImportError:
+        logger.error("❌ 'mypy' is not installed. Run: pip install -e .[dev]")
+        sys.exit(1)
+
+    logger.info("🔍 Running Static Type Checking (mypy)...")
+    try:
+        cmd = [sys.executable, "-m", "mypy", "."]
+        subprocess.run(cmd, check=True)
+        logger.info("✅ Type check passed.")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ Type check failed (Exit Code: {e.returncode})")
+        sys.exit(e.returncode)
+
 def handle_clean(args):
     """Purges temporary artifacts, caches, and logs to reset the environment."""
     logger = logging.getLogger("Cleaner")
@@ -373,6 +399,10 @@ def main():
     p_test = subparsers.add_parser("test", help="Run unit and integration tests")
     p_test.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     p_test.set_defaults(func=handle_test)
+
+    # Typecheck
+    p_type = subparsers.add_parser("typecheck", help="Run static type checking")
+    p_type.set_defaults(func=handle_typecheck)
 
     # Clean
     p_clean = subparsers.add_parser("clean", help="Clean cache and temporary files")

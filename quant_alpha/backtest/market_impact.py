@@ -1,14 +1,38 @@
 """
 Market Impact Models
-Realistic price impact from trading
+====================
+Empirically-grounded models for simulating price impact from trading activity.
 
-Models:
-1. AlmgrenChrissImpact: Institutional standard (Permanent + Temporary components)
-2. SimpleImpactModel: Simplified square-root model
+Purpose
+-------
+This module provides models to estimate the implementation shortfall (slippage)
+that occurs when a large trade consumes a significant portion of available liquidity.
+It is a critical component for realistic backtesting, as it penalizes strategies
+that generate alpha by assuming infinite liquidity.
 
-Academic Foundation:
-- Almgren & Chriss (2000): Optimal execution
-- Almgren (2003): Optimal execution with nonlinear impact functions
+Usage
+-----
+.. code-block:: python
+
+    from quant_alpha.backtest.market_impact import AlmgrenChrissImpact
+
+    impact_model = AlmgrenChrissImpact()
+    cost_bps = impact_model.calculate_impact(
+        shares=10000,
+        volume=1_000_000,
+        volatility=0.025
+    ) * 10000
+
+Importance
+----------
+- **Alpha Decay**: Accurately models a primary source of alpha decay in live trading.
+- **Capacity Estimation**: Allows for the estimation of a strategy's AUM capacity before its own trading activity erodes its profitability.
+- **Performance**: The core calculation is JIT-compiled with Numba for $O(1)$ complexity per trade, enabling efficient use in large-scale simulations.
+
+Tools & Frameworks
+------------------
+- **NumPy**: Core numerical operations.
+- **Numba**: Just-In-Time (JIT) compilation for C-level performance on the hot-path calculation loop.
 """
 
 import numpy as np
@@ -21,18 +45,21 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# --- NUMBA OPTIMIZED CORE ---
+# --- Numba-Optimized Core Calculation ---
 def _calculate_impact_core(shares, volume, volatility, eta, gamma, alpha, beta, vol_ref, side_is_sell):
+    """Core JIT-compiled impact logic."""
     if volume <= 0 or shares == 0:
         return 1.0 if shares != 0 else 0.0
     
     participation = abs(shares) / volume
     
+    # Impose a quadratic penalty for high participation rates to model liquidity exhaustion.
     penalty = 1.0
     if participation > 0.10:
         penalty = 1 + (participation * 10) ** 2
     
     vol_scale = volatility / vol_ref if vol_ref > 0 else 1.0
+    # Apply an asymmetry scalar for sell orders, reflecting higher impact during liquidations.
     side_mult = 1.1 if side_is_sell else 1.0
     
     perm_impact = gamma * (participation ** alpha) * vol_scale * side_mult
@@ -46,21 +73,20 @@ if HAS_NUMBA:
 
 class AlmgrenChrissImpact:
     """
-    Almgren-Chriss market impact model (Optimized)
+    Almgren-Chriss market impact model with Numba optimization.
     
-    Total Impact = Permanent Impact + Temporary Impact
+    The model decomposes total impact into two components:
     
-    1. Permanent (Information Leakage):
-       I = γ * σ * (shares / volume)^α
-       Usually linear (α=1.0)
-       
-    2. Temporary (Liquidity Cost):
-       J = η * σ * (shares / volume)^β
-       Usually concave (β=0.5 to 0.6)
+    1.  **Permanent Impact (Information Leakage)**: The persistent price change
+        caused by the information revealed by the trade.
+        $I_{perm} = \gamma \sigma (\frac{Q}{V})^\alpha$
+    2.  **Temporary Impact (Liquidity Cost)**: The transient price change from
+        consuming liquidity, which reverts after the trade.
+        $I_{temp} = \eta \sigma (\frac{Q}{V})^\beta$
     
     Where:
-    - σ: Daily volatility (normalized by reference vol)
-    - shares/volume: Participation rate
+    - $\sigma$: Daily volatility.
+    - $Q/V$: Participation rate (Trade Size / Total Volume).
     """
     
     def __init__(
@@ -96,21 +122,16 @@ class AlmgrenChrissImpact:
         """
         Calculate total market impact cost as a fraction of price.
         
-        Args:
-            shares: Trade size (absolute value used internally)
-            volume: Daily average volume
-            volatility: Daily volatility (decimal, e.g. 0.02)
-            side: 'buy' or 'sell' (selling has higher impact in stress)
-            
         Returns:
-            Impact cost rate (e.g. 0.0010 for 10bps)
+            The estimated impact cost as a decimal rate (e.g., 0.001 for 10 bps).
         """
         if volume <= 0 or shares == 0:
-            # SAFETY: If volume is 0 (illiquid/halted), cost is effectively infinite.
-            # We return a massive penalty (100%) to discourage the optimizer/engine.
+            # If volume is zero (e.g., stock is halted), cost is effectively infinite.
+            # Return a 100% penalty to heavily penalize such trades in an
+            # optimization or simulation context.
             return 1.0 if shares != 0 else 0.0
         
-        # Delegate to Numba-optimized core for speed and consistency.
+        # Delegate to the Numba-optimized core for performance.
         # The core handles:
         # 1. Quadratic Penalty for >10% ADV
         # 2. Selling Asymmetry (1.1x cost)
@@ -129,16 +150,15 @@ class AlmgrenChrissImpact:
         volatility: float
     ) -> int:
         """
-        Estimate max trade size for a given impact limit (bps).
-        Approximation assuming temporary impact dominates execution cost.
+        Estimate the maximum trade size for a given impact tolerance in basis points.
+        
+        This is an approximation that inverts the temporary impact formula, which
+        typically dominates execution cost for a single trade.
         """
         if volume <= 0: return 0
         
         max_impact = max_impact_bps / 10000.0
         vol_scale = volatility / self.vol_ref if self.vol_ref > 0 else 1.0
-        
-        # Solve J = eta * vol_scale * (shares/volume)^beta for shares
-        # shares = volume * (J / (eta * vol_scale))^(1/beta)
         
         denom = self.eta * vol_scale
         if denom == 0: return int(volume)
@@ -153,8 +173,9 @@ class AlmgrenChrissImpact:
 
 class SimpleImpactModel:
     """
-    Simplified square-root impact model
-    Impact = k * sqrt(|shares| / volume)
+    A simplified square-root model, often used as a baseline.
+    
+    Formula: $I = k \sqrt{\frac{|Q|}{V}}$
     """
     def __init__(self, k: float = 0.1):
         self.k = k
@@ -167,9 +188,7 @@ class SimpleImpactModel:
         return self.k * np.sqrt(abs(shares) / volume)
 
     def estimate_capacity(self, max_impact_bps: float, volume: float, volatility: float = 0.0, **kwargs) -> int:
-        """
-        Estimate max trade size for a given impact limit (bps).
-        """
+        """Inverts the square-root formula to solve for trade size."""
         if volume <= 0: return 0
         max_impact = max_impact_bps / 10000.0
         
@@ -182,9 +201,7 @@ class SimpleImpactModel:
 
 
 def compare_impact_models(shares: float, volume: float, volatility: float = 0.02):
-    """
-    Helper to compare impact estimates from different models.
-    """
+    """Helper function to compare impact estimates from different models."""
     ac_model = AlmgrenChrissImpact()
     simple_model = SimpleImpactModel()
     
@@ -198,10 +215,10 @@ def compare_impact_models(shares: float, volume: float, volatility: float = 0.02
     logger.info(f"Difference:     {abs(ac_impact - simple_impact)*10000:.2f} bps")
 
 if __name__ == "__main__":
-    # TCA Verification for Small Cap Scenario
+    # Transaction Cost Analysis (TCA) Verification for a Small-Cap Scenario
     # Scenario: Small Cap Stock ($10 Price, $1M ADV)
     # Trade: 2% of ADV ($20k) -> 2,000 shares
-    print("\n🔍 TCA VERIFICATION (Small Cap Scenario)")
+    print("\n\U0001f50d TCA VERIFICATION (Small Cap Scenario)")
     print("Stock: $10 | ADV: $1M (100k shares) | Volatility: 3%")
     print("Trade: Buy $20k (2% Participation)")
     

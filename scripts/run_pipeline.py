@@ -20,6 +20,7 @@ import argparse
 import subprocess
 import logging
 from pathlib import Path
+from typing import Optional
 
 # --- PROJECT SETUP ---
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -31,7 +32,7 @@ from quant_alpha.utils import setup_logging
 setup_logging()
 logger = logging.getLogger("Quant_Alpha")
 
-def run_step(script_name: str, args: list[str] = None):
+def run_step(script_name: str, args: Optional[list[str]] = None):
     """Runs a script as a subprocess to ensure clean state."""
     if args is None:
         args = []

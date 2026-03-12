@@ -1,6 +1,39 @@
 """
 Factor Attribution Module
+=========================
 Decomposes portfolio returns into Systematic Factors and Idiosyncratic Alpha.
+
+Purpose
+-------
+This module implements performance attribution analysis, allowing researchers to separate
+returns driven by systematic risk premia (Beta) from returns driven by skill/selection (Alpha).
+It supports both factor-based attribution (Brinson-Fachler style or Regression) and 
+simple trade-level PnL decomposition for execution analysis.
+
+Usage
+-----
+.. code-block:: python
+
+    from quant_alpha.backtest.attribution import FactorAttribution
+    
+    attr = FactorAttribution()
+    results = attr.analyze(
+        portfolio_returns=returns_series,
+        factor_exposures=exposures_df,  # Index: Date, Columns: Factors
+        factor_returns=factor_ret_df    # Index: Date, Columns: Factors
+    )
+
+Importance
+----------
+- **Alpha Verification**: Confirms performance stems from the intended signal rather than incidental factor bets.
+- **Risk Decomposition**: Quantifies the portion of variance explained by systematic factors ($R^2$).
+- **Efficiency**: Optimized for vectorization with $O(T \times F)$ complexity.
+
+Tools & Frameworks
+------------------
+- **Pandas**: High-performance time-series alignment and rolling window operations.
+- **NumPy**: Vectorized linear algebra for contribution calculation.
+- **SciPy**: Statistical significance testing (Student's t-test, Spearman rank correlation).
 """
 
 import pandas as pd
@@ -13,8 +46,8 @@ logger = logging.getLogger(__name__)
 
 class FactorAttribution:
     """
-    Analyzes sources of portfolio performance.
-    Decomposition: Total Return = Sum(Exposure * Factor_Return) + Selection (Alpha)
+    Institutional-grade performance attribution engine.
+    Decomposition Model: $R_{p,t} = \\sum_{k=1}^{K} (w_{p,t-1}^T \\beta_{k,t-1}) \\times R_{f,k,t} + \\epsilon_t$
     """
     
     def __init__(self):
@@ -27,12 +60,15 @@ class FactorAttribution:
         factor_returns: Optional[pd.DataFrame] = None
     ) -> Dict:
         """
-        Decomposes returns into factor-based and residual components.
+        Orchestrates the attribution pipeline: Total Return Analysis $\rightarrow$ Factor Decomposition.
         
         Args:
-            portfolio_returns: Series with DatetimeIndex
-            factor_exposures: DataFrame (Date index, Factor columns) - Portfolio weighted average exposure
-            factor_returns: DataFrame (Date index, Factor columns) - Factor returns
+            portfolio_returns: pd.Series (Time-series of portfolio returns).
+            factor_exposures: pd.DataFrame (Date $\times$ Factor). Portfolio weighted average exposure.
+            factor_returns: pd.DataFrame (Date $\times$ Factor). Returns of the factors themselves.
+            
+        Returns:
+            Dict containing performance metrics, residuals, and factor contributions.
         """
         if portfolio_returns.empty:
             return {"error": "Portfolio returns series is empty"}
@@ -43,7 +79,7 @@ class FactorAttribution:
             'annualized_vol': portfolio_returns.std() * np.sqrt(252)
         }
         
-        # Factor Decomposition
+        # Conditional Execution: Perform decomposition only if factor data is provided
         if factor_exposures is not None and factor_returns is not None:
             factor_results = self._calculate_factor_contribution(
                 portfolio_returns, factor_exposures, factor_returns
@@ -62,14 +98,16 @@ class FactorAttribution:
         factor_returns: pd.DataFrame
     ) -> Dict:
         """
-        Detailed calculation of factor contributions over time.
-        Enforces 1-day lag on exposures to ensure Point-in-Time alignment.
+        Computes attribution of returns to specific factors.
+        
+        CRITICAL: Enforces 1-day lag on exposures to prevent look-ahead bias.
+        Equation: $Contrib_{f,t} = Exposure_{f, t-1} \\times Return_{f, t}$
         """
-        # 1. Align Data
-        # Shift exposures by 1 day (T-1 exposure explains T return)
+        # 1. Data Alignment & Lagging
+        # Shift exposures by 1 day: T-1 holdings determine T performance.
         lagged_exposures = exposures.shift(1)
         
-        # Ensure all inputs share the same index (dates)
+        # Intersection of indices (Point-in-Time alignment)
         common_dates = portfolio_returns.index.intersection(lagged_exposures.index).intersection(factor_returns.index)
         
         if len(common_dates) == 0:
@@ -80,24 +118,24 @@ class FactorAttribution:
         exp = lagged_exposures.loc[common_dates]
         f_ret = factor_returns.loc[common_dates]
 
-        # 2. Calculate Contribution: Exposure * Factor Return
-        # Element-wise multiplication for matching columns
+        # 2. Factor Contribution Calculation
+        # Element-wise multiplication (Hadamard product) for matching columns
         contributions = pd.DataFrame(index=common_dates)
         
         for col in exp.columns:
             if col in f_ret.columns:
                 contributions[col] = exp[col] * f_ret[col]
 
-        # 3. Aggregation
+        # 3. Residual & Aggregation
         total_factor_contrib = contributions.sum(axis=1)
         residual_alpha = p_ret - total_factor_contrib
 
-        # NEW: Risk-Adjusted Alpha Metrics
+        # Risk-Adjusted Alpha Metrics (Information Ratio)
         ann_alpha = residual_alpha.mean() * 252
         alpha_vol = residual_alpha.std() * np.sqrt(252)
         information_ratio = ann_alpha / alpha_vol if alpha_vol != 0 else 0.0
         
-        # NEW: Factor Efficiency Analysis
+        # Factor Efficiency (Statistical Significance)
         efficiency = self.calculate_factor_efficiency(contributions)
 
         return {
@@ -112,8 +150,8 @@ class FactorAttribution:
 
     def calculate_factor_efficiency(self, contributions: pd.DataFrame) -> Dict:
         """
-        Calculates the 'Hit Rate' of each factor. 
-        How many days did the factor actually contribute positively?
+        Evaluates the statistical significance of each factor's contribution.
+        Metrics: Hit Rate ($P(Ret > 0)$), t-statistic on mean contribution.
         """
         efficiency = {}
         for col in contributions.columns:
@@ -122,7 +160,7 @@ class FactorAttribution:
             pos_days = (contributions[col] > 0).sum()
             total_days = len(contributions)
             
-            # T-test for mean different from 0
+            # One-sample t-test ($H_0: \mu = 0$)
             # Safety: If variance is 0 (constant contribution), t-stat is 0
             if np.std(contributions[col]) == 0:
                 t_stat, p_val = 0.0, 1.0
@@ -144,8 +182,9 @@ class FactorAttribution:
         window: int = 20
     ) -> pd.Series:
         """
-        Calculates Rolling Information Coefficient (Spearman Rank Correlation).
-        IMPORTANT: forward_returns must be shifted (t+1) aligned to factor_values (t).
+        Computes the Rolling Information Coefficient (IC) using Spearman Rank Correlation.
+        
+        Constraint: `forward_returns` must be pre-aligned (T+1 returns aligned to T factor values).
         """
         ic_series = []
         
@@ -165,8 +204,8 @@ class FactorAttribution:
                 common = f_slice.index.intersection(r_slice.index)
                 if len(common) < 5: continue
                 
-                # Calculate IC for this date
-                # Assuming single column or taking the first column if DataFrame
+                # Extract vector for correlation
+                # Handles cases where input is DataFrame (take first col) or Series
                 f_data = f_slice.loc[common]
                 if isinstance(f_data, pd.DataFrame):
                     f_data = f_data.iloc[:, 0]
@@ -175,7 +214,7 @@ class FactorAttribution:
                 if isinstance(r_data, pd.DataFrame):
                     r_data = r_data.iloc[:, 0]
                 
-                # Safety: Handle constant arrays to avoid RuntimeWarnings
+                # Numerical Stability: Handle zero variance to prevent divide-by-zero/NaNs
                 if np.std(f_data) == 0 or np.std(r_data) == 0:
                     ic = 0.0
                 else:
@@ -192,10 +231,10 @@ class FactorAttribution:
 
 
 class SimpleAttribution:
-    """Quick trade-level attribution without complex factor models."""
+    """Execution-level attribution analyzing PnL drivers directly from trade logs."""
     
     def analyze_pnl_drivers(self, trades_df: pd.DataFrame) -> Dict:
-        """Breaks down PnL by Long/Short."""
+        """Aggregates trade attributes to derive Gross/Net PnL, Win/Loss ratios, and side-specific contributions."""
         if trades_df.empty:
             return {
                 'total_pnl': 0.0,
@@ -215,14 +254,14 @@ class SimpleAttribution:
         if 'pnl' not in trades_df.columns:
             return {"error": "Trades DataFrame must contain 'pnl' column"}
         
-        # Filter for closed trades
-        # Case-insensitive status check
+        # Filter for closed trades (Realized PnL)
+        # Supports explicit 'status' column or implicit PnL non-zero check
         if 'status' in trades_df.columns:
             closed_trades = trades_df[trades_df['status'].astype(str).str.lower() == 'closed']
         else:
             closed_trades = trades_df[trades_df['pnl'] != 0]
         
-        # Gross Profit vs Net PnL Logic
+        # PnL Aggregation
         total_pnl = closed_trades['pnl'].sum()
         
         winners = closed_trades[closed_trades['pnl'] > 0]
@@ -240,14 +279,14 @@ class SimpleAttribution:
         avg_win = winners['pnl'].mean() if not winners.empty else 0.0
         avg_loss = losers['pnl'].mean() if not losers.empty else 0.0
         
-        # Safe Win/Loss Ratio
+        # Safe Win/Loss Ratio (Guard against division by zero)
         if avg_loss != 0 and avg_win != 0:
             win_loss_ratio = abs(avg_win / avg_loss)
         else:
             win_loss_ratio = 0.0
             
-        # Legacy Support for Long/Short breakdown
-        # Assuming Long-Only if side is missing, or parsing side if present
+        # Directional Decomposition (Long vs Short)
+        # Handles legacy schemas where 'side' might be missing (defaults to Long-Only)
         long_pnl = total_pnl
         short_pnl = 0.0
         if 'side' in closed_trades.columns:
@@ -255,7 +294,7 @@ class SimpleAttribution:
              long_pnl = closed_trades[long_mask]['pnl'].sum()
              short_pnl = closed_trades[~long_mask]['pnl'].sum()
         
-        # Standardized Keys
+        # Return standardized metrics dictionary
         return {
             'total_pnl': total_pnl,
             'gross_profit': gross_profit,

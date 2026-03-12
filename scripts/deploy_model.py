@@ -128,7 +128,7 @@ def weighted_symmetric_mae(y_true, y_pred):
 # This handles cases where the script is run directly OR via subprocess.
 try:
     import __main__
-    setattr(__main__, "weighted_symmetric_mae", weighted_symmetric_mae)
+    setattr(__main__, "weighted_symmetric_mae", weighted_symmetric_mae)  # type: ignore
 except Exception:
     pass   # Safe to ignore — joblib.load() try/except handles failure gracefully
 
@@ -239,12 +239,12 @@ class DeploymentManager:
                 "[CHECK] ⚠️  ensemble_predictions.parquet not found. "
                 "Signals may not have been generated yet."
             )
-        elif sig_age > 21:
+        elif sig_age is not None and sig_age > 21:
             logger.error(
                 f"[CHECK] 🚨 Signal cache is {sig_age} trading days old "
                 f"(last: {sig_date}). RETRAIN URGENTLY before live trading."
             )
-        elif sig_age > 5:
+        elif sig_age is not None and sig_age > 5:
             logger.warning(
                 f"[CHECK] ⚠️  Signal cache is {sig_age} trading days old "
                 f"(last: {sig_date}). Consider retraining."

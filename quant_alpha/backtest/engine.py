@@ -1,3 +1,35 @@
+"""
+Backtest Engine
+===============
+Event-driven simulation core for quantitative strategy evaluation.
+
+Purpose
+-------
+Orchestrates the entire backtesting lifecycle, simulating the interaction between
+alpha signals, portfolio construction, risk management, and market execution.
+It implements an event-driven loop that processes market data sequentially to
+prevent look-ahead bias and accurately model point-in-time constraints.
+
+Usage
+-----
+.. code-block:: python
+
+    engine = BacktestEngine(initial_capital=1_000_000, target_volatility=0.20)
+    results = engine.run(predictions_df, prices_df, top_n=50)
+
+Importance
+----------
+- **Path Dependence**: Captures the compounding effects of costs, impact, and constraints over time.
+- **Realistic Friction**: Integrates Almgren-Chriss market impact ($I \propto \sigma \sqrt{Q/V}$) and variable transaction costs.
+- **Regime Awareness**: Dynamically adjusts exposure based on volatility and drawdown regimes.
+
+Tools & Frameworks
+------------------
+- **Pandas/NumPy**: High-performance data structures for time-series alignment and vectorized weighting.
+- **AlmgrenChrissImpact**: Nonlinear transaction cost modeling.
+- **RiskManager**: Portfolio constraint enforcement (Sector, ADV, Leverage).
+"""
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
@@ -13,6 +45,16 @@ from .utils import validate_backtest_data
 logger = logging.getLogger(__name__)
 
 class BacktestEngine:
+    """
+    Event-driven backtesting engine for equity strategies.
+    
+    Simulates the full trading lifecycle including:
+    1. Signal Processing & Ranking
+    2. Dynamic Portfolio Construction (Inverse Volatility Weighting)
+    3. Risk Management & Constraint Enforcement
+    4. Execution Simulation with Market Impact
+    """
+    
     def __init__(
         self,
         initial_capital: float = 1_000_000,
@@ -46,25 +88,39 @@ class BacktestEngine:
         self.trades = []
 
     def run(self, predictions: pd.DataFrame, prices: pd.DataFrame, top_n: int = 50):
-        # 0. Validation
+        """
+        Executes the backtest simulation over the provided prediction horizon.
+        
+        Algorithm:
+        For each date $t$ in horizon:
+            1. Update Portfolio Mark-to-Market.
+            2. Check Trailing Stops (Intraday Risk).
+            3. If Rebalance Day:
+                a. Generate Target Weights ($w_{target}$).
+                b. Apply Risk Constraints ($w_{safe} = f(w_{target}, \Omega)$).
+                c. Execute Rebalance (Sell first, then Buy).
+            4. Record Daily Snapshot.
+        """
+        # 0. Data Integrity Verification
         is_valid, errors = validate_backtest_data(predictions, prices)
         if not is_valid:
             raise ValueError(f"Data Validation Failed: {errors}")
 
-        # 1. Setup Data - Ensure MultiIndex is sorted for performance
+        # 1. Data Structure Optimization
+        # Ensure MultiIndex is pre-sorted to enable O(1) slicing performance
         predictions = predictions.sort_values(['date', 'prediction'], ascending=[True, False])
         dates = sorted(predictions['date'].unique())
         prices_indexed = prices.set_index(['date', 'ticker']).sort_index()
 
         for i, date in enumerate(dates):
-            # 2. MultiIndex Slicing Safety: Optimized lookup
+            # 2. Efficient Data Access (Point-in-Time)
             try:
                 day_prices = prices_indexed.loc[date]
             except KeyError:
                 logger.warning(f"Market data missing for date: {date}")
                 continue
             
-            # 3. Mark-to-Market (Sync Portfolio with current prices)
+            # 3. Mark-to-Market (Sync Portfolio NAV with current prices)
             current_holdings = list(self.portfolio.positions.keys())
             if current_holdings:
                 valid_tickers = [t for t in current_holdings if t in day_prices.index]
@@ -72,16 +128,16 @@ class BacktestEngine:
                     price_map = day_prices.loc[valid_tickers, 'close'].to_dict()
                     self.portfolio.update_prices(price_map)
             
-            # 3.5 Check Trailing Stops (NEW)
+            # 3.5 Intraday Risk Control (Trailing Stops)
             if self.trailing_stop_pct:
                 self._check_trailing_stops(date, day_prices)
 
-            # 4. Rebalance Logic
+            # 4. Portfolio Rebalancing Logic
             if self._is_rebalance_day(date, i):
-                # Fix: Pass more predictions to allow Buffer Logic (Top 100)
+                # Expand prediction set to support Buffer/Hysteresis logic (e.g. Top 1.6*N)
                 day_preds = predictions[predictions['date'] == date].head(top_n * 5)
                 
-                # Calculate Rolling Volatility (21-day lookback)
+                # Rolling Volatility Estimation (21-day lookback)
                 current_vol = 0.0
                 if len(self.portfolio.equity_curve) > 22:
                     navs = [x['total_value'] for x in self.portfolio.equity_curve[-22:]]
@@ -89,7 +145,7 @@ class BacktestEngine:
                     if not pct_changes.empty:
                         current_vol = pct_changes.std() * np.sqrt(252)
 
-                # Generate Weights (Smart Weighting + Hysteresis)
+                # Optimization: Generate Unconstrained Target Weights
                 target_weights = self._generate_smart_weights(
                     day_preds, 
                     top_n, 
@@ -97,7 +153,7 @@ class BacktestEngine:
                     current_vol
                 )
                 
-                # Prepare maps for Risk Manager
+                # Data Prep for Constraint Engine
                 adv_map = {}
                 price_map_risk = {}
                 sector_map = {}
@@ -110,7 +166,7 @@ class BacktestEngine:
                     if 'sector' in day_prices.columns:
                         sector_map = day_prices['sector'].to_dict()
                 
-                # Apply Risk Management
+                # Constraint Enforcement (Sector, ADV, Leverage)
                 safe_weights = self.risk_manager.apply_constraints(
                     target_weights, 
                     self.portfolio.total_value,
@@ -121,13 +177,16 @@ class BacktestEngine:
                 )
                 self._execute_rebalance(date, safe_weights, day_prices)
 
-            # 5. Snapshot: Single Source of Truth (Portfolio internally tracks equity_curve)
+            # 5. State Persistence (Portfolio is the Single Source of Truth)
             self.portfolio.record_daily_snapshot(date)
 
         return self._wrap_results()
 
     def _check_trailing_stops(self, date, day_prices):
-        """Executes trailing stops if price drops below peak * (1 - stop_pct)"""
+        """
+        Monitors positions for exit conditions.
+        Condition: $P_t < P_{peak} \times (1 - StopPct)$
+        """
         current_holdings = list(self.portfolio.positions.keys())
         
         for ticker in current_holdings:
@@ -135,28 +194,32 @@ class BacktestEngine:
             
             current_price = day_prices.loc[ticker, 'close']
             
-            # Update High Water Mark
+            # Update High Water Mark (HWM)
             if ticker not in self.high_water_marks:
                 self.high_water_marks[ticker] = current_price
             else:
                 self.high_water_marks[ticker] = max(self.high_water_marks[ticker], current_price)
             
-            # Check Stop Condition
+            # Evaluate Stop Condition
             stop_price = self.high_water_marks[ticker] * (1 - self.trailing_stop_pct)
             
             if current_price < stop_price:
                 logger.info(f"🛑 Trailing Stop Hit: {ticker} @ {current_price:.2f} (Peak: {self.high_water_marks[ticker]:.2f})")
-                # Force Sell
+                # Immediate Liquidation
                 shares = self.portfolio.positions[ticker]
                 self._process_order(date, ticker, 0, day_prices, "TRAILING_STOP")
                 # Metadata cleanup happens in _process_order via _log_trade logic
 
     def _execute_rebalance(self, date, target_weights, day_prices):
-        """Phase-based execution: Sell first to free up capital, then Buy."""
+        """
+        Executes portfolio turnover with liquidity preservation logic.
+        Phase 1: Liquidations (Sells) to raise capital.
+        Phase 2: Acquisitions (Buys) using available cash.
+        """
         current_holdings = self.portfolio.get_holdings()
         
-        # --- TURNOVER CONSTRAINT ---
-        # Calculate implied turnover
+        # --- Turnover Constraint Enforcement ---
+        # Formula: Turnover = Sum(|w_target - w_current|) / 2
         current_val = self.portfolio.total_value
         if current_val > 0:
             current_weights = {t: self.portfolio.get_position_value(t) / current_val for t in current_holdings}
@@ -170,7 +233,7 @@ class BacktestEngine:
             scale = self.max_turnover / turnover
             logger.info(f"⚠️ Turnover {turnover:.1%} > {self.max_turnover:.1%}. Scaling rebalance by {scale:.2f}x")
             
-            # Shrink target weights towards current weights
+            # Linear shrinkage of target weights towards current weights
             scaled_weights = {}
             for t in all_tickers:
                 w_c = current_weights.get(t, 0)
@@ -178,7 +241,7 @@ class BacktestEngine:
                 scaled_weights[t] = w_c + scale * (w_t - w_c)
             target_weights = scaled_weights
         
-        # Calculate target shares for all desired positions
+        # Calculate discrete target shares
         targets = {}
         for ticker, weight in target_weights.items():
             target_dollar = (self.portfolio.total_value * weight) * 0.99
@@ -190,12 +253,12 @@ class BacktestEngine:
             except Exception:
                 continue
 
-        # Identify liquidations (held but not in target weights)
+        # Identify liquidations (Positions held but not in target set)
         for ticker in current_holdings:
             if ticker not in targets:
                 targets[ticker] = 0
 
-        # Split into Sells and Buys to prioritize liquidity
+        # Segregate Orders for Phased Execution
         sells = []
         buys = []
         
@@ -206,15 +269,13 @@ class BacktestEngine:
             elif target_shares > current_shares:
                 buys.append((ticker, target_shares))
         
-        # Execute Sells first
+        # Phase 1: Execution of Sells
         for ticker, target in sells:
             reason = "LIQUIDATE" if target == 0 else "REBALANCE"
             self._process_order(date, ticker, target, day_prices, reason)
             
-        # Execute Buys next
-        # --- FIX: Dynamic Cash Management ---
-        # After sells, check actual available cash. 
-        # If we failed to sell something (e.g. halted stock), we might have less cash than expected.
+        # Phase 2: Dynamic Cash Management & Acquisitions
+        # Re-assess cash post-sells. Execution failures (e.g. halted stocks) may reduce buying power.
         total_buy_value = 0.0
         buy_orders = []
         for ticker, target in buys:
@@ -225,8 +286,8 @@ class BacktestEngine:
                     total_buy_value += diff * px
                     buy_orders.append((ticker, target))
         
-        # Calculate scaling factor if we are short on cash
-        # Reserve 1% buffer for buy-side costs
+        # Pro-rata scaling if cash constrained
+        # Reserve 1% cash buffer for friction/costs
         available_cash = self.portfolio.cash * 0.99
         scale_factor = 1.0
         if total_buy_value > available_cash and total_buy_value > 0:
@@ -236,9 +297,9 @@ class BacktestEngine:
             else:
                 logger.debug(f"Cash constrained. Scaling buys by {scale_factor:.2f}x")
 
-        # Execute Buys next
+        # Execute Buys
         for ticker, target in buy_orders:
-            # Apply scaling to target shares difference
+            # Apply scaling to the *incremental* shares needed
             current = self.portfolio.positions.get(ticker, 0)
             diff = target - current
             adjusted_diff = int(diff * scale_factor)
@@ -248,6 +309,7 @@ class BacktestEngine:
                 self._process_order(date, ticker, final_target, day_prices, "REBALANCE")
 
     def _process_order(self, date, ticker, target_shares, day_prices, reason):
+        """Handles order routing, impact estimation, and settlement."""
         current_shares = self.portfolio.positions.get(ticker, 0)
         diff = target_shares - current_shares
         
@@ -257,13 +319,13 @@ class BacktestEngine:
             mkt_data = day_prices.loc[ticker]
             side = 'buy' if diff > 0 else 'sell'
             
-            # Market Impact calculation
+            # Market Impact Estimation (Almgren-Chriss)
             impact = 0.0
             vol = mkt_data.get('volatility', 0.02)
             if self.impact_model:
                 impact = self.impact_model.calculate_impact(abs(diff), mkt_data['volume'], vol, side=side)
 
-            # Execution Simulator (Architecture Part 5A)
+            # Execution Simulation (Fill Price, Comm, Friction)
             fill_result = self.executor.execute_order(
                 ticker=ticker,
                 shares=abs(diff),
@@ -275,7 +337,7 @@ class BacktestEngine:
                 volatility=vol
             )
 
-            # Finalize with Portfolio class logic
+            # Settlement & Portfolio Update
             if fill_result.get('success', False) and fill_result['shares'] > 0:
                 comm = fill_result.get('commission_usd', 0.0)
                 pnl = 0.0
@@ -290,7 +352,7 @@ class BacktestEngine:
                         pnl = res
                         success = True
                 
-                # Clean up metadata on full exit
+                # Clean up tracking metadata on full exit
                 if side == 'sell' and self.portfolio.positions.get(ticker, 0) == 0:
                     if ticker in self.high_water_marks: del self.high_water_marks[ticker]
                 
@@ -302,14 +364,17 @@ class BacktestEngine:
 
     def _generate_smart_weights(self, day_preds, top_n, day_prices, current_vol):
         """
-        Implements:
-        1. Hysteresis (Buffer Zone): Buy Top N, Sell if Rank > 1.5 * N
-        2. Smart Weighting: Inverse Volatility (Alpha / Vol)
-        3. Regime Filter: Cash if Vol is extreme
+        Constructs the target portfolio using advanced weighting logic.
+        
+        Components:
+        1. **Regime Filter**: De-risk to cash during high volatility or drawdown.
+        2. **Hysteresis (Buffer Zone)**: Reduces turnover by holding existing positions 
+           until rank drops below $1.6 \times N$.
+        3. **Inverse Volatility Weighting**: $w_i \propto \frac{1}{\max(\sigma_i, \epsilon)}$
         """
         if day_preds.empty: return {}
         
-        # --- NEW REGIME DETECTION (Drawdown + Trend) ---
+        # --- Regime Detection (Drawdown + Trend) ---
         if len(self.portfolio.equity_curve) > 50:
             navs = [x['total_value'] for x in self.portfolio.equity_curve]
             nav_series = pd.Series(navs)
@@ -319,25 +384,25 @@ class BacktestEngine:
             current_dd = (current_nav - peak_nav) / peak_nav if peak_nav > 0 else 0.0
             ma_50 = nav_series.rolling(window=50).mean().iloc[-1]
             
-            # Logic: Deep Drawdown (-15%) AND Below Trend (MA50) -> Cash
+            # Logic: Deep Drawdown (-15%) AND Below Trend (MA50) -> Safety (Cash)
             if current_dd < -0.15 and current_nav < ma_50:
                 logger.info(f"🛡️ REGIME DEFENSE: DD {current_dd:.1%} & NAV < MA50. Going to Cash.")
                 return {}
 
-        # 1. Regime Filter (VIX Logic)
-        # If current strategy vol > 1.5x Target, go to Cash
+        # 1. Volatility Regime Filter
+        # If current strategy vol > 1.5x Target -> Safety (Cash)
         if current_vol > (self.risk_manager.target_volatility * 1.5):
             logger.info(f"🛡️ DEFENSIVE MODE: Volatility {current_vol:.1%} > Limit. Going to Cash.")
             return {}
 
-        # 2. Hysteresis Logic
+        # 2. Selection with Hysteresis
         current_holdings = set(self.portfolio.positions.keys())
         
-        # Rank predictions
+        # Rank predictions by signal strength
         day_preds = day_preds.copy()
         day_preds['rank'] = range(1, len(day_preds) + 1)
         
-        # Selection Logic
+        # Buffer Logic: Hold existing if Rank <= 1.6 * N
         buffer_limit = int(top_n * 1.6) # e.g., 25 -> 40
         selected_tickers = []
         
@@ -346,13 +411,13 @@ class BacktestEngine:
             if row.ticker in current_holdings and row.rank <= buffer_limit:
                 selected_tickers.append(row.ticker)
         
-        # Fill remaining with Top picks
+        # Fill remaining slots with Top Alpha picks
         for row in day_preds.itertuples():
             if len(selected_tickers) >= top_n: break
             if row.ticker not in selected_tickers:
                 selected_tickers.append(row.ticker)
                 
-        # 3. Smart Weighting (Inverse Volatility)
+        # 3. Inverse Volatility Weighting
         weights = {}
         inv_vols = {}
         total_inv_vol = 0.0
@@ -365,7 +430,7 @@ class BacktestEngine:
             except Exception:
                 pass
             
-            # Safety: Floor volatility to avoid division by zero or extreme weights
+            # Stability: Floor volatility to avoid division by zero or extreme weights
             # Floor at 0.5% daily vol (~8% annualized) to prevent single-stock dominance
             vol = max(vol, 0.005)
             
@@ -385,12 +450,13 @@ class BacktestEngine:
 
     def _log_trade_detailed(self, trade, reason, realized_pnl):
         """
-        Logs trade with FIFO Entry Price tracking for detailed reporting.
+        Logs trade execution with FIFO Entry Price tracking.
+        Calculates realized returns and links exits to entry dates.
         """
         ticker = trade['ticker']
         
         if trade['side'] == 'buy':
-            # Track Entry
+            # Queue Entry for FIFO tracking
             if ticker not in self.position_entry_map:
                 self.position_entry_map[ticker] = []
             
@@ -412,8 +478,8 @@ class BacktestEngine:
                 'return_pct': 0.0
             }
             
-        else: # SELL
-            # FIFO Matching for Report
+        else: # Sell
+            # FIFO Matching: Consume oldest cost basis layers
             shares_to_close = trade['shares']
             total_cost = 0.0
             shares_matched = 0

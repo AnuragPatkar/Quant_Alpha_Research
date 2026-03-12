@@ -17,9 +17,9 @@ import pandas as pd
 import numpy as np
 import gc
 import psutil
-import importlib
+import types
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Path Setup
@@ -35,10 +35,13 @@ if str(SCRIPTS_DIR) not in sys.path:
 # ---------------------------------------------------------------------------
 # Virtual Filesystem Mock (Pre-import)
 # ---------------------------------------------------------------------------
-def _mock_heavy_dependencies():
+@pytest.fixture(scope="class")
+def memory_test_context():
     """
     Prepopulate sys.modules with stubs for heavy ML dependencies and 
     internal modules not under test, preventing ImportErrors and reducing RAM.
+    
+    Returns the imported modules needed for testing.
     """
     # External heavy libs
     mock_targets = [
@@ -66,8 +69,8 @@ def _mock_heavy_dependencies():
         "quant_alpha.data.DataManager"
     ]
     
-    for mod in mock_targets + internal_mocks:
-        if mod not in sys.modules:
+    with patch.dict(sys.modules):
+        for mod in mock_targets + internal_mocks:
             m = MagicMock()
             m.__name__ = mod
             m.__file__ = f"mock://{mod}"
@@ -76,37 +79,19 @@ def _mock_heavy_dependencies():
                 m.__path__ = []
             sys.modules[mod] = m
 
-_mock_heavy_dependencies()
-
-# ---------------------------------------------------------------------------
-# Imports & Guards
-# ---------------------------------------------------------------------------
-_IMPORTS_OK = False
-_compute_fold_boundaries = None
-FactorRegistry = None
-
-try:
-    # Robust import for train_models
-    # Handles running from root (import scripts.train_models) or scripts dir
-    try:
-        tm = importlib.import_module("scripts.train_models")
-    except ImportError:
-        tm = importlib.import_module("train_models")
-    
-    _compute_fold_boundaries = tm._compute_fold_boundaries
-
-    # Import FactorRegistry
-    # We need the real one, not a mock
-    from quant_alpha.features.registry import FactorRegistry
-    
-    # Ensure feature modules are loaded to populate registry
-    # (These might trigger imports, but our mocks should handle dependencies)
-    import quant_alpha.features.technical.volatility
-    
-    _IMPORTS_OK = True
-except ImportError as e:
-    print(f"DEBUG: Import failed in test_memory.py: {e}")
-    _IMPORTS_OK = False
+        # Import the modules under test dynamically inside the patch context
+        try:
+            import scripts.train_models as tm
+            from quant_alpha.features.registry import FactorRegistry
+            # Ensure feature modules are loaded to populate registry
+            import quant_alpha.features.technical.volatility
+            
+            yield {
+                "train_models": tm,
+                "FactorRegistry": FactorRegistry
+            }
+        except ImportError as e:
+            pytest.skip(f"Could not import modules under test: {e}")
 
 # ---------------------------------------------------------------------------
 # Memory Measurement
@@ -128,7 +113,6 @@ def get_process_memory_mb():
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-@pytest.mark.skipif(not _IMPORTS_OK, reason="Scripts or quant_alpha modules not found")
 class TestMemoryUsage:
     
     @pytest.fixture(autouse=True)
@@ -147,7 +131,7 @@ class TestMemoryUsage:
         yield
         gc.collect()
 
-    def test_fold_boundaries_scaling(self):
+    def test_fold_boundaries_scaling(self, memory_test_context):
         """
         O(1) Check: Verify that memory usage does not scale with the number of folds.
         
@@ -157,6 +141,8 @@ class TestMemoryUsage:
         We compare memory usage of generating 10 folds vs 100 folds.
         The delta should be negligible (< 1 MB).
         """
+        _compute_fold_boundaries = memory_test_context["train_models"]._compute_fold_boundaries
+
         # Generate enough dates for ~10 folds
         # Min train (36m) + 10 * Step (3m) = 66 months ~ 1400 days
         dates_10 = pd.Series(pd.date_range("2000-01-01", periods=1500, freq="B"))
@@ -190,10 +176,12 @@ class TestMemoryUsage:
         # should be tiny. If it were copying data, 100 folds would be massive.
         assert delta < 1.0, f"Memory usage scales with folds! Delta: {delta:.2f} MB (Expected < 1.0 MB)"
 
-    def test_feature_generation_memory_cleanup(self):
+    def test_feature_generation_memory_cleanup(self, memory_test_context):
         """
         Verify that computing features does not leak memory.
         """
+        FactorRegistry = memory_test_context["FactorRegistry"]
+
         # Create a moderately large dataset: 50 tickers, 1000 days = 50k rows
         n_tickers = 50
         n_days = 1000

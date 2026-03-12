@@ -83,7 +83,7 @@ def weighted_symmetric_mae(y_true, y_pred):
 
 # Ensure joblib finds the function in __main__ (fixes unpickling issues)
 import sys as _sys
-_sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae
+_sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae  # type: ignore
 
 # ==============================================================================
 # HELPER FUNCTIONS

@@ -18,6 +18,7 @@ import numpy as np
 import tempfile
 import shutil
 import types
+import importlib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -36,12 +37,13 @@ if str(SCRIPTS_DIR) not in sys.path:
 # Mocking Infrastructure (Pre-import)
 # ---------------------------------------------------------------------------
 # We must mock the configuration and heavy dependencies BEFORE importing 
-# train_models.py to prevent it from crashing on missing paths or libs.
+# train_models.py. We use a fixture to contain this side-effect.
 
-def _setup_mocks():
+@pytest.fixture
+def data_flow_context():
     """
-    Sets up a complete mock environment in sys.modules.
-    Returns the mock configuration instance for assertion checking.
+    Sets up a mocked environment and imports train_models dynamically.
+    Yields (train_models_module, mock_config_instance).
     """
     # 1. Create a temporary directory for this test session
     test_dir = Path(tempfile.mkdtemp())
@@ -90,10 +92,6 @@ def _setup_mocks():
     mock_settings.Config = MockConfig
     mock_settings.config = mock_cfg_instance
     
-    # Inject config into sys.modules
-    sys.modules["config.settings"] = mock_settings
-    sys.modules["config"] = mock_settings
-
     # 3. Mock quant_alpha.utils
     mock_utils = types.ModuleType("quant_alpha.utils")
     mock_utils.setup_logging = MagicMock()
@@ -101,7 +99,15 @@ def _setup_mocks():
     mock_utils.load_parquet = pd.read_parquet
     mock_utils.save_parquet = lambda df, path: df.to_parquet(path)
     mock_utils.calculate_returns = MagicMock()
-    sys.modules["quant_alpha.utils"] = mock_utils
+    
+    # Mock Preprocessing
+    mock_preproc = types.ModuleType("quant_alpha.utils.preprocessing")
+    # Use REAL classes for logic testing
+    from quant_alpha.utils.preprocessing import WinsorisationScaler, SectorNeutralScaler, winsorize_clip_nb
+    
+    mock_preproc.WinsorisationScaler = WinsorisationScaler
+    mock_preproc.SectorNeutralScaler = SectorNeutralScaler
+    mock_preproc.winsorize_clip_nb = winsorize_clip_nb
 
     # 4. Mock DataManager (The Source of Truth)
     mock_dm_mod = types.ModuleType("quant_alpha.data.DataManager")
@@ -120,19 +126,7 @@ def _setup_mocks():
             })
             return df
     mock_dm_mod.DataManager = MockDataManager
-    sys.modules["quant_alpha.data.DataManager"] = mock_dm_mod
-
-    # FIX: Link modules so patch() can traverse quant_alpha.data.DataManager
-    # patch() resolves string paths by looking up attributes.
-    if "quant_alpha" not in sys.modules:
-        sys.modules["quant_alpha"] = types.ModuleType("quant_alpha")
     
-    if "quant_alpha.data" not in sys.modules:
-        sys.modules["quant_alpha.data"] = types.ModuleType("quant_alpha.data")
-        
-    # Link attributes for traversal: quant_alpha -> data -> DataManager
-    setattr(sys.modules["quant_alpha"], "data", sys.modules["quant_alpha.data"])
-    setattr(sys.modules["quant_alpha.data"], "DataManager", mock_dm_mod)
 
     # 5. Mock FactorRegistry (The Feature Engineer)
     mock_reg_mod = types.ModuleType("quant_alpha.features.registry")
@@ -142,7 +136,6 @@ def _setup_mocks():
             df["factor_momentum"] = df["close"] * 0.5
             return df
     mock_reg_mod.FactorRegistry = MockFactorRegistry
-    sys.modules["quant_alpha.features.registry"] = mock_reg_mod
 
     # 6. Mock ML Models & Heavy Libs (Prevent ImportErrors)
     modules_to_mock = [
@@ -176,6 +169,7 @@ def _setup_mocks():
         "quant_alpha.features.composite.smart_signals",
     ]
 
+    mocks = {}
     for mod_name in modules_to_mock:
         m = types.ModuleType(mod_name)
         # Add dummy classes to satisfy imports
@@ -197,41 +191,48 @@ def _setup_mocks():
             m.plot_ic_time_series = MagicMock()
             m.generate_tearsheet = MagicMock()
             
-        sys.modules[mod_name] = m
+        mocks[mod_name] = m
 
-    return mock_cfg_instance
+    # Add core mocks
+    mocks["config.settings"] = mock_settings
+    mocks["config"] = mock_settings
+    mocks["quant_alpha.utils"] = mock_utils
+    mocks["quant_alpha.utils.preprocessing"] = mock_preproc
+    mocks["quant_alpha.data.DataManager"] = mock_dm_mod
+    mocks["quant_alpha.features.registry"] = mock_reg_mod
 
-# Initialize mocks BEFORE importing the script under test
-mock_config = _setup_mocks()
+    # Ensure parent packages exist in mocks to prevent import errors
+    # This fixes the "quant_alpha is not a package" issue by ensuring it has __path__
+    qa = types.ModuleType("quant_alpha")
+    qa.__path__ = []
+    mocks["quant_alpha"] = qa
+    
+    qa_data = types.ModuleType("quant_alpha.data")
+    qa_data.__path__ = []
+    qa_data.DataManager = mock_dm_mod # Link for attribute lookup
+    mocks["quant_alpha.data"] = qa_data
 
-# Import the script under test
-try:
-    import scripts.train_models as train_models
-except ImportError:
-    # Fallback if scripts is not a package
-    try:
-        import train_models
-    except ImportError as e:
-        train_models = None
-        print(f"!! CRITICAL: Could not import train_models: {e}")
+    # Apply patches
+    with patch.dict(sys.modules, mocks):
+        # Import script under test
+        if "scripts.train_models" in sys.modules:
+            tm = importlib.reload(sys.modules["scripts.train_models"])
+        else:
+            tm = importlib.import_module("scripts.train_models")
+        
+        yield tm, mock_cfg_instance
+
+    # Cleanup temp dir
+    shutil.rmtree(test_dir)
 
 
 # ---------------------------------------------------------------------------
 # Test Suite
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(train_models is None, reason="train_models module could not be imported")
 class TestDataFlow:
     
-    def teardown_method(self):
-        """Cleanup temporary directories after each test."""
-        if hasattr(mock_config, 'DATA_DIR') and mock_config.DATA_DIR.exists():
-            try:
-                shutil.rmtree(mock_config.DATA_DIR)
-            except PermissionError:
-                pass # Windows sometimes locks files briefly
-
-    def test_dataset_construction_and_caching(self):
+    def test_dataset_construction_and_caching(self, data_flow_context):
         """
         Verify load_and_build_full_dataset:
         1. Calls DataManager (mocked) to get raw data.
@@ -239,6 +240,8 @@ class TestDataFlow:
         3. Saves the result to parquet cache.
         4. Loads from cache on subsequent calls.
         """
+        train_models, mock_config = data_flow_context
+
         # --- Run 1: Build from "Raw" ---
         # Force rebuild to ignore any existing cache logic
         df_built = train_models.load_and_build_full_dataset(force_rebuild=True)
@@ -264,10 +267,12 @@ class TestDataFlow:
             # Should be identical to built data
             pd.testing.assert_frame_equal(df_built, df_cached)
 
-    def test_macro_feature_enrichment(self):
+    def test_macro_feature_enrichment(self, data_flow_context):
         """
         Verify add_macro_features correctly calculates rolling macro stats.
         """
+        train_models, _ = data_flow_context
+
         # Create dummy data with price history
         dates = pd.date_range("2020-01-01", periods=30)
         df = pd.DataFrame({
@@ -290,10 +295,12 @@ class TestDataFlow:
         last_val = df_enriched["macro_mom_5d"].iloc[-1]
         assert last_val > 0, "Macro momentum should be positive for uptrend"
 
-    def test_target_construction(self):
+    def test_target_construction(self, data_flow_context):
         """
         Verify build_target correctly computes sector-neutral targets.
         """
+        train_models, _ = data_flow_context
+
         # Create 2 tickers in same sector, one outperforming the other
         df = pd.DataFrame({
             "date": pd.to_datetime(["2020-01-01", "2020-01-01", "2020-01-02", "2020-01-02"]),
@@ -314,10 +321,12 @@ class TestDataFlow:
         # B (0.03) vs Mean (0.04) -> Target should be -0.01
         assert res.loc[1, "target"] == pytest.approx(-0.01)
 
-    def test_winsorization_scaler(self):
+    def test_winsorization_scaler(self, data_flow_context):
         """
         Verify WinsorisationScaler clips outliers correctly.
         """
+        train_models, _ = data_flow_context
+
         # Create data with outliers
         df = pd.DataFrame({
             "date": pd.to_datetime(["2020-01-01"] * 100),

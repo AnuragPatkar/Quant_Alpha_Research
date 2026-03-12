@@ -31,14 +31,6 @@ from tqdm import tqdm
 # ---------------------------------------------------------
 # SETUP
 # ---------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
-
-SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.append(str(SCRIPTS_DIR))
-
 from config.settings import config
 from quant_alpha.utils import setup_logging
 import download_data as dd
@@ -375,74 +367,111 @@ def update_earnings(workers: int = 8) -> None:
 # =========================================================
 # 4.  MACRO  (incremental append, same logic as prices)
 # =========================================================
-def _update_macro_series(name: str, ticker: str, today: date) -> str:
-    out = ALT_DIR / f"{name}.csv"
-    close_col = f"{name.lower()}_close"
-
-    def _full_download():
-        df = dd._retry(lambda: dd._yf_ticker(ticker).history(
-            start=str(config.BACKTEST_START_DATE), end=None, auto_adjust=True
-        ), retries=3, delay=4.0)
-        if df is None or df.empty:
-            return None
-        df = df.reset_index()
-        df.columns = [str(c).lower() for c in df.columns]
-        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
-        keep = ["date", "close"] + (["volume"] if "volume" in df.columns else [])
-        return df[keep].rename(columns={
-            "close": close_col,
-            "volume": f"{name.lower()}_volume",
-        })
-
-    # File missing → full download
-    if not out.exists():
-        try:
-            df = _full_download()
-            if df is None:
-                return "error"
-            df.to_csv(out, index=False)
-            return "updated"
-        except Exception as e:
-            log.debug(f"{name}: full download failed — {e}")
-            return "error"
-
+def _update_macro_series(name: str, ticker: str, today: date = None) -> str:
+    """
+    Update macro series data (e.g., SP500, VIX, etc.).
+    
+    Args:
+        name: Series name (e.g., 'sp500', 'vix')
+        ticker: Yahoo Finance ticker (e.g., 'SPY', '^VIX')
+        today: Current date for staleness check
+    
+    Returns:
+        Status: 'updated', 'uptodate', or 'error'
+    """
+    if today is None:
+        today = date.today()
+    
     try:
-        df = pd.read_csv(out)
-        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
-        last_date = df["date"].max().date()
-
-        if last_date >= today:
-            return "uptodate"
-
-        time.sleep(random.uniform(1.0, 2.5))
-
-        new_data = dd._retry(lambda: dd._yf_ticker(ticker).history(
-            start=str(last_date), end=None, auto_adjust=True
-        ), retries=3, delay=4.0)
-
-        if new_data is None or new_data.empty:
-            return "uptodate"
-
-        new_data = new_data.reset_index()
-        new_data.columns = [str(c).lower() for c in new_data.columns]
-
-        if "date" not in new_data.columns or "close" not in new_data.columns:
+        csv_path = ALT_DIR / f"{name}.csv"
+        
+        # Check if file exists and is up to date
+        if csv_path.exists() and csv_path.stat().st_size > 0:
+            try:
+                df = pd.read_csv(csv_path)
+                
+                if len(df) > 0:
+                    # Parse the date column
+                    if 'date' in df.columns:
+                        last_date = pd.to_datetime(df['date'].iloc[-1]).date()
+                    else:
+                        # Try first column
+                        first_col = df.columns[0]
+                        last_date = pd.to_datetime(df[first_col].iloc[-1]).date()
+                    
+                    # If data is current, skip update
+                    if last_date >= today:
+                        return "uptodate"
+            except Exception as e:
+                log.warning(f"Could not parse {csv_path}: {e}")
+        
+        # Download new data
+        # Try using dd module first (if available), fallback to yfinance
+        new_data = None
+        
+        if dd is not None:
+            try:
+                hist = dd._yf_ticker(ticker)
+                new_data = dd._retry(lambda: hist.history(start=str(config.BACKTEST_START_DATE), end=None, auto_adjust=True), retries=3, delay=4.0)
+            except Exception as e:
+                log.debug(f"dd module failed: {e}")
+        
+        # Fallback to yfinance
+        if new_data is None:
+            if yf is None:
+                log.error("Neither dd nor yfinance available")
+                return "error"
+            
+            try:
+                hist = yf.Ticker(ticker)
+                new_data = hist.history(period="max", auto_adjust=True)
+            except Exception as e:
+                log.error(f"Failed to download {name}: {e}")
+                return "error"
+        
+        if new_data is None or len(new_data) == 0:
+            log.warning(f"No data received for {name}")
             return "error"
-
-        new_data["date"] = pd.to_datetime(new_data["date"]).dt.tz_localize(None)
-        new_data = new_data[["date", "close"]].rename(columns={"close": close_col})
-
-        full_df = (
-            pd.concat([df, new_data], ignore_index=True)
-            .drop_duplicates(subset=["date"], keep="last")
-            .sort_values("date")
-            .reset_index(drop=True)
-        )
-        full_df.to_csv(out, index=False)
+        
+        # Process new data
+        new_data = new_data.reset_index()
+        new_data.columns = [str(col).lower().replace(' ', '_') for col in new_data.columns]
+        
+        # Rename Close/Volume columns if present
+        rename_map = {}
+        if 'close' in new_data.columns:
+            rename_map['close'] = f'{name.lower()}_close'
+        if 'volume' in new_data.columns:
+            rename_map['volume'] = f'{name.lower()}_volume'
+        
+        if rename_map:
+            new_data.rename(columns=rename_map, inplace=True)
+            
+        # Ensure date column is timezone-naive
+        if 'date' in new_data.columns:
+             new_data['date'] = pd.to_datetime(new_data['date']).dt.tz_localize(None)
+        
+        # Merge with existing data if file exists
+        if csv_path.exists() and csv_path.stat().st_size > 0:
+            try:
+                existing = pd.read_csv(csv_path)
+                if 'date' in existing.columns:
+                    existing['date'] = pd.to_datetime(existing['date'])
+                
+                merged = pd.concat([existing, new_data], ignore_index=True)
+                merged = merged.drop_duplicates(subset=['date'], keep='last')
+                new_data = merged.sort_values('date').reset_index(drop=True)
+            except Exception as e:
+                log.warning(f"Could not merge {name} data: {e}")
+        
+        # Save to CSV
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        new_data.to_csv(csv_path, index=False)
+        
         return "updated"
-
+        
     except Exception as e:
-        log.debug(f"{name}: macro update failed — {e}")
+        log.debug(f"Error updating {name}: {e}")
         return "error"
 
 

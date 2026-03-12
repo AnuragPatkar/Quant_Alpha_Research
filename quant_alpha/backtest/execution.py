@@ -1,6 +1,40 @@
 """
-Execution Simulator (Institutional Grade)
-Handles realistic trade execution, transaction costs, and market impact.
+Execution Simulator
+===================
+Stochastic execution engine for realistic trade simulation.
+
+Purpose
+-------
+Simulates the microstructure mechanics of trade execution, modeling the
+discrepancy between theoretical signal prices and realized fill prices
+(Implementation Shortfall). It accounts for explicit costs (commissions)
+and implicit costs (spread, volatility-adjusted slippage, and market impact).
+
+Usage
+-----
+.. code-block:: python
+
+    executor = ExecutionSimulator(commission_rate=0.001, spread_bps=0.0005)
+    fill = executor.execute_order(
+        ticker="AAPL",
+        shares=100,
+        side="buy",
+        price=150.0,
+        volume=50_000_000,
+        date="2023-10-25",
+        volatility=0.02
+    )
+
+Importance
+----------
+- **Alpha Preservation**: Prevents "paper trading" bias by penalizing high-turnover strategies.
+- **Stochasticity**: Uses log-normal slippage distributions to model tail risk in execution.
+- **Liquidity Awareness**: Enforces participation limits and probabilistic fill failures.
+
+Tools & Frameworks
+------------------
+- **NumPy**: Stochastic generation (LogNormal) for slippage variance.
+- **Pandas**: Efficient batch alignment of market data.
 """
 
 import pandas as pd
@@ -11,13 +45,23 @@ import logging
 logger = logging.getLogger(__name__)
 
 class ExecutionSimulator:
+    """
+    Simulates trade execution with configurable friction models.
+    
+    Cost Model:
+    $P_{fill} = P_{mkt} \pm (Cost_{spread} + Cost_{slippage} + Cost_{impact})$
+    
+    Where:
+    - $Cost_{slippage} \sim \text{LogNormal}(0, \sigma_{vol})$
+    """
+    
     def __init__(
         self,
-        commission_rate: float = 0.001,    # 10 bps
-        spread_bps: float = 0.0005,       # 5 bps (half-spread)
-        slippage_bps: float = 0.0002,     # 2 bps
-        fill_prob: float = 1.0,           # 100% fill rate
-        commission_per_share: Optional[float] = None # If set, overrides rate
+        commission_rate: float = 0.001,              # 10 bps (0.1%)
+        spread_bps: float = 0.0005,                  # 5 bps (Half-Spread)
+        slippage_bps: float = 0.0002,                # 2 bps (Base Slippage)
+        fill_prob: float = 1.0,                      # 100% Fill Rate (Probability of execution)
+        commission_per_share: Optional[float] = None # Override for per-share pricing (e.g., $0.005)
     ):
         self.commission_rate = commission_rate
         self.spread_bps = spread_bps
@@ -39,18 +83,23 @@ class ExecutionSimulator:
         volatility: float = 0.02   # Used to scale slippage variance
     ) -> Dict:
         """
-        Calculates execution details. Commission is kept separate to avoid 
-        double-counting in the Portfolio class.
+        Computes realized fill price and transaction costs.
+        
+        Commission is calculated separately from price-based friction to facilitate
+        accurate accounting in the Portfolio module (Cost Basis vs Expense).
+        
+        Returns:
+            Dict containing execution metadata, costs, and fill status.
         """
-        # 0. Liquidity Check (Circuit Breaker / Halted)
+        # 0. Liquidity Constraints (Circuit Breaker / Halt Simulation)
         if volume <= 0:
             logger.warning(f"LIQUIDITY_LOCK: {ticker} on {date} (Zero Volume)")
             return self._create_empty_trade(ticker, date, failure_reason="ZERO_VOLUME")
 
-        # Ensure integer shares to prevent "Dust" disconnects (costs on 0.9 shares, but 0 returned)
+        # Integer constraint: Prevents fractional "dust" from accumulating
         shares = int(shares)
 
-        # 1. Fill Probability (No silent failures - log explicitly)
+        # 1. Probabilistic Execution (Stochastic Fill Failure)
         if np.random.random() > self.fill_prob:
             logger.warning(f"FILL_FAILURE: {ticker} on {date} (Liquidity/Probability)")
             return self._create_empty_trade(ticker, date, failure_reason="PROBABILITY")
@@ -60,39 +109,40 @@ class ExecutionSimulator:
 
         notional = shares * price
         
-        # 2. Commission Calculation (Separate from Fill Price)
+        # 2. Commission Calculation (Explicit Cost)
         if self.commission_per_share is not None:
             commission_usd = shares * self.commission_per_share
         else:
             commission_usd = self.commission_rate * notional
         
-        # 3. Market Friction Costs (Spread + Slippage + Impact)
-        # Scalable Slippage: Variance scales with volatility
-        # Fix: Use LogNormal to ensure positive distribution and realistic tails
+        # 3. Implicit Costs (Spread + Slippage + Impact)
+        # Stochastic Slippage: Multiplier follows LogNormal distribution.
+        # High volatility -> Fatter tails in execution cost.
         slippage_variance = np.random.lognormal(0, volatility)
         
         total_friction_rate = self.spread_bps + (self.slippage_bps * slippage_variance) + impact_rate
         friction_usd = total_friction_rate * notional
         
-        # 4. Fill Price (Market + Friction)
-        # NOTE: Commission is NOT included in fill_price to avoid double-counting in Portfolio
+        # 4. Fill Price Adjustment
+        # $P_{fill} = P_{mid} \pm \frac{Cost_{implicit}}{Shares}$
+        # CRITICAL: Commission is excluded here to avoid double-counting in Portfolio basis.
         cost_per_share = friction_usd / shares
         if side == 'buy':
             fill_price = price + cost_per_share
         else:
             fill_price = price - cost_per_share
             
-        # Protection against negative prices in extreme scenarios
+        # Boundary Condition: Prevent negative execution prices
         fill_price = max(0.01, fill_price)
 
-        # 5. Result Construction (NO ROUNDING HERE - Keep Raw Floats)
+        # 5. Settlement Record (Preserve high-precision floats for accounting)
         return {
             'ticker': ticker,
             'shares': int(shares),
             'side': side,
             'market_price': price,
             'fill_price': fill_price,
-            'commission_usd': commission_usd, # Portfolio will use this
+            'commission_usd': commission_usd, # Explicit expense
             'friction_usd': friction_usd,
             'impact_rate': impact_rate,
             'total_cost_usd': commission_usd + friction_usd,
@@ -104,11 +154,14 @@ class ExecutionSimulator:
 
     def execute_batch(self, orders: List[Dict], prices: pd.DataFrame, date: str) -> List[Dict]:
         """
-        Optimized batch execution using O(1) dictionary lookups.
+        Process a list of orders against market data for a specific date.
+        
+        Optimization:
+        Uses dictionary hashing ($O(1)$) for price lookups instead of DataFrame filtering ($O(N)$).
         """
         executed_trades = []
         
-        # Fix: O(1) lookup instead of O(N) scanning inside the loop
+        # Optimization: Pre-compute hash map for O(1) access
         if 'ticker' in prices.columns:
             price_map = prices.set_index('ticker').to_dict('index')
         else:
@@ -138,6 +191,7 @@ class ExecutionSimulator:
         return executed_trades
 
     def _create_empty_trade(self, ticker, date, failure_reason) -> Dict:
+        """Generates a null-object trade record for failed executions."""
         return {
             'ticker': ticker, 'shares': 0, 'side': 'none', 
             'market_price': 0.0, 'fill_price': 0.0,

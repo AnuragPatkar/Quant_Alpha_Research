@@ -1,6 +1,38 @@
 """
-Backtesting Utilities - Optimized & Hardened
-Final Version with performance fixes, safety guards, and core dependencies.
+Backtesting Utilities & Shared Primitives
+=========================================
+Foundational logic for data alignment, financial calculus, and schema validation.
+
+Purpose
+-------
+This module serves as the functional bedrock for the backtesting engine. It centralizes
+critical, repetitive operations—such as return calculation, date alignment, and data
+sanitization—ensuring mathematical consistency and type safety across the platform.
+Optimized for vectorization, it handles the "plumbing" so higher-level modules can
+focus on strategy logic.
+
+Usage
+-----
+.. code-block:: python
+
+    from quant_alpha.backtest.utils import calculate_returns, validate_backtest_data
+
+    # Compute log returns for stationarity
+    log_rets = calculate_returns(prices['close'], method='log')
+
+    # Ensure signal data integrity before execution
+    is_valid, report = validate_backtest_data(signals, prices)
+
+Importance
+----------
+- **Data Integrity**: Enforces strict schema validation ($O(N)$) to prevent silent failures in matrix operations.
+- **Financial Precision**: Provides mathematically rigorous implementations of core metrics (e.g., $SR$, $MDD$) and return transformations ($R_t = \ln(P_t / P_{t-1})$).
+- **Performance**: Utilizes vectorized Pandas/NumPy operations to handle large panel datasets efficiently, minimizing copy overhead during date alignment.
+
+Tools & Frameworks
+------------------
+- **Pandas**: Core data structure for time-series alignment and rolling calculations.
+- **NumPy**: Vectorized arithmetic for high-performance financial math.
 """
 
 import pandas as pd
@@ -13,31 +45,42 @@ logger = logging.getLogger(__name__)
 # ==================== RETURN CALCULATIONS ====================
 
 def calculate_returns(prices: pd.Series, method: str = 'simple') -> pd.Series:
-    """Calculates periodic returns. Essential for engine/metrics pipeline."""
+    """
+    Calculates periodic returns for time-series data.
+
+    Args:
+        prices: Price series.
+        method: 'simple' ($R_t = \\frac{P_t}{P_{t-1}} - 1$) or 'log' ($R_t = \\ln(\\frac{P_t}{P_{t-1}})$).
+    """
     if method == 'log':
         return np.log(prices / prices.shift(1))
     return prices.pct_change()
 
 def cumulative_returns(returns: pd.Series) -> pd.Series:
-    """Calculates equity growth (1.0 based). Required for equity curve generation."""
+    """
+    Computes the cumulative equity growth path (Wealth Index).
+    
+    Formula: $V_t = V_0 \\times \\prod_{i=1}^t (1 + r_i)$
+    """
     return (1 + returns.fillna(0)).cumprod()
 
 # ==================== DATE OPERATIONS (OPTIMIZED) ====================
 
 def align_dates(df1: pd.DataFrame, df2: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Panel-Safe Date Alignment using Set Intersection.
-    OPTIMIZATION: Date conversion (pd.to_datetime) is performed ONLY ONCE per 
-    dataframe to eliminate bottlenecks in large panel datasets.
+    Synchronizes two DataFrames to their intersection of dates.
+
+    Uses strict set intersection ($O(M+N)$) to ensure point-in-time alignment,
+    critical for correlation analysis and signal processing.
     """
     if df1.empty or df2.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    # Convert once and reuse to avoid expensive repeated parsing
+    # Optimization: Type conversion performed once to prevent repetitive casting overhead.
     d1_temp = pd.to_datetime(df1['date'])
     d2_temp = pd.to_datetime(df2['date'])
     
-    # Intersection of unique dates prevents Cartesian explosion
+    # Intersection of unique dates prevents Cartesian explosion in join operations.
     common_dates = sorted(list(set(d1_temp).intersection(set(d2_temp))))
     
     if not common_dates:
@@ -47,7 +90,7 @@ def align_dates(df1: pd.DataFrame, df2: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
     if len(common_dates) < len(d1_temp):
         logger.info(f"📉 Date Alignment: Dropped {len(d1_temp) - len(common_dates)} rows from DF1 to match dates.")
 
-    # Vectorized filtering using pre-converted series
+    # Vectorized boolean masking using pre-converted series for efficiency.
     df1_aligned = df1[d1_temp.isin(common_dates)].copy()
     df2_aligned = df2[d2_temp.isin(common_dates)].copy()
     
@@ -57,12 +100,16 @@ def align_dates(df1: pd.DataFrame, df2: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
 
 def validate_backtest_data(predictions: pd.DataFrame, prices: pd.DataFrame) -> Tuple[bool, List[str]]:
     """
-    Hardened validation ensuring numeric integrity and signal consistency.
-    Essential for preventing crashes during matrix operations (pivot/dot).
+    Enforces schema integrity and numeric type safety for backtest inputs.
+
+    Validates:
+    1. **Schema**: Presence of required columns (`date`, `ticker`, value cols).
+    2. **Types**: Numeric constraints to prevent object-dtype aggregation errors.
+    3. **Uniqueness**: Composite key (`date`, `ticker`) integrity for pivoting.
     """
     errors = []
     
-    # 1. Column Existence Check
+    # 1. Schema Validation (Column Existence)
     pred_req = {'date', 'ticker', 'prediction'}
     price_req = {'date', 'ticker', 'close'}
     
@@ -73,14 +120,14 @@ def validate_backtest_data(predictions: pd.DataFrame, prices: pd.DataFrame) -> T
     
     if errors: return False, errors
 
-    # 2. Numeric Integrity Check (Prevents string/object related math errors)
+    # 2. Type Safety (Numeric Integrity)
     if not pd.api.types.is_numeric_dtype(predictions['prediction']):
         errors.append("Prediction column must be numeric.")
     
     if not pd.api.types.is_numeric_dtype(prices['close']):
         errors.append("Price close column must be numeric.")
 
-    # 3. Duplicate Check (Ensures unique index for pivoting)
+    # 3. Key Integrity (Duplicate Detection)
     if predictions.duplicated(subset=['date', 'ticker']).any():
         errors.append("Duplicate (date, ticker) pairs in predictions found.")
 
@@ -89,7 +136,11 @@ def validate_backtest_data(predictions: pd.DataFrame, prices: pd.DataFrame) -> T
 # ==================== PERFORMANCE HELPERS ====================
 
 def calculate_sharpe(returns: pd.Series, risk_free_rate: float = 0.02, periods: int = 252) -> float:
-    """Annualized Sharpe Ratio calculation."""
+    """
+    Computes the Annualized Sharpe Ratio.
+
+    Formula: $SR = \\frac{E[R_p - R_f]}{\\sigma_p} \\times \\sqrt{N}$
+    """
     if returns.empty or returns.std() == 0:
         return 0.0
     excess_ret = returns.mean() - (risk_free_rate / periods)
@@ -97,14 +148,19 @@ def calculate_sharpe(returns: pd.Series, risk_free_rate: float = 0.02, periods: 
 
 def calculate_max_drawdown(equity: pd.Series) -> float:
     """
-    Calculates Max Drawdown with Division-by-Zero protection.
-    Returns: -1.0 for total bankruptcy, otherwise decimal percentage.
+    Computes Maximum Drawdown (MDD) from the equity curve.
+    
+    Formula: $MDD = \\min_t \\left( \\frac{V_t - HWM_t}{HWM_t} \\right)$
+    where $HWM_t = \\max_{\\tau \\le t} V_\\tau$.
+    
+    Returns:
+        float: Negative decimal (e.g., -0.20 for 20% DD). Returns -1.0 on bankruptcy.
     """
     if equity.empty or (equity <= 0).all():
         return -1.0 
         
     running_max = equity.cummax()
-    # Replace 0 with NaN to avoid division-by-zero, then execute calculation
+    # Numerical Stability: Replace 0 with NaN to handle bankruptcy cases gracefully
     safe_max = running_max.replace(0, np.nan)
     drawdowns = (equity - safe_max) / safe_max
     
@@ -114,7 +170,9 @@ def calculate_max_drawdown(equity: pd.Series) -> float:
 # ==================== FORMATTING (REFINED) ====================
 
 def format_large_number(num: float) -> str:
-    """Efficient loop-based scaling for large financial figures (K, M, B, T)."""
+    """
+    Scales large values into human-readable strings (e.g., 1_000_000 -> $1.00M).
+    """
     if num is None or np.isnan(num): return "$0.00"
     
     suffix = ['', 'K', 'M', 'B', 'T']
@@ -125,9 +183,13 @@ def format_large_number(num: float) -> str:
         val /= 1000.0
         idx += 1
     
-    # Preserve sign while formatting
+    # Sign preservation handled implicitly via conditional multiplication
     return f"${val * (1 if num >= 0 else -1):.2f}{suffix[idx]}"
 
 def format_bps(num: float) -> str:
-    """Converts decimal to basis points (e.g., 0.0005 -> 5.0 bps)."""
+    """
+    Converts decimal rate to basis points notation.
+    
+    Example: 0.0005 -> '5.0 bps'
+    """
     return f"{num * 10000:.1f} bps"

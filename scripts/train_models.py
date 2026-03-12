@@ -484,7 +484,8 @@ def select_orthogonal_features(df: pd.DataFrame,
     else:
         corr_matrix = np.array([[1.0]])
 
-    selected, sel_idxs = [], []
+    selected: list[str] = []
+    sel_idxs: list[int] = []
     for rank_pos, global_idx in enumerate(top_idx):
         feat = candidates[global_idx]
         if not sel_idxs:
@@ -934,7 +935,7 @@ def generate_optimized_weights(predictions: pd.DataFrame,
                       if d >= price_matrix.index.min() + pd.Timedelta(days=lookback_days)]
     allocs         = []
     lw             = LedoitWolf()
-    cur_w          = {}
+    cur_w: dict[str, float] = {}
     prev_date      = None
     pred_idx       = predictions.set_index(["date", "ticker"])["ensemble_alpha"]
 

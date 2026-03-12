@@ -55,7 +55,7 @@ class FactorValidator:
         self.data       = data.sort_values(["ticker", "date"]).reset_index(drop=True)
         self.target_col = target_col
         self.factors    = self._identify_factors()
-        self.results    = {}
+        self.results: dict[str, pd.DataFrame] = {}
 
         # Sanity check: target must be a FORWARD return, not contemporaneous
         self._assert_target_is_forward()

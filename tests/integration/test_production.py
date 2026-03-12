@@ -22,9 +22,13 @@ import tempfile
 import shutil
 import types
 import logging
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from datetime import datetime, date
+
+# Suppress PyArrow extension warnings
+warnings.filterwarnings("ignore", message=".*pyarrow.*")
 
 # ---------------------------------------------------------------------------
 # Path Setup
@@ -40,9 +44,6 @@ if str(SCRIPTS_DIR) not in sys.path:
 # ---------------------------------------------------------------------------
 # Mocking Infrastructure (Pre-import)
 # ---------------------------------------------------------------------------
-# We must mock the configuration and heavy dependencies BEFORE importing 
-# the scripts to prevent them from crashing on missing paths or libs.
-
 def _stub_module(module_name, **attrs):
     """
     Robustly stub a module in sys.modules, ensuring parent packages exist.
@@ -79,9 +80,6 @@ def _stub_module(module_name, **attrs):
         
     return m
 
-# 1. Stub Config
-_stub_module("config")
-
 # Create a dummy config object to satisfy import-time requirements
 # optimize_portfolio.py accesses config.RESULTS_DIR and config.CACHE_DIR at module level
 class DummyConfig:
@@ -89,79 +87,14 @@ class DummyConfig:
     CACHE_DIR = Path("cache")
     DATA_DIR = Path("data")
     PRICES_DIR = Path("prices")
+    FUNDAMENTALS_DIR = Path("fundamentals")
+    EARNINGS_DIR = Path("earnings")
+    ALTERNATIVE_DIR = Path("alternative")
     MODELS_DIR = Path("models")
     LOG_DIR = Path("logs")
     BACKTEST_START_DATE = "2020-01-01"
+    BACKTEST_END_DATE = "2023-12-31"
     INITIAL_CAPITAL = 100000
-
-_stub_module("config.settings", config=DummyConfig())
-
-# 2. Stub Heavy Libs
-_stub_module("psutil", virtual_memory=lambda: MagicMock(total=16*1024**3, used=1024**3))
-_stub_module("numba", njit=lambda *args, **kwargs: (lambda f: f), prange=range)
-_stub_module("tqdm", tqdm=lambda x, **k: x)
-_stub_module("lightgbm")
-_stub_module("xgboost")
-_stub_module("catboost")
-_stub_module("sklearn.covariance", LedoitWolf=MagicMock())
-
-# 3. Stub Quant Alpha Internals
-# Data
-_stub_module("quant_alpha.data")
-_stub_module("quant_alpha.data.DataManager", DataManager=MagicMock())
-
-# Utils
-_stub_module("quant_alpha.utils", 
-             setup_logging=MagicMock(), 
-             load_parquet=pd.read_parquet, 
-             save_parquet=lambda df, path: df.to_parquet(path), 
-             time_execution=lambda f: f,
-             calculate_returns=lambda df: df.pct_change())
-
-# Models
-_stub_module("quant_alpha.models.lightgbm_model", LightGBMModel=MagicMock())
-_stub_module("quant_alpha.models.xgboost_model", XGBoostModel=MagicMock())
-_stub_module("quant_alpha.models.catboost_model", CatBoostModel=MagicMock())
-_stub_module("quant_alpha.models.trainer", WalkForwardTrainer=MagicMock())
-_stub_module("quant_alpha.models.feature_selector", FeatureSelector=MagicMock())
-
-# Backtest & Opt
-_stub_module("quant_alpha.backtest.engine", BacktestEngine=MagicMock())
-_stub_module("quant_alpha.backtest.metrics", print_metrics_report=MagicMock())
-_stub_module("quant_alpha.backtest.attribution", SimpleAttribution=MagicMock(), FactorAttribution=MagicMock())
-_stub_module("quant_alpha.optimization.allocator", PortfolioAllocator=MagicMock())
-
-# Visualization
-_stub_module("quant_alpha.visualization", 
-             plot_equity_curve=MagicMock(), plot_drawdown=MagicMock(),
-             plot_monthly_heatmap=MagicMock(), plot_ic_time_series=MagicMock(),
-             generate_tearsheet=MagicMock())
-
-# Features (Imported by train_models.py)
-_stub_module("quant_alpha.features.registry", FactorRegistry=MagicMock())
-
-feature_modules = [
-    "technical.momentum", "technical.volatility", "technical.volume", "technical.mean_reversion",
-    "fundamental.value", "fundamental.quality", "fundamental.growth", "fundamental.financial_health",
-    "earnings.surprises", "earnings.estimates", "earnings.revisions",
-    "alternative.macro", "alternative.sentiment", "alternative.inflation",
-    "composite.macro_adjusted", "composite.system_health", "composite.smart_signals"
-]
-for fm in feature_modules:
-    _stub_module(f"quant_alpha.features.{fm}")
-
-# ---------------------------------------------------------------------------
-# Import Scripts (Now safe)
-# ---------------------------------------------------------------------------
-try:
-    import scripts.deploy_model as deploy_model
-    import scripts.generate_predictions as gen_pred
-    import scripts.optimize_portfolio as opt_port
-    # Also need train_models for shared utils used in generate_predictions
-    import scripts.train_models as train_models
-except ImportError as e:
-    # If this fails, the test cannot run. We let it fail loudly.
-    raise ImportError(f"Critical failure importing scripts: {e}")
 
 # ---------------------------------------------------------------------------
 # Test Suite
@@ -169,6 +102,126 @@ except ImportError as e:
 
 class TestProductionCycle:
     
+    @pytest.fixture
+    def isolated_modules(self):
+        """
+        Sets up mocks in sys.modules, runs test, then restores sys.modules.
+        This prevents pollution of other tests and allows safe importing of scripts.
+        
+        CRITICAL: Uses patch.dict(sys.modules) to scope mocking to test execution only.
+        After patch context exits, explicitly clears quant_alpha.* modules to prevent
+        references to stubs persisting in imported modules' namespaces.
+        """
+        import importlib
+        import gc
+        
+        # This import must happen BEFORE we start patching sys.modules,
+        # so we can get the real classes from the filesystem.
+        from quant_alpha.utils.preprocessing import WinsorisationScaler, SectorNeutralScaler, winsorize_clip_nb
+
+        try:
+            with patch.dict(sys.modules):
+                # 1. Stub Config
+                _stub_module("config")
+                _stub_module("config.settings", config=DummyConfig())
+
+                # 2. Stub Heavy Libs
+                _stub_module("psutil", virtual_memory=lambda: MagicMock(total=16*1024**3, used=1024**3))
+                _stub_module("numba", njit=lambda *args, **kwargs: (lambda f: f), prange=range)
+                _stub_module("tqdm", tqdm=lambda x, **k: x)
+                _stub_module("lightgbm")
+                _stub_module("xgboost")
+                _stub_module("catboost")
+                _stub_module("sklearn.covariance", LedoitWolf=MagicMock())
+
+                # 3. Stub Quant Alpha Internals
+                # Data
+                _stub_module("quant_alpha.data")
+                _stub_module("quant_alpha.data.DataManager", DataManager=MagicMock())
+
+                # Utils
+                _stub_module("quant_alpha.utils", 
+                            setup_logging=MagicMock(), 
+                            load_parquet=pd.read_parquet, 
+                            save_parquet=lambda df, path: df.to_parquet(path), 
+                            time_execution=lambda f: f,
+                            calculate_returns=lambda df: df.pct_change())
+                
+                # Preprocessing: Use the REAL classes we imported before the patch.
+                _stub_module("quant_alpha.utils.preprocessing",
+                             WinsorisationScaler=WinsorisationScaler,
+                             SectorNeutralScaler=SectorNeutralScaler,
+                             winsorize_clip_nb=winsorize_clip_nb)
+
+                # Models
+                _stub_module("quant_alpha.models.lightgbm_model", LightGBMModel=MagicMock())
+                _stub_module("quant_alpha.models.xgboost_model", XGBoostModel=MagicMock())
+                _stub_module("quant_alpha.models.catboost_model", CatBoostModel=MagicMock())
+                _stub_module("quant_alpha.models.trainer", WalkForwardTrainer=MagicMock())
+                _stub_module("quant_alpha.models.feature_selector", FeatureSelector=MagicMock())
+
+                # Backtest & Opt
+                _stub_module("quant_alpha.backtest.engine", BacktestEngine=MagicMock())
+                _stub_module("quant_alpha.backtest.metrics", print_metrics_report=MagicMock())
+                _stub_module("quant_alpha.backtest.attribution", SimpleAttribution=MagicMock(), FactorAttribution=MagicMock())
+                _stub_module("quant_alpha.optimization.allocator", PortfolioAllocator=MagicMock())
+
+                # Visualization
+                _stub_module("quant_alpha.visualization", 
+                            plot_equity_curve=MagicMock(), plot_drawdown=MagicMock(),
+                            plot_monthly_heatmap=MagicMock(), plot_ic_time_series=MagicMock(),
+                            generate_tearsheet=MagicMock())
+
+                # Features (Imported by train_models.py)
+                _stub_module("quant_alpha.features.registry", FactorRegistry=MagicMock())
+
+                feature_modules = [
+                    "technical.momentum", "technical.volatility", "technical.volume", "technical.mean_reversion",
+                    "fundamental.value", "fundamental.quality", "fundamental.growth", "fundamental.financial_health",
+                    "earnings.surprises", "earnings.estimates", "earnings.revisions",
+                    "alternative.macro", "alternative.sentiment", "alternative.inflation",
+                    "composite.macro_adjusted", "composite.system_health", "composite.smart_signals"
+                ]
+                for fm in feature_modules:
+                    _stub_module(f"quant_alpha.features.{fm}")
+
+                # 4. Import Scripts (Safe inside patched sys.modules)
+                import scripts.deploy_model as deploy_model
+                import scripts.generate_predictions as gen_pred
+                import scripts.optimize_portfolio as opt_port
+                import scripts.train_models as train_models
+                
+                # Expose to tests
+                self.deploy_model = deploy_model
+                self.gen_pred = gen_pred
+                self.opt_port = opt_port
+                self.train_models = train_models
+                
+                yield
+        finally:
+            # POST-PATCH CLEANUP (runs after patch.dict context exits)
+            # Remove quant_alpha AND scripts modules to force fresh imports in subsequent tests
+            # This is CRITICAL because scripts modules cache MagicMock references that would
+            # cause "Can't pickle" errors when unit tests try to use real model classes
+            modules_to_delete = [
+                name for name in list(sys.modules.keys()) 
+                if name.startswith("quant_alpha") or name.startswith("scripts")
+            ]
+            for module_name in modules_to_delete:
+                try:
+                    del sys.modules[module_name]
+                except (KeyError, RuntimeError):
+                    pass
+            
+            # Clear importlib caches
+            try:
+                importlib.invalidate_caches()
+            except Exception:
+                pass
+            
+            # Force GC to clean up references to mocked modules
+            gc.collect()
+
     @pytest.fixture
     def mock_env(self):
         """
@@ -220,7 +273,7 @@ class TestProductionCycle:
         # 3. Patch Config in all loaded scripts
         # We need to patch the 'config' object imported in each script
         patches = []
-        for module in [deploy_model, gen_pred, opt_port, train_models]:
+        for module in [self.deploy_model, self.gen_pred, self.opt_port, self.train_models]:
             p = patch.object(module, 'config', mock_cfg)
             p.start()
             patches.append(p)
@@ -232,7 +285,7 @@ class TestProductionCycle:
             p.stop()
         shutil.rmtree(temp_dir)
 
-    def test_health_check_detects_stale_cache(self, mock_env):
+    def test_health_check_detects_stale_cache(self, isolated_modules, mock_env):
         """
         deploy_model.verify_deployment should warn/fail if signal cache is missing or stale.
         """
@@ -247,20 +300,21 @@ class TestProductionCycle:
 
         # Mock joblib to avoid loading the empty file
         with patch("joblib.load", return_value={"model": mock_model, "feature_names": ["f1"]}):
-            manager = deploy_model.DeploymentManager()
+            manager = self.deploy_model.DeploymentManager()
             
             # Run check - should log warning about missing cache
-            with patch.object(deploy_model.logger, "warning") as mock_warn:
+            with patch.object(self.deploy_model.logger, "warning") as mock_warn:
                 manager.verify_deployment()
                 # Should warn about missing ensemble_predictions.parquet
                 # Note: verify_deployment logs warnings but might return False if no models or issues found
                 # We check if logger.warning was called with specific text
                 assert any("not found" in str(c) for c in mock_warn.call_args_list)
 
-    def test_inference_generates_signals(self, mock_env):
+    def test_inference_generates_signals(self, isolated_modules, mock_env):
         """
         generate_predictions should load models, process data, and save parquet.
         """
+        warnings.filterwarnings("ignore", message=".*pyarrow.*")
         # 1. Setup Dummy Data
         dates = pd.date_range("2023-01-01", periods=5, freq="B")
         master_df = pd.DataFrame({
@@ -274,7 +328,7 @@ class TestProductionCycle:
         
         # 2. Mock Dependencies
         mock_model = MagicMock()
-        # FIX: Return predictions matching input length (1 row when last_day_only=True)
+        # FIX: Return predictions matching input length
         mock_model.predict.side_effect = lambda x: np.array([0.5] * len(x))
         payload = {"model": mock_model, "feature_names": ["f1"], "trained_to": "2022"}
         
@@ -285,7 +339,7 @@ class TestProductionCycle:
              patch("scripts.generate_predictions.add_macro_features", side_effect=lambda x: x):
             
             # 3. Run
-            gen_pred.generate_predictions(last_day_only=True)
+            self.gen_pred.generate_predictions(last_day_only=True)
             
         # 4. Verify Output
         out_files = list(mock_env["preds"].glob("*.parquet"))
@@ -294,7 +348,7 @@ class TestProductionCycle:
         assert "ensemble_alpha" in df.columns
         assert len(df) == 1 # last day only
 
-    def test_optimization_generates_orders(self, mock_env):
+    def test_optimization_generates_orders(self, isolated_modules, mock_env):
         """
         optimize_portfolio should read signals and generate orders.csv.
         """
@@ -323,7 +377,7 @@ class TestProductionCycle:
         with patch("scripts.optimize_portfolio.PRICES_DIR", mock_env["cache"] / "master_data_with_factors.parquet"), \
              patch("scripts.optimize_portfolio.PREDICTIONS_DIR", mock_env["preds"]), \
              patch("scripts.optimize_portfolio.OUTPUT_DIR", mock_env["orders"]), \
-             patch.object(opt_port.ProductionOptimizer, "estimate_risk_model") as mock_risk:
+             patch.object(self.opt_port.ProductionOptimizer, "estimate_risk_model") as mock_risk:
             
             mock_risk.return_value = pd.DataFrame(
                 [[0.04, 0.01], [0.01, 0.04]], 
@@ -333,10 +387,10 @@ class TestProductionCycle:
             # We also need to ensure the Allocator is mocked or works
             # Since we stubbed PortfolioAllocator in sys.modules, it returns a MagicMock
             # We need to configure that mock to return weights
-            mock_allocator_instance = opt_port.PortfolioAllocator.return_value
+            mock_allocator_instance = self.opt_port.PortfolioAllocator.return_value
             mock_allocator_instance.allocate.return_value = {"AAPL": 0.6, "MSFT": 0.4}
             
-            optimizer = opt_port.ProductionOptimizer(capital=100_000, method="mean_variance")
+            optimizer = self.opt_port.ProductionOptimizer(capital=100_000, method="mean_variance")
             optimizer.run()
             
         # 3. Verify Orders

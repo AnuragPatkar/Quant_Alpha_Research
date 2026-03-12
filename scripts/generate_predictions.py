@@ -66,7 +66,7 @@ from scripts.train_models import (
 # When generate_predictions.py is the entry point, __main__ is THIS file, not
 # train_models. Injecting the function into __main__ fixes the AttributeError.
 import sys as _sys
-_sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae
+_sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae  # type: ignore
 from config.settings import config
 from quant_alpha.utils.preprocessing import WinsorisationScaler, SectorNeutralScaler
 from quant_alpha.utils import setup_logging
