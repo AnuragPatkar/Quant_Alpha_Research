@@ -1,16 +1,44 @@
 """
-Volume & Liquidity Factors (Production Hardened)
-Capture trading activity, liquidity shocks, and smart money flow.
-Total Factors: 12
+Volume & Liquidity Factors
+==========================
+Quantitative signals capturing trading activity, liquidity constraints, and institutional flow.
 
-Key Insights:
-- Volume Z-Score: Detects statistical volume anomalies.
-- Amihud: Measures price impact per unit of volume (Illiquidity).
-- Price-Vol Corr: Does volume confirm the trend?
-- VWAP: Institutional benchmark for fair value.
-- Force Index: Combines price movement and volume strength.
-- Ease of Movement: Identifies 'Easy' moves (low resistance).
-- CMF & MFI: Classic flow oscillators for divergence detection.
+Purpose
+-------
+This module constructs alpha factors quantifying the magnitude and quality of trading
+activity. It moves beyond simple volume analysis to measure:
+1.  **Liquidity Risk**: Amihud Illiquidity Ratio estimates price impact cost.
+2.  **Smart Money Flow**: Accumulation/Distribution and Chaikin Money Flow (CMF)
+    track institutional positioning.
+3.  **Trend Confirmation**: Price-Volume correlation validates whether price moves
+    are supported by participation.
+4.  **Anomalies**: Z-Scores identify statistically significant volume spikes often
+    associated with news events or earnings surprises.
+
+Usage
+-----
+Factors are automatically registered with the `FactorRegistry` upon import.
+
+.. code-block:: python
+
+    registry = FactorRegistry()
+    liq_factor = registry.get('amihud_63d')
+    signals = liq_factor.compute(market_data_df)
+
+Importance
+----------
+- **Execution Quality**: Liquidity metrics (Turnover, Amihud) are critical for
+  capacity analysis and transaction cost modeling ($TC \propto \text{Illiquidity}$).
+- **Signal Confirmation**: Volume often leads price. Divergences between price
+  momentum and flow oscillators (MFI, CMF) can signal trend exhaustion.
+- **Regime Detection**: High volume volatility often precedes volatility in price,
+  serving as a leading indicator for regime shifts.
+
+Tools & Frameworks
+------------------
+- **Pandas**: Efficient rolling window aggregations and `groupby` transformations.
+- **NumPy**: Vectorized arithmetic for oscillator derivation and correlation.
+- **FactorRegistry**: Decorator-based registration for pipeline integration.
 """
 
 import numpy as np
@@ -18,7 +46,7 @@ import pandas as pd
 from ..registry import FactorRegistry
 from ..base import TechnicalFactor
 
-EPS = 1e-9  # Prevent Division by Zero
+EPS = 1e-9  # Machine epsilon for numerical stability
 
 # ==================== 1. VOLUME ANOMALIES (Z-SCORE) ====================
 
@@ -36,12 +64,21 @@ EPS = 1e-9  # Prevent Division by Zero
 
 @FactorRegistry.register()
 class VolumeZScore21D(TechnicalFactor):
+    """
+    Volume Z-Score (21D).
+    
+    Standardizes volume to detect statistical anomalies.
+    
+    Formula:
+    $$ Z_t = \frac{V_t - \mu_{21}}{\sigma_{21}} $$
+    """
     def __init__(self, period=21):
         super().__init__(name='vol_zscore_21d', description='Volume Z-Score 21D', lookback_period=period + 5)
         self.period = period
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         def calc_z(x):
+            # Standard Score calculation with epsilon for stability
             return (x - x.rolling(window=self.period).mean()) / (x.rolling(window=self.period).std() + EPS)
         return df.groupby('ticker')['volume'].transform(calc_z)
     
@@ -49,7 +86,12 @@ class VolumeZScore21D(TechnicalFactor):
 
 @FactorRegistry.register()
 class VolumeMA20Ratio(TechnicalFactor):
-    """Ratio of Volume to 20D Moving Average"""
+    """
+    Relative Volume Ratio (20D).
+    
+    Compares current volume to its recent average.
+    Formula: $$ R_t = \frac{V_t}{\text{SMA}(V_t, 20)} $$
+    """
     def __init__(self, period=20):
         super().__init__(name='vol_ma20_ratio', description='Volume MA20 Ratio', lookback_period=period + 5)
         self.period = period
@@ -62,20 +104,31 @@ class VolumeMA20Ratio(TechnicalFactor):
 
 @FactorRegistry.register()
 class TurnoverRate(TechnicalFactor):
-    """Proxy for Turnover: Log(Close * Volume)"""
+    """
+    Logarithmic Dollar Volume (Liquidity Proxy).
+    
+    Estimates the average daily turnover in dollar terms.
+    Formula: $$ L_t = \ln(\text{SMA}(P_t \times V_t, 21)) $$
+    """
     def __init__(self, period=21):
         super().__init__(name='turnover_rate', description='Log Dollar Volume (Liquidity)', lookback_period = period + 5)
         self.period = period
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         dollar_vol = df['close'] * df['volume']
+        # Log-transform smoothes the distribution of dollar volume across caps
         return dollar_vol.groupby(df['ticker']).transform(lambda x: np.log(x.rolling(window=self.period).mean() + EPS))
  
 @FactorRegistry.register()
 class Amihud63D(TechnicalFactor):
     """
-    Amihud Illiquidity Ratio (63D)
-    High Value = Illiquid (Small volume moves price a lot)
+    Amihud Illiquidity Ratio (63D).
+    
+    Measures the price impact per unit of volume. High values indicate low liquidity
+    (large price moves on small volume).
+    
+    Formula:
+    $$ ILLIQ_T = \frac{1}{N} \sum_{t=1}^{N} \frac{|R_t|}{P_t V_t} $$
     """
     def __init__(self, period=63):
         super().__init__(name='amihud_63d', description='Amihud Illiquidity 63D', lookback_period=period + 5)
@@ -84,6 +137,7 @@ class Amihud63D(TechnicalFactor):
     def compute(self, df:pd.DataFrame) -> pd.Series:
         dollar_vol = (df['close'] * df['volume']) + EPS
         dollar_illiq = df['close'].pct_change().abs() / dollar_vol
+        # Scaling factor (1e6) adjusts values to a readable range
         return dollar_illiq.groupby(df['ticker']).transform(lambda x: x.rolling(window=self.period).mean() * 1e6)
     
 # ==================== 4. SMART MONEY & INSTITUTIONAL ====================
@@ -131,13 +185,20 @@ class Amihud63D(TechnicalFactor):
 
 @FactorRegistry.register()
 class PriceVolumeCorr21D(TechnicalFactor):
-    """Correlation between Price and Volume (21D)"""
+    """
+    Price-Volume Correlation (21D).
+    
+    Measures the linear relationship between price changes and volume levels.
+    - Positive $\\rho$: Volume expands on rallies (Bullish).
+    - Negative $\\rho$: Volume expands on sell-offs (Bearish/Panic).
+    """
     def __init__(self, period=21):
         super().__init__(name='price_vol_corr_21d', description='Price-Volume Correlation 21D', lookback_period=period + 5)
         self.period = period
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
         def calc_corr(x):
+            # Rolling Pearson Correlation
             return x['close'].rolling(window=self.period).corr(x['volume'])
             
         return df.groupby('ticker', group_keys=False).apply(calc_corr).fillna(0)
@@ -147,8 +208,12 @@ class PriceVolumeCorr21D(TechnicalFactor):
 @FactorRegistry.register()
 class ForceIndex14D(TechnicalFactor):
     """
-    Elder's Force Index (14D)
-    Force = PriceChange * Volume. Smoothed by EMA.
+    Elder's Force Index (14D).
+    
+    Combines price movement magnitude and volume to measure buying/selling pressure.
+    
+    Formula:
+    $$ FI = \text{EMA}(\Delta P \times V, 14) $$
     """
     def __init__(self, period=14):
         super().__init__(name='force_index_14d', description='Elder Force Index 14D', lookback_period=period + 5)
@@ -156,10 +221,10 @@ class ForceIndex14D(TechnicalFactor):
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
         def calc_force(x):
-            # Change * Volume
+            # Raw Force = \Delta P * V
             raw_force = x['close'].diff() * x['volume']
             
-            # EMA Smoothing
+            # EMA Smoothing to reduce noise
             ema_force = raw_force.ewm(span=self.period, adjust=False).mean()
             
             # Normalize by average dollar volume to scale it
@@ -201,9 +266,10 @@ class ForceIndex14D(TechnicalFactor):
 @FactorRegistry.register()
 class ChaikinMoneyFlow21D(TechnicalFactor):
     """
-    Chaikin Money Flow (CMF)
-    Close near High = Accumulation.
-    Close near Low = Distribution.
+    Chaikin Money Flow (CMF).
+    
+    Measures the accumulation/distribution line over a specific period.
+    Captures flow relative to the high-low range.
     """
     def __init__(self, period=21):
         super().__init__(name='cmf_21d', description='Chaikin Money Flow 21D', lookback_period=period + 5)
@@ -211,14 +277,14 @@ class ChaikinMoneyFlow21D(TechnicalFactor):
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
         def calc_cmf(x):
-            # 1. Money Flow Multiplier
+            # 1. Money Flow Multiplier (MFM): Position of Close within High-Low range
             range_len = (x['high'] - x['low']) + EPS
             mf_multiplier = ((x['close'] - x['low']) - (x['high'] - x['close'])) / range_len
             
-            # 2. Money Flow Volume
+            # 2. Money Flow Volume (MFV)
             mf_volume = mf_multiplier * x['volume']
             
-            # 3. CMF = Sum(MF Vol) / Sum(Vol)
+            # 3. CMF = \frac{\sum MFV}{\sum V}
             rolling_mf_vol = mf_volume.rolling(window=self.period).sum()
             rolling_vol = x['volume'].rolling(window=self.period).sum()
             
@@ -229,7 +295,10 @@ class ChaikinMoneyFlow21D(TechnicalFactor):
 @FactorRegistry.register()
 class MoneyFlowIndex14(TechnicalFactor):
     """
-    Money Flow Index (MFI) - The "Volume-Weighted RSI".
+    Money Flow Index (MFI).
+    
+    Momentum indicator that uses price and volume to predict overbought or oversold conditions.
+    Often referred to as volume-weighted RSI.
     """
     def __init__(self, period=14):
         super().__init__(name='mfi_14', description='Money Flow Index 14D', lookback_period=period + 5)
@@ -240,16 +309,16 @@ class MoneyFlowIndex14(TechnicalFactor):
             # 1. Typical Price
             tp = (x['high'] + x['low'] + x['close']) / 3
             
-            # 2. Raw Money Flow
+            # 2. Raw Money Flow (Typical Price * Volume)
             raw_mf = tp * x['volume']
             
-            # 3. Positive vs Negative Flow
+            # 3. Separate Positive and Negative Flow based on price direction
             tp_diff = tp.diff()
             
             pos_flow = raw_mf.where(tp_diff > 0, 0)
             neg_flow = raw_mf.where(tp_diff < 0, 0)
             
-            # 4. Rolling Sums
+            # 4. Rolling Sums (Ratio Calculation)
             pos_mf_sum = pos_flow.rolling(window=self.period).sum()
             neg_mf_sum = neg_flow.rolling(window=self.period).sum()
             
@@ -267,11 +336,12 @@ class MoneyFlowIndex14(TechnicalFactor):
 @FactorRegistry.register()
 class AccumulationDistribution(TechnicalFactor):
     """
-    Accumulation/Distribution Line (A/D Line)
-    Combines price position within bar + volume
-    More robust than OBV for catch reversals
+    Accumulation/Distribution Line (A/D).
     
-    Formula:
+    Cumulative measure of volume flow based on the close price's location within the
+    daily High-Low range. Acts as a leading indicator for price reversals.
+    
+    Logic:
     1. Money Flow Multiplier (MFM) = [(Close - Low) - (High - Close)] / (High - Low)
     2. Money Flow Volume (MFV) = MFM * Volume
     3. A/D Line = Cumulative sum of MFV
@@ -286,7 +356,7 @@ class AccumulationDistribution(TechnicalFactor):
             close = group['close']
             volume = group['volume']
             
-            # 1. Money Flow Multiplier (MFM)
+            # 1. Money Flow Multiplier (MFM) - Quantification of buying/selling pressure within bar
             # Handles division by zero: if High = Low, MFM = 0
             range_hl = high - low
             mfm = np.where(
@@ -295,10 +365,10 @@ class AccumulationDistribution(TechnicalFactor):
                 0
             )
             
-            # 2. Money Flow Volume (MFV)
+            # 2. Money Flow Volume (MFV) - Volume adjusted by pressure
             mfv = mfm * volume
             
-            # 3. Cumulative A/D Line
+            # 3. Cumulative A/D Line - Running total
             ad_line = pd.Series(mfv).cumsum()
             
             # Normalize by dividing by volume scaling

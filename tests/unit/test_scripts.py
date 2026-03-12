@@ -284,12 +284,6 @@ class TestModelTraining:
             assert train[1] < test[0], "Train end must be before test start"
             assert (test[0] - train[1]) == 5, "Gap must be exactly 5"
 
-    # Replace the test_multiple_splits_no_overlap method:
-
-    # Replace the test_multiple_splits_no_overlap method:
-
-    # Replace both failing test methods in TestModelTraining class:
-
     def test_multiple_splits_no_overlap(self):
         """
         Verifies that consecutive Test windows are contiguous but non-overlapping.

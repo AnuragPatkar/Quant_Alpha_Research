@@ -1,6 +1,49 @@
 """
-Model Drift Detector
-Monitors prediction distribution and concept drift.
+Model Drift & Regime Detection System
+=====================================
+Statistical monitoring engine for detecting Concept Drift and Label Shift in live model predictions.
+
+Purpose
+-------
+The `ModelDriftDetector` identifies stationarity violations in the model's prediction distribution
+($P(\hat{y})$) or the underlying return distribution ($P(y)$). It serves as an early warning system
+for "Model Decay," triggering retraining protocols when performance metrics degrade beyond
+statistically significant thresholds.
+
+Usage
+-----
+Intended for integration into the daily post-market reporting loop.
+
+.. code-block:: python
+
+    from quant_alpha.monitoring.model_drift import ModelDriftDetector
+
+    detector = ModelDriftDetector(rolling_window=30)
+
+    # Daily Update
+    detector.update(
+        date="2023-10-27",
+        predictions=daily_preds_series,
+        actual_returns=daily_returns_series
+    )
+
+    # Check for Drift
+    status = detector.detect_drift()
+    if status['drift_detected']:
+        print(f"Drift Alert: {status['alerts']}")
+
+Importance
+----------
+- **Alpha Preservation**: Detects when market regimes shift, rendering the trained model obsolete.
+- **Risk Mitigation**: Identifies "Silent Failure" modes where the model becomes structurally
+  biased (e.g., persistently bullish during a crash).
+- **Automated Governance**: Provides quantitative triggers ($Z > 2.0$) for model lifecycle management.
+
+Tools & Frameworks
+------------------
+- **Pandas**: Time-series alignment and rolling window management.
+- **NumPy**: Efficient calculation of statistical moments (mean, variance).
+- **Deque**: $O(1)$ memory management for rolling history buffers.
 """
 
 import pandas as pd
@@ -13,21 +56,32 @@ logger = logging.getLogger(__name__)
 
 class ModelDriftDetector:
     """
-    Detects Concept Drift (P(y|X) changes) and Label Drift (P(y) changes).
-    
-    Tracks:
-    1. Prediction Mean/Std (Are we becoming too bullish/bearish?)
-    2. Prediction Error (MSE) - If actual returns are available
+    Quantifies distributional shifts using rolling-window statistics.
+
+    Monitoring Metrics:
+    1.  **Concept Drift**: Changes in the relationship between features and targets ($P(y|X)$),
+        proxied by Mean Squared Error ($MSE$) degradation.
+    2.  **Prediction Bias**: Shifts in the central tendency of model outputs ($\mu_{\hat{y}}$),
+        indicating structural directional bias (too bullish/bearish).
     """
     
     def __init__(self, rolling_window: int = 30):
+        """
+        Args:
+            rolling_window (int): The lookback period $N$ for establishing baseline statistics.
+        """
         self.window = rolling_window
-        # Store history as list of dicts
+        # State Management: O(1) append/pop operations for sliding window history.
         self.history = deque(maxlen=252) 
         
     def update(self, date: str, predictions: pd.Series, actual_returns: Optional[pd.Series] = None):
         """
-        Update with daily predictions and (optional) actual returns
+        Ingests daily inference results and (optional) realized returns.
+
+        Args:
+            date (str): ISO-8601 date string.
+            predictions (pd.Series): Vector of model alpha scores $\hat{y}$.
+            actual_returns (Optional[pd.Series]): Vector of realized forward returns $y$.
         """
         record = {
             'date': date,
@@ -41,8 +95,8 @@ class ModelDriftDetector:
             record['actual_mean'] = actual_returns.mean()
             record['actual_std'] = actual_returns.std()
             
-            # Calculate MSE (Mean Squared Error) for this batch
-            # Align indices first
+            # Error Metric: Mean Squared Error ($MSE$)
+            # Data Alignment: Intersection of indices (Inner Join) required for vector subtraction.
             common_idx = predictions.index.intersection(actual_returns.index)
             if len(common_idx) > 0:
                 mse = np.mean((predictions[common_idx] - actual_returns[common_idx]) ** 2)
@@ -55,37 +109,46 @@ class ModelDriftDetector:
         
     def detect_drift(self) -> Dict:
         """
-        Check if recent model behavior deviates from history
+        Performs statistical tests to identify significant regime shifts.
+
+        Returns:
+            Dict: Status report containing drift flags and Z-score metrics.
         """
         if len(self.history) < self.window * 2:
             return {'status': 'INSUFFICIENT_DATA'}
             
         df = pd.DataFrame(list(self.history))
         
-        # Split into reference (older) and current (recent)
+        # Partitioning Strategy:
+        # 1. Current Window: The most recent $N$ days (Test distribution).
+        # 2. Reference Window: The preceding $N$ days (Baseline distribution).
         current = df.tail(self.window)
-        # Reference is the window before current
         reference = df.iloc[-(self.window * 2):-self.window]
         
         alerts = []
         
-        # 1. Check Prediction Mean Shift (Model becoming too bullish/bearish)
+        # 1. Directional Bias Test: Z-Score of Prediction Means
+        # Detects if the model's central tendency ($\mu$) has shifted significantly.
+        # .. math::
+        #     Z = \frac{\mu_{current} - \mu_{reference}}{\sigma_{reference}}
         curr_mean = current['pred_mean'].mean()
         ref_mean = reference['pred_mean'].mean()
         ref_std = reference['pred_mean'].std()
         
-        # Avoid division by zero
+        # Numerical Stability: Epsilon check for division by zero
         if ref_std > 1e-6:
             z_score = (curr_mean - ref_mean) / ref_std
             if abs(z_score) > 2.0:
                 alerts.append(f"Prediction Mean Shift: Z-Score {z_score:.2f}")
             
-        # 2. Check Error Rate Increase (If actuals available)
+        # 2. Performance Degradation Test
+        # Checks for a relative increase in MSE compared to the reference baseline.
         if 'mse' in df.columns and not df['mse'].isnull().all():
             current_mse = current['mse'].mean()
             ref_mse = reference['mse'].mean()
             
-            if ref_mse > 0 and current_mse > ref_mse * 1.5: # 50% increase in error
+            # Threshold: > 50% degradation in Mean Squared Error ($MSE$)
+            if ref_mse > 0 and current_mse > ref_mse * 1.5:
                 alerts.append(f"MSE Degradation: +{(current_mse/ref_mse - 1):.1%}")
                 
         return {

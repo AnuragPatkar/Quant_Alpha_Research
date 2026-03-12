@@ -1,15 +1,40 @@
 """
-Financial Health Factors
-Leverage, liquidity, and solvency metrics.
+Financial Health & Solvency Factors
+===================================
+Quantitative metrics assessing a firm's leverage, liquidity, and long-term viability.
 
-Active factors:
-- Debt to Equity (Inverted): measures financial leverage safety
-- Current Ratio: measures short-term liquidity
-- Quick Ratio: measures strict liquidity (excluding inventory)
-- Cash to Debt Ratio: measures immediate liquidity vs debt obligations
-- Net Debt to EBITDA: measures financial leverage relative to profitability
-- Debt to Revenue: measures debt as percentage of revenue
-- EBITDA to Debt: measures annual profitability available to pay debt
+Purpose
+-------
+This module constructs factors that evaluate the balance sheet strength of a company.
+It focuses on two critical dimensions of risk:
+1. **Solvency**: The ability to meet long-term debt obligations (e.g., Debt/Equity, Net Debt/EBITDA).
+2. **Liquidity**: The ability to meet short-term liabilities (e.g., Current Ratio, Quick Ratio).
+
+Usage
+-----
+These factors are registered with the `FactorRegistry` and are typically used as
+"Quality" signals or negative screens (exclusionary filters) in portfolio construction.
+
+.. code-block:: python
+
+    registry = FactorRegistry()
+    health_factor = registry.get('health_net_debt_ebitda')
+    signals = health_factor.compute(fundamentals_df)
+
+Importance
+----------
+- **Risk Mitigation**: High leverage is a primary predictor of bankruptcy and
+  equity dilution events.
+- **Quality Factor**: "Quality-Minus-Junk" (QMJ) strategies rely heavily on
+  solvency metrics to identify robust firms.
+- **Regime Sensitivity**: These factors effectively stratify performance during
+  credit contractions and rising interest rate environments.
+
+Tools & Frameworks
+------------------
+- **Pandas**: Vectorized DataFrame operations for ratio calculations.
+- **NumPy**: Efficient handling of `NaN` propagation and numerical clipping.
+- **FactorRegistry**: Decorator-based registration system.
 """
 
 from ..registry import FactorRegistry
@@ -20,16 +45,38 @@ from ..base import FundamentalFactor
 
 @FactorRegistry.register()
 class DebtToEquity(SingleColumnFactor):
+    """
+    Debt-to-Equity Ratio (Inverted).
+    
+    Measures financial leverage. We invert the sign ($ \times -1 $) so that
+    higher scores represent safer (lower) leverage, aligning with the
+    "Higher is Better" convention of alpha factors.
+    
+    Formula:
+    $$ Score = -1 \times \frac{\text{Total Debt}}{\text{Total Equity}} $$
+    """
     def __init__(self):
         super().__init__('health_debt_to_equity', 'debt_equity', invert=True, description='Debt to Equity (inverted)')
 
 @FactorRegistry.register()
 class CurrentRatio(SingleColumnFactor):
+    """
+    Current Ratio.
+    
+    A broad measure of short-term liquidity.
+    $$ \text{Current Ratio} = \frac{\text{Current Assets}}{\text{Current Liabilities}} $$
+    """
     def __init__(self):
         super().__init__('health_current_ratio', 'current_ratio', description='Current Ratio')
 
 @FactorRegistry.register()
 class QuickRatio(SingleColumnFactor):
+    """
+    Quick Ratio (Acid-Test).
+    
+    A stringent measure of liquidity that excludes inventory.
+    $$ \text{Quick Ratio} = \frac{\text{Current Assets} - \text{Inventory}}{\text{Current Liabilities}} $$
+    """
     def __init__(self):
         super().__init__('health_quick_ratio', 'quick_ratio', description='Quick Ratio')
 
@@ -38,21 +85,26 @@ class QuickRatio(SingleColumnFactor):
 class CashToDebtRatio(RatioFactor):
     """
     Cash to Debt Ratio = Total Cash / Total Debt
-    Measures ability to immediately pay off debt with available cash.
-    Higher is better (indicator of low financial risk).
     
-    Formula: total_cash / total_debt
+    Measures the ability to immediately service debt with available cash.
+    Higher values indicate lower financial risk.
+    
+    Formula:
+    $$ \text{Ratio} = \frac{\text{Total Cash}}{\text{Total Debt}} $$
     """
     def __init__(self):
         super().__init__('health_cash_to_debt', num_key='total_cash', den_key='total_debt',
                         description='Cash to Debt Ratio')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        # Data Validation: Ensure required columns exist
         if 'total_cash' not in df.columns or 'total_debt' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
         result = df['total_cash'] / df['total_debt']
-        # Cap at 2.0 for extreme values
+        
+        # Winsorization: Cap at 2.0 to dampen the impact of cash-rich outliers
+        # (e.g., biotech/tech firms) on the cross-sectional distribution.
         result = result.clip(upper=2.0)
         return result
 
@@ -60,29 +112,33 @@ class CashToDebtRatio(RatioFactor):
 @FactorRegistry.register()
 class NetDebtToEBITDA(RatioFactor):
     """
-    Net Debt to EBITDA = (Total Debt - Total Cash) / EBITDA
-    Measures financial leverage relative to cash generation ability.
-    Industry standard metric - lower is better.
+    Net Debt to EBITDA.
+    
+    Standard industry metric for leverage relative to earnings power.
+    Note: This factor is usually "Lower is Better".
+    
+    Formula:
+    $$ \text{Ratio} = \frac{\text{Total Debt} - \text{Total Cash}}{\text{EBITDA}} $$
     
     Interpretation:
-    - < 2.0: Very healthy leverage
-    - 2.0-3.0: Moderate leverage
-    - 3.0-5.0: Elevated leverage
-    - > 5.0: High leverage/risk
-    
-    Formula: (total_debt - total_cash) / ebitda
+    - $< 2.0$: Conservative
+    - $> 5.0$: High Risk
     """
     def __init__(self):
         super().__init__('health_net_debt_ebitda', num_key='net_debt', den_key='ebitda',
                         description='Net Debt to EBITDA')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        # Data Validation: Ensure required columns exist
         if 'total_debt' not in df.columns or 'total_cash' not in df.columns or 'ebitda' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
         net_debt = df['total_debt'] - df['total_cash']
         result = net_debt / df['ebitda']
-        # Handle negative values (company has more cash than debt)
+        
+        # Outlier Management:
+        # Lower bound -1.0: Handles "Negative Net Debt" (Cash > Debt).
+        # Upper bound 10.0: Caps distressed firms to prevent skew.
         result = result.clip(lower=-1.0, upper=10.0)
         return result
 
@@ -90,48 +146,50 @@ class NetDebtToEBITDA(RatioFactor):
 @FactorRegistry.register()
 class DebtToRevenue(RatioFactor):
     """
-    Debt to Revenue Ratio = Total Debt / Total Revenue
-    Measures debt as a percentage of annual revenue.
-    Lower is better - shows how many years of revenue needed to pay debt.
+    Debt to Revenue Ratio.
     
-    Interpretation:
-    - < 1.0: Low debt relative to revenue
-    - 1.0-2.0: Moderate debt
-    - 2.0-3.0: High debt
-    - > 3.0: Very high debt
+    Measures the debt load relative to top-line sales. Useful for valuing
+    unprofitable growth companies where EBITDA is negative.
     
-    Formula: total_debt / total_revenue
+    Formula:
+    $$ \text{Ratio} = \frac{\text{Total Debt}}{\text{Total Revenue}} $$
     """
     def __init__(self):
         super().__init__('health_debt_to_revenue', num_key='total_debt', den_key='total_revenue',
                         description='Debt to Revenue Ratio')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        # Data Validation: Ensure required columns exist
         if 'total_debt' not in df.columns or 'total_revenue' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
         result = df['total_debt'] / df['total_revenue']
-        return result.clip(upper=5.0)  # Cap extreme values
+        
+        # Winsorization: Cap at 5.0x revenue (High distress zone).
+        return result.clip(upper=5.0)
 
 
 @FactorRegistry.register()
 class EBITDAToDebt(RatioFactor):
     """
-    EBITDA to Debt Ratio = EBITDA / Total Debt
-    Measures annual profit generation ability relative to total debt.
-    Higher is better - inverse of Net Debt to EBITDA.
+    EBITDA to Debt Ratio.
     
-    Shows how many years of full EBITDA needed to pay off total debt.
+    Inverse leverage metric measuring the years of EBITDA required to
+    repay gross debt. Higher is better (safer).
     
-    Formula: ebitda / total_debt
+    Formula:
+    $$ \text{Ratio} = \frac{\text{EBITDA}}{\text{Total Debt}} $$
     """
     def __init__(self):
         super().__init__('health_ebitda_to_debt', num_key='ebitda', den_key='total_debt',
                         description='EBITDA to Debt Ratio')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        # Data Validation: Ensure required columns exist
         if 'ebitda' not in df.columns or 'total_debt' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
         result = df['ebitda'] / df['total_debt']
-        return result.clip(upper=10.0)  # Cap extreme values
+        
+        # Winsorization: Cap at 10.0 (Extremely strong coverage).
+        return result.clip(upper=10.0)

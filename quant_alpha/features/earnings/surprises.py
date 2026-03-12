@@ -1,15 +1,43 @@
 """
-Earnings Surprise Factors (Production Grade) - TOP 5 MOST IMPORTANT
-Focus: Market reaction to EPS vs Estimates.
+Earnings Surprise Factors
+=========================
+Quantitative signals capturing the market's reaction to earnings announcements relative to expectations.
 
-Adapts sparse earnings events to daily signals using change detection.
+Purpose
+-------
+This module generates alpha factors based on "Earnings Surprises"—the divergence between
+reported EPS and analyst consensus. It transforms sparse, event-driven earnings data
+into continuous daily signals using forward-filling logic. Key metrics include
+Standardized Unexpected Earnings (SUE) and surprise momentum, which are primary
+drivers of the Post-Earnings Announcement Drift (PEAD) anomaly.
 
-Factors (Ranked by Predictive Power):
-1. SUE (Standardized Unexpected Earnings) -> Normalized by Price (Most Proven)
-2. Surprise % -> Raw Percentage Surprise
-3. Earnings Streak -> Consecutive quarters of beating estimates
-4. Last Quarter Magnitude -> Absolute value of most recent surprise (Most Predictive)
-5. Beat/Miss Momentum -> % of last 4 quarters beaten (Trend Signal)
+Usage
+-----
+Factors are registered with the `FactorRegistry` and computed over a standardized
+OHLCV + Earnings DataFrame.
+
+.. code-block:: python
+
+    from quant_alpha.features.registry import FactorRegistry
+    
+    registry = FactorRegistry()
+    sue_factor = registry.get('eps_sue_price')
+    signals = sue_factor.compute(market_data_df)
+
+Importance
+----------
+- **Alpha Generation**: Captures PEAD, where prices tend to drift in the direction
+  of the earnings surprise for weeks or months following the announcement.
+- **Signal Normalization**: Uses price-based standardization ($SUE_p$) to ensure
+  comparability across assets with different nominal price levels.
+- **Regime Identification**: Consecutive beats (streaks) often indicate a
+  fundamental structural shift not yet fully priced in by the consensus.
+
+Tools & Frameworks
+------------------
+- **Pandas**: Efficient `groupby-apply` patterns for handling ticker-specific event windows.
+- **NumPy**: Vectorized arithmetic for calculating percentage deviations and normalization.
+- **FactorRegistry**: Decorator-based registration for pipeline integration.
 """
 
 import pandas as pd
@@ -22,8 +50,14 @@ from .utils import detect_earnings_events, get_events_with_surprise
 @FactorRegistry.register()
 class EPSSurprise(EarningsFactor):
     """
-    Standardized EPS Surprise (SUE).
-    Formula: (Actual - Estimate) / Price
+    Standardized EPS Surprise (SUE) normalized by Price.
+    
+    A robust variation of the classic SUE metric. Normalizing by price instead of
+    earnings volatility allows for better cross-sectional comparison between
+    high-priced and low-priced stocks.
+    
+    Formula:
+    $$ SUE_{price} = \frac{EPS_{actual} - EPS_{estimate}}{Price_{close}} $$
     """
     def __init__(self):
         super().__init__(name='eps_sue_price', description='Surprise standardized by Price')
@@ -39,13 +73,14 @@ class EPSSurprise(EarningsFactor):
             if events.empty:
                 return pd.Series(np.nan, index=group.index)
                 
-            # Calculate SUE at the time of the event
-            # Use ffilled close to handle missing price on exact report date (e.g. weekend/holiday reports)
+            # Data Alignment: Forward-fill pricing data to ensure availability
+            # for reports occurring on non-trading days (weekends/holidays).
             filled_close = group['close'].ffill()
             events_close = filled_close.loc[events.index]
             valid_close = events_close.where(events_close > 0, np.nan)
             events['sue'] = (events['eps_actual'] - events['eps_estimate']) / valid_close
             
+            # Winsorization: Clip at +/- 0.5 to suppress microstructure noise.
             return events['sue'].reindex(group.index).ffill().clip(-0.5, 0.5)
         
         return df.groupby('ticker', group_keys=False).apply(_calc_sue)
@@ -55,14 +90,16 @@ class EPSSurprise(EarningsFactor):
 class EPSSurprisePercentage(EarningsFactor):
     """
     Raw EPS Surprise Percentage.
-    Formula: (Actual - Estimate) / |Estimate|
+    
+    Formula:
+    $$ Surprise\% = \frac{EPS_{actual} - EPS_{estimate}}{|EPS_{estimate}|} $$
     """
     def __init__(self):
         super().__init__(name='earn_surprise_pct', description='EPS Surprise Percentage')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # If surprise_pct exists, we just need to ensure it's ffilled
-        # But to be consistent, we recalculate or ffill based on events
+        # Data Validation: Check for raw components or pre-computed surprise.
+        # We prioritize recalculating via the event logic to ensure consistent timing.
         cols_needed = ['eps_actual', 'eps_estimate']
         if not all(c in df.columns for c in cols_needed) and 'surprise_pct' not in df.columns:
             return pd.Series(np.nan, index=df.index)
@@ -71,6 +108,7 @@ class EPSSurprisePercentage(EarningsFactor):
             events = get_events_with_surprise(group)
             if events.empty: return pd.Series(np.nan, index=group.index)
             
+            # Outlier Control: Clip at +/- 500% to mitigate denominator-near-zero artifacts.
             return events['surprise_pct'].reindex(group.index).ffill().clip(-500, 500)
 
         return df.groupby('ticker', group_keys=False).apply(_calc_pct)
@@ -79,8 +117,10 @@ class EPSSurprisePercentage(EarningsFactor):
 @FactorRegistry.register()
 class ConsecutiveSurprise(EarningsFactor):
     """
-    Count of consecutive positive surprises.
-    Updates only on Earnings Announcement Dates.
+    Earnings Streak: Count of contiguous quarters with positive surprises.
+    
+    Identifies companies with a sustained pattern of outperformance, often
+    indicative of conservative guidance or superior execution.
     """
     def __init__(self):
         super().__init__(name='earn_streak', description='Consecutive Positive Surprises')
@@ -95,9 +135,11 @@ class ConsecutiveSurprise(EarningsFactor):
                 return pd.Series(0, index=group.index)
 
             condition = events['surprise_pct'] > 0
-            # Group by consecutive runs
+            
+            # Vectorized Run-Length Encoding:
+            # 1. Identify where state changes (True->False or False->True).
             run_ids = (condition != condition.shift()).cumsum()
-            # Cumsum within each run, then mask out the False runs (misses should be 0)
+            # 2. Cumulative sum within each run, then zero out the 'Miss' runs.
             events['streak'] = condition.groupby(run_ids).cumsum()
             events['streak'] = events['streak'].where(condition, 0)
             
@@ -109,8 +151,10 @@ class ConsecutiveSurprise(EarningsFactor):
 @FactorRegistry.register()
 class LastQuarterMagnitude(EarningsFactor):
     """
-    Magnitude of Last Quarter's Earnings Surprise.
-    Formula: |Actual - Estimate| / |Estimate| from most recent earnings announcement
+    Absolute Magnitude of Last Quarter's Surprise.
+    
+    Formula:
+    $$ Magnitude_t = |Surprise\%_t| $$
     """
     def __init__(self):
         super().__init__(name='earn_last_quarter_magnitude', description='Last Quarter Surprise Magnitude')
@@ -124,6 +168,7 @@ class LastQuarterMagnitude(EarningsFactor):
             if events.empty:
                 return pd.Series(np.nan, index=group.index)
             
+            # Absolute deviation captures the intensity of the surprise, regardless of direction.
             events['magnitude'] = events['surprise_pct'].abs()
             events['last_quarter_mag'] = events['magnitude']
             
@@ -135,8 +180,10 @@ class LastQuarterMagnitude(EarningsFactor):
 @FactorRegistry.register()
 class BeatMissMomentum(EarningsFactor):
     """
-    Beat/Miss Momentum: % of last 4 quarters beaten.
-    Range: 0 (missed all 4) to 100 (beat all 4)
+    Beat/Miss Momentum: Rolling win rate over the last year.
+    
+    Formula:
+    $$ Momentum_t = \frac{1}{4} \sum_{i=0}^{3} \mathbb{I}(Surprise_{t-i} > 0) \times 100 $$
     """
     def __init__(self):
         super().__init__(name='earn_beat_miss_momentum', description='% of Last 4Q Beaten')
@@ -150,10 +197,11 @@ class BeatMissMomentum(EarningsFactor):
             if events.empty:
                 return pd.Series(np.nan, index=group.index)
             
-            # Handle NaNs: If surprise is missing, don't count as miss (0), keep as NaN
+            # Missing Data Handling: Propagate NaN rather than imputing 0 (Miss).
             events['beat'] = np.where(events['surprise_pct'].isna(), np.nan, (events['surprise_pct'] > 0).astype(float))
             
-            # FIX: min_periods=2 prevents wild 0/100 swings on a stock's very first earnings report
+            # Statistical Stability: Enforce minimum observation window ($N \ge 2$)
+            # to reduce variance in initial estimates for newly listed firms.
             events['momentum'] = events['beat'].rolling(window=4, min_periods=2).mean() * 100
             
             return events['momentum'].reindex(group.index).ffill()

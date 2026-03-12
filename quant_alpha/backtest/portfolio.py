@@ -1,52 +1,49 @@
 """
-Portfolio State Manager
-=======================
-Core component for managing portfolio state within an event-driven backtest.
+Portfolio State Management Engine
+=================================
+Core ledger system for event-driven backtesting and live trading simulation.
 
 Purpose
 -------
-This module provides the `Portfolio` class, which serves as the single source of
-truth for the backtesting engine. It meticulously tracks asset holdings, cash
-balances, average cost basis, and performance metrics on a point-in-time basis.
-Its primary function is to simulate the financial impact of trading decisions
-while adhering to standard accounting principles.
+The `Portfolio` module serves as the central accounting engine for the backtest.
+It enforces double-entry bookkeeping principles to track cash balances,
+inventory (share holdings), and cost basis across time. It is responsible for
+mark-to-market valuations, transaction lifecycle management (execution,
+settlement, commission deduction), and realized/unrealized P&L calculation.
 
 Usage
 -----
+This class is typically instantiated by an `Engine` or `Strategy` class.
+
 .. code-block:: python
 
     from quant_alpha.backtest.portfolio import Portfolio
 
-    # Initialize with starting capital
-    portfolio = Portfolio(initial_capital=1_000_000)
+    # 1. Initialize with capital and cost model
+    port = Portfolio(initial_capital=1e6, commission_pct=0.001)
 
-    # Execute a trade (e.g., from an ExecutionSimulator)
-    portfolio.buy(ticker="AAPL", shares=100, price=150.0, commission=1.0)
+    # 2. Process an execution (Buy 100 shares of AAPL @ $150)
+    port.buy("AAPL", 100, 150.0)
 
-    # Update market prices for mark-to-market valuation
-    portfolio.update_prices({"AAPL": 152.0})
+    # 3. Mark-to-Market update
+    port.update_prices({"AAPL": 155.0})
 
-    # Record daily state for performance analysis
-    portfolio.record_daily_snapshot(date=pd.Timestamp("2023-10-26"))
-
-    print(f"Current Portfolio Value: {portfolio.total_value:.2f}")
+    # 4. Snapshot state
+    port.record_daily_snapshot(pd.Timestamp("2023-10-27"))
 
 Importance
 ----------
-- **Path Dependence**: Accurately models the compounding effects of returns and
-  costs, ensuring the simulation's path-dependent integrity.
-- **Accounting Accuracy**: Separates cost basis from transaction expenses (commissions),
-  providing a clean ledger for P&L and tax-lot accounting.
-- **State Integrity**: Acts as the central, uncorrupted state manager, preventing
-  look-ahead bias and ensuring that all calculations are based on point-in-time data.
-- **Performance**: Optimized for high-frequency updates, with dictionary lookups
-  providing $O(1)$ complexity for core operations like price updates and position queries.
+- **Accounting Integrity**: Distinguishes between Cost Basis (tax lots) and
+  Expense (commissions) to ensure accurate Net vs. Gross return calculations.
+- **Path Dependency**: Accurately simulates the compounding of returns and the
+  drag of transaction costs over the simulation horizon.
+- **Numerical Stability**: Handles floating-point epsilon errors ($\epsilon = 10^{-9}$)
+  preventing non-deterministic behavior in zero-balance checks.
 
 Tools & Frameworks
 ------------------
-- **Pandas**: Used for structuring historical data outputs (equity curve, transactions).
-- **NumPy**: Leveraged for high-performance numerical operations and handling of
-  potential `NaN`/`inf` values in price data.
+- **Pandas**: Time-series structuring for equity curves and transaction ledgers.
+- **NumPy**: Efficient numerical handling of price updates and `NaN` checks.
 """
 import pandas as pd
 import numpy as np
@@ -59,9 +56,8 @@ class Portfolio:
     """
     Manages the state of a trading portfolio through time.
 
-    This class is the core state-tracking object in the backtesting simulation.
-    It maintains a precise record of cash, asset positions (shares), and the
-    weighted-average cost basis for each holding. It processes buy/sell
+    Acts as the Source of Truth (SoT) for the simulation. Maintains a precise record 
+    of cash, asset positions, and Weighted Average Cost Basis (WACB). It processes
     transactions, accounts for costs like commissions and slippage, and generates
     the daily equity curve required for performance analytics.
 
@@ -98,15 +94,18 @@ class Portfolio:
     
     @property
     def positions_value(self) -> float:
-        """Calculates the total market value of all held positions."""
+        """
+        Calculates the Gross Market Value (GMV) of all held positions.
+        
+        Includes fallback logic for missing price data to prevent simulation halts.
+        """
         total = 0.0
         for ticker, shares in self.positions.items():
             price = self.current_prices.get(ticker, 0.0)
             
-            # --- Graceful Handling of Missing Prices ---
+            # Data Integrity: Fallback mechanism for missing pricing data.
             if price <= 0:
-                # If a live price is missing (e.g., stale data), fall back to the
-                # average cost basis to value the position, preventing a crash.
+                # Fallback: Use Cost Basis if Mark-to-Market price is unavailable.
                 price = self.position_costs.get(ticker, 0.0)
                 if price > 0:
                     logger.warning(f"⚠️ Missing price for {ticker}. Using cost basis: {price}")
@@ -118,20 +117,20 @@ class Portfolio:
     
     @property
     def total_value(self) -> float:
-        """Calculates the Net Asset Value (NAV) of the portfolio (Cash + Positions)."""
+        """Calculates the Net Asset Value (NAV) = Cash + Market Value of Positions."""
         return self.cash + self.positions_value
 
     @property
     def cash_pct(self) -> float:
-        """Returns the cash balance as a percentage of the total portfolio value."""
+        """Liquidity metric: Cash / NAV."""
         return self.cash / self.total_value if self.total_value > 0 else 0
 
     def get_holdings(self) -> Dict[str, float]:
-        """Returns a copy of the current positions dictionary (ticker: shares)."""
+        """Returns a copy of the holdings ledger to prevent external mutation."""
         return self.positions.copy()
 
     def get_position_value(self, ticker: str) -> float:
-        """Returns current market value of a specific position."""
+        """Returns current market value (Mark-to-Market) of a specific position."""
         shares = self.positions.get(ticker, 0.0)
         if shares == 0: return 0.0
         
@@ -147,7 +146,7 @@ class Portfolio:
         Executes a buy order, updating cash, positions, and cost basis.
 
         Args:
-            ticker: The stock identifier.
+            ticker: Asset symbol.
             shares: The number of shares to buy.
             price: The execution price per share.
             commission: The explicit commission cost. If None, it's calculated internally.
@@ -161,20 +160,19 @@ class Portfolio:
         if shares <= 0 or price <= 0: return None
 
         if commission is not None:
-            # External execution: price is already fill_price, commission is explicit
+            # Execution Mode: External (Explicit Commission provided)
             exec_price = price
             raw_cost = shares * exec_price
         else:
-            # Internal execution
+            # Execution Mode: Internal Simulation (Implicit Slippage + Commission)
             exec_price = price * (1 + self.slippage_pct)
             raw_cost = shares * exec_price
             commission = raw_cost * self.commission_pct
             
         total_cost = raw_cost + commission
         
-        # --- Cash Constraint with Floating-Point Tolerance ---
-        # Use an epsilon (1e-9) to prevent failures from floating-point inaccuracies
-        # when an order intends to use the full available cash balance.
+        # Liquidity Check: Ensure sufficient purchasing power.
+        # Utilizes epsilon (1e-9) to mitigate floating-point rounding errors.
         if total_cost > self.cash + 1e-9:
             logger.warning(f"Insufficient cash for {ticker}: Need {total_cost:.2f}, Have {self.cash:.2f}")
             return None
@@ -183,14 +181,14 @@ class Portfolio:
         self.total_commissions += commission
         self.current_prices[ticker] = price 
         
-        # --- Update Weighted-Average Cost Basis ---
-        # Formula: $C_{new} = \frac{(S_{old} \times C_{old}) + (S_{trade} \times P_{trade})}{S_{old} + S_{trade}}$
-        # where C is cost basis, S is shares, and P is price.
+        # Weighted Average Cost Basis (WACB) Calculation:
+        # .. math::
+        #     \bar{C}_{new} = \frac{(S_{held} \times \bar{C}_{old}) + (S_{buy} \times P_{exec})}{S_{held} + S_{buy}}
         old_shares = self.positions.get(ticker, 0.0)
         old_cost = self.position_costs.get(ticker, 0.0)
         new_shares = old_shares + shares
         
-        # Per accounting standards, commission is an expense, not part of the asset's cost basis.
+        # Accounting Standard: Commission is treated as a period expense, NOT capitalized into the asset's cost basis.
         self.position_costs[ticker] = ((old_shares * old_cost) + raw_cost) / new_shares
         self.positions[ticker] = new_shares
         
@@ -202,7 +200,7 @@ class Portfolio:
         Executes a sell order, updating cash, positions, and realizing P&L.
 
         Args:
-            ticker: The stock identifier.
+            ticker: Asset symbol.
             shares: The number of shares to sell.
             price: The execution price per share.
             commission: The explicit commission cost. If None, it's calculated internally.
@@ -213,27 +211,29 @@ class Portfolio:
             logger.error(f"Invalid price received for {ticker}: {price}")
             return None
 
-        # --- Share Quantity with Floating-Point Tolerance ---
+        # Validation: Verify holding sufficiency with epsilon tolerance.
         current_shares = self.positions.get(ticker, 0.0)
         if ticker not in self.positions or shares > current_shares + 1e-9:
             return None
         
-        # Cap shares to held amount (handle rounding errors)
+        # Normalization: Cap shares to held amount to prevent negative inventory.
         shares = min(shares, current_shares)
 
         if commission is not None:
-            # External execution
+            # Execution Mode: External
             exec_price = price
             proceeds = shares * exec_price
         else:
-            # Internal execution
+            # Execution Mode: Internal Simulation
             exec_price = price * (1 - self.slippage_pct)
             proceeds = shares * exec_price
             commission = proceeds * self.commission_pct
             
         net_proceeds = proceeds - commission
         
-        # Realize P&L
+        # P&L Realization: Calculate profit relative to Average Cost Basis.
+        # .. math::
+        #     \text{PnL}_{realized} = \text{Proceeds}_{net} - (S_{sold} \times \bar{C}_{avg})
         cost_basis = self.position_costs[ticker]
         trade_pnl = net_proceeds - (shares * cost_basis)
         self.realized_pnl += trade_pnl
@@ -243,20 +243,17 @@ class Portfolio:
         self.positions[ticker] -= shares
         self.current_prices[ticker] = price
 
-        # --- Position Cleanup ---
+        # Garbage Collection: Remove closed positions to maintain constant memory complexity O(1).
         if self.positions[ticker] < 1e-9:
-            # If all shares are sold, remove the ticker to prevent memory bloat.
             del self.positions[ticker]
             del self.position_costs[ticker]
-            # Optional: Remove from current_prices to keep state clean
-            # if ticker in self.current_prices: del self.current_prices[ticker]
         
         self._record_tx('sell', ticker, shares, exec_price, commission, pnl=trade_pnl)
         return trade_pnl
 
     def apply_dividends(self, dividend_map: Dict[str, float]):
         """
-        Applies dividends to cash balance without affecting shares or cost basis.
+        Corporate Action: Credits cash balance for dividend payments.
         dividend_map: {ticker: dividend_per_share}
         """
         total_div = 0.0
@@ -273,7 +270,7 @@ class Portfolio:
             logger.info(f"💰 Dividends received: ${total_div:,.2f}")
 
     def record_daily_snapshot(self, date: pd.Timestamp):
-        """Records the portfolio's total value and cash for a given date."""
+        """Appends the current NAV, Cash, and PnL to the time-series equity curve."""
         self.equity_curve.append({
             'date': date,
             'nav': self.total_value,
@@ -283,7 +280,7 @@ class Portfolio:
         })
 
     def _record_tx(self, type, ticker, shares, price, comm, pnl=0.0):
-        """Internal helper to log a transaction to the history."""
+        """Audit Log: Appends a trade record to the internal transaction ledger."""
         self.transaction_history.append({
             'type': type, 'ticker': ticker, 'shares': shares, 
             'price': price, 'commission': comm, 'pnl': pnl, 'total_value': self.total_value
@@ -291,8 +288,13 @@ class Portfolio:
 
     def update_prices(self, prices: Union[pd.DataFrame, Dict[str, float]]):
         """
-        Accepts DataFrame with [ticker, close] OR Dictionary {ticker: close}
-        Optimized for speed using dictionary mapping.
+        Performs Mark-to-Market valuation update.
+        
+        Args:
+            prices: Dictionary `{ticker: price}` or DataFrame with columns `['ticker', 'close']`.
+        
+        Performance:
+            Optimized for O(1) bulk updates via dictionary mapping.
         """
         if isinstance(prices, dict):
             self.current_prices.update(prices)
@@ -301,19 +303,19 @@ class Portfolio:
         if isinstance(prices, pd.DataFrame):
             if prices.empty: return
             
-            # Filter only relevant tickers to save memory
+            # Optimization: Filter only held tickers to reduce memory overhead.
             relevant_prices = prices[prices['ticker'].isin(self.positions.keys())]
             
-            # Bulk update
+            # Vectorized Dictionary Construction
             new_prices = dict(zip(relevant_prices['ticker'], relevant_prices['close']))
             self.current_prices.update(new_prices)
 
     def get_tx_history_df(self) -> pd.DataFrame:
-        """Returns the complete transaction history as a DataFrame."""
+        """Exports the transaction ledger as a standardized DataFrame."""
         return pd.DataFrame(self.transaction_history)
 
     def get_equity_curve_df(self) -> pd.DataFrame:
-        """Returns the daily equity curve as a DataFrame with a DatetimeIndex."""
+        """Exports the NAV time-series with DatetimeIndex for performance analysis."""
         df = pd.DataFrame(self.equity_curve)
         if not df.empty and 'date' in df.columns:
             df['date'] = pd.to_datetime(df['date'])

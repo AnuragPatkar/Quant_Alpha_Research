@@ -1,8 +1,43 @@
 """
 Quant Alpha Production Dashboard
-Visualizes real-time monitoring metrics: Performance, Drift, and Data Quality.
+================================
+Interactive monitoring console for real-time strategy surveillance and risk analytics.
 
-Run with: streamlit run quant_alpha/monitoring/dashboard.py
+Purpose
+-------
+This Streamlit application serves as the "Mission Control" for the quantitative trading
+infrastructure. It ingests live signal caches and market data to visualize:
+1.  **Performance Attribution**: Real-time tracking of Information Coefficient ($IC$),
+    Sharpe Ratio, and Drawdown profiles.
+2.  **Regime Detection**: Monitoring of concept drift in model predictions via
+    distributional shift analysis (PSI, Z-Scores).
+3.  **Data Integrity**: Automated validation of incoming data batches against
+    historical reference schemas.
+
+Usage
+-----
+Executed as a standalone Streamlit app, typically hosted on an internal monitoring server.
+
+.. code-block:: bash
+
+    # Launch the dashboard on default port 8501
+    streamlit run quant_alpha/monitoring/dashboard.py
+
+Importance
+----------
+- **Operational Risk Management**: Provides a "Human-in-the-Loop" interface to detect
+  anomalies (e.g., broken data feeds, model collapse) before they impact capital.
+  **Alpha Decay Monitoring**: Visualizes rolling $IC$ to detect when alpha signals
+  degrade below statistical significance ($p < 0.05$).
+- **Transparency**: Democratizes access to complex backtest and live-trading metrics
+  for portfolio managers and stakeholders.
+
+Tools & Frameworks
+------------------
+- **Streamlit**: Rapid application development framework for data science UIs.
+- **Plotly**: Interactive graphing library for financial time-series visualization.
+- **Pandas**: Efficient in-memory manipulation of signal caches and equity curves.
+- **SciPy/NumPy**: Statistical primitives for drift detection and volatility scaling.
 """
 
 import streamlit as st
@@ -36,13 +71,13 @@ def load_data():
     preds = pd.read_parquet(CACHE_PRED_PATH)
     data = pd.read_parquet(CACHE_DATA_PATH)
     
-    # Ensure dates
+    # Type enforcement: Ensure datetime objects for time-series alignment
     preds['date'] = pd.to_datetime(preds['date'])
     if 'date' not in data.columns:
         data = data.reset_index()
     data['date'] = pd.to_datetime(data['date'])
     
-    # Calculate PnL Return if missing
+    # Metric derivation: Compute forward returns ($R_{t+1}$) if not pre-calculated
     if 'pnl_return' not in data.columns:
         data = data.sort_values(['ticker', 'date'])
         data['pnl_return'] = data.groupby('ticker')['close'].shift(-1) / data['close'] - 1
@@ -50,19 +85,38 @@ def load_data():
     return preds, data
 
 def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.15, top_n=20):
-    # Use large history to capture full backtest period
+    """
+    Simulates strategy performance based on cached predictions and market data.
+
+    Implements a simplified vector backtest engine to generate equity curves and
+    risk metrics for the dashboard.
+
+    Args:
+        preds (pd.DataFrame): Model predictions.
+        data (pd.DataFrame): Market data with returns.
+        rebalance_freq (str): 'Daily' or 'Weekly'.
+        cost_bps (int): Transaction costs in basis points.
+        target_vol (float): Target annualized volatility (e.g., 0.15).
+        top_n (int): Number of assets to hold long.
+
+    Returns:
+        PerformanceTracker: Populated tracker object with full history.
+    """
+    # Initialization: Use extended buffer (5000 days) to accommodate full history
     tracker = PerformanceTracker(window_days=60, max_history=5000)
     
     if 'pnl_return' in preds.columns:
         preds = preds.drop(columns=['pnl_return'])
+    
+    # Data Alignment: Inner join to ensure predictions map to realized returns
     merged = pd.merge(preds, data[['date', 'ticker', 'pnl_return']], on=['date', 'ticker'])
     merged = merged.dropna(subset=['ensemble_alpha', 'pnl_return'])
     dates = sorted(merged['date'].unique())
     
-    # Calculate daily market return (Equal Weighted Universe)
+    # Benchmark Construction: Equal-Weighted Universe Return
     market_returns = merged.groupby('date')['pnl_return'].mean()
     
-    # Volatility Targeting (Match Backtest Engine)
+    # Volatility State Tracking (for Inverse-Vol Scaling)
     vol_window = collections.deque(maxlen=20)
     
     # Strategy State
@@ -81,17 +135,17 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.
             should_rebalance = True
             days_since_rebalance = 0
         
-        # Execute Rebalance
+        # Rebalance Execution
         daily_cost = 0.0
         if should_rebalance or i == 0:
             top_picks = day_slice.sort_values('ensemble_alpha', ascending=False).head(top_n)
             if not top_picks.empty:
                 new_positions = top_picks['ticker'].tolist()
                 
-                # Calculate Turnover Cost (Simple approximation: 2 * cost for turnover)
-                # If completely new portfolio, turnover is 100%
+                # Cost Estimation: Assumes Round-Trip (Entry + Exit)
+                # Formula: Cost = Turnover_Pct * 2 * BPS
                 if current_positions:
-                    # Intersection
+                    # Calculate turnover as complement of retention
                     kept = set(current_positions).intersection(set(new_positions))
                     turnover_pct = 1.0 - (len(kept) / len(current_positions))
                     daily_cost = turnover_pct * 2 * (cost_bps / 10000)
@@ -100,7 +154,7 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.
         
         days_since_rebalance += 1
         
-        # Calculate Portfolio Return (Equal Weight on Held Positions)
+        # Return Attribution: Equal-Weight on Long Positions
         if current_positions:
             # Filter day_slice for held tickers
             held_slice = day_slice[day_slice['ticker'].isin(current_positions)]
@@ -113,24 +167,26 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.
             
         bench_ret = market_returns.loc[d]
         
-        # Apply Volatility Control (Risk Management)
+        # Risk Management: Inverse-Volatility Scaling
+        # .. math::
+        #     L_t = \min(1.0, \frac{\sigma_{target}}{\sigma_{realized}})
         if target_vol is not None and len(vol_window) >= 20:
             current_vol = np.std(vol_window) * np.sqrt(252)
             if current_vol > 0:
-                # Reduce leverage if volatility exceeds target
+                # De-leverage if realized volatility exceeds target cap
                 leverage = min(1.0, target_vol / current_vol)
             else:
                 leverage = 1.0
         else:
             leverage = 1.0
             
-        # Net Return = (Raw Return * Leverage) - Costs
+        # Performance Attribution: Net Return = (Gross * Leverage) - Costs
         managed_ret = (raw_ret * leverage) - daily_cost
-        vol_window.append(raw_ret) # Track RAW volatility
+        vol_window.append(raw_ret) # Update volatility window with raw returns
         
-        # For tracking, we pass the predictions for the *current* universe
-        # This ensures IC is calculated on the active set or full set depending on preference
-        # Here we pass full set to monitor signal quality globally
+        # Telemetry: Update tracker with daily stats
+        # We pass the full universe predictions to monitor global signal quality (IC),
+        # not just the top-N subset.
         
         tracker.update(
             date=d.strftime('%Y-%m-%d'),
@@ -142,6 +198,12 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.
     return tracker
 
 def run_drift_detector(preds, data):
+    """
+    Analyzes historical predictions for Concept Drift and Label Shift.
+
+    Returns:
+        Tuple[ModelDriftDetector, pd.DataFrame]: Detector instance and daily drift logs.
+    """
     detector = ModelDriftDetector(rolling_window=20)
     if 'pnl_return' in preds.columns:
         preds = preds.drop(columns=['pnl_return'])
@@ -165,7 +227,9 @@ def run_drift_detector(preds, data):
         
     return detector, pd.DataFrame(drift_history)
 
-# --- UI ---
+# ==============================================================================
+# UI LAYOUT & INTERACTIVITY
+# ==============================================================================
 st.title("🚀 Quant Alpha Production Monitor")
 
 preds, data = load_data()
@@ -177,7 +241,7 @@ if preds is None:
 tab1, tab2, tab3 = st.tabs(["📈 Performance", "⚠️ Model Drift", "🛡️ Data Quality"])
 
 with tab1:
-    # Sidebar Controls for "What-If" Analysis
+    # Sidebar: Simulation Parameters for "What-If" Analysis
     st.sidebar.header("Strategy Settings")
     rebalance_freq = st.sidebar.selectbox("Rebalance Frequency", ["Weekly", "Daily"], index=0)
     cost_bps = st.sidebar.slider("Transaction Costs (bps)", 0, 50, 10)
@@ -237,7 +301,7 @@ with tab2:
         
         st.subheader("MSE Degradation")
         if 'mse' in hist_recs.columns:
-            fig_mse = px.line(hist_recs, x='date', y='mse', title="Model Mean Squared Error (MSE)")
+            fig_mse = px.line(hist_recs, x='date', y='mse', title="Model Mean Squared Error ($MSE$)")
             st.plotly_chart(fig_mse, width="stretch")
             
         # Recent Alerts

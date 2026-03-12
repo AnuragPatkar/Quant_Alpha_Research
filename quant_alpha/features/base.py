@@ -1,7 +1,40 @@
 """
-Base Factor Classes
-All factors inherit from these abstract classes
-Design Pattern: Template Method + Strategy
+Base Factor Architecture
+========================
+Abstract base classes defining the contract and lifecycle for all alpha factors.
+
+Purpose
+-------
+This module establishes the **Template Method** design pattern for the feature engineering
+pipeline. It provides a robust, standardized execution flow for factor computation, ensuring
+that every signal undergoes consistent validation, outlier mitigation (winsorization),
+and distribution scaling (cross-sectional normalization) before entering the model.
+
+Usage
+-----
+Developers should inherit from specific category bases (e.g., `TechnicalFactor`,
+`FundamentalFactor`) rather than `BaseFactor` directly.
+
+.. code-block:: python
+
+    class MyMomentum(TechnicalFactor):
+        def compute(self, data: pd.DataFrame) -> pd.Series:
+            return data['close'].pct_change(10)
+
+Importance
+----------
+- **Signal Hygiene**: Enforces statistical rigor by automatically handling `NaN` propagation,
+  infinite values, and outliers ($3\sigma$ clipping) centrally.
+- **Pipeline Uniformity**: Guarantees that all 100+ factors output aligned, standardized
+  Pandas Series/DataFrames, facilitating vectorized operations downstream.
+- **Complexity Abstraction**: Hides the complexity of cross-sectional alignment and
+  error logging from individual factor logic.
+
+Tools & Frameworks
+------------------
+- **ABC**: Enforces the implementation of the `compute` method in subclasses.
+- **Pandas**: Core data structure for time-series and cross-sectional data.
+- **NumPy**: Efficient handling of numerical singularities ($\epsilon$).
 """
 
 from abc import ABC, abstractmethod
@@ -12,15 +45,20 @@ from datetime import datetime
 from config.logging_config import logger
 from .utils import winsorize, cross_sectional_normalize
 
-EPS = 1e-9  # Centralized small epsilon to prevent division by zero
+EPS = 1e-9  # Machine epsilon for numerical stability in division operations
 
 class BaseFactor(ABC):
     """
-    Abstract base class for all factors with built-in:
-    - Validation
-    - Winsorization (Outlier Clipping)
-    - Normalization (Z-Score)
-    - Metadata Logging
+    Abstract base class implementing the Factor Lifecycle.
+    
+    This class dictates the skeleton of the algorithm (Template Method), delegating
+    the specific `compute` logic to subclasses.
+    
+    Capabilities:
+    - **Input Validation**: Ensures required columns (e.g., 'date', 'ticker') exist.
+    - **Statistical Processing**: Optional Winsorization and Z-Score Normalization.
+    - **Sanitization**: Automatic handling of `inf` and `NaN` values.
+    - **Metadata**: Tracks computation time and versioning.
     """
     
     def __init__(
@@ -49,15 +87,18 @@ class BaseFactor(ABC):
         self.computation_time = 0.0
         self.last_computed = None
         self.num_computations = 0
-        
-        # logger.debug(f"Initialized factor: {self.name}")
     
     # ==================== PUBLIC API (Template Method) ====================
     
     def calculate(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Main entry point. Orchestrates the calculation flow.
-        1. Validate -> 2. Compute -> 3. Clean -> 4. Normalize
+        Orchestrates the factor computation pipeline.
+        
+        Pipeline Steps:
+        1. **Validate**: Check input schema integrity.
+        2. **Compute**: Execute subclass-specific logic via `compute()`.
+        3. **Align**: Ensure output dimensions match input metadata.
+        4. **Sanitize**: Clean infinite values and apply statistical transforms.
         """
         import time
         start_time = time.time()
@@ -67,16 +108,15 @@ class BaseFactor(ABC):
             self._validate_input(data)
             
             # Step 2: Compute raw factor
-            # logger.debug(f"Computing factor: {self.name}")
             factor_values = self.compute(data)
             
-            # Create Result DataFrame (Optimized)
-            # Instead of copying the whole dataframe (data.copy()), we only keep 
-            # metadata columns needed for alignment.
+            # Memory Optimization:
+            # Instead of deep-copying the entire input DataFrame, we construct a 
+            # lightweight result container with only necessary metadata.
             meta_cols = [c for c in ['date', 'ticker'] if c in data.columns]
             result = data[meta_cols].copy()
             
-            # Handle if compute returns Series or DataFrame
+            # Type Handling: Support both pd.Series and single-column pd.DataFrame outputs
             if isinstance(factor_values, pd.Series):
                 result[self.name] = factor_values.values
             elif isinstance(factor_values, pd.DataFrame):
@@ -91,9 +131,9 @@ class BaseFactor(ABC):
                 result[self.name] = factor_values
             
             # Step 3: Apply transformations
-            # 3.0: Sanitize (Inf -> NaN) BEFORE processing to prevent corruption
+            # 3.0: Sanitize (Inf -> NaN) BEFORE statistical processing to prevent mean corruption
             if np.isinf(result[self.name]).any():
-                 # Optimization: Boolean indexing is faster than replace()
+                 # Optimization: Vectorized boolean indexing is significantly faster than .replace()
                  result.loc[np.isinf(result[self.name]), self.name] = np.nan
 
             if self.winsorize_flag:
@@ -122,7 +162,7 @@ class BaseFactor(ABC):
     @abstractmethod
     def compute(self, data: pd.DataFrame) -> pd.Series:
         """
-        CORE LOGIC HERE. Subclasses must implement this.
+        Abstract method for factor logic. Subclasses must implement the specific signal generation.
         """
         pass
     
@@ -142,7 +182,7 @@ class BaseFactor(ABC):
         if self.name not in result.columns:
             raise ValueError(f"Factor {self.name} failed to generate output column")
         
-        # Check for infinite values
+        # Post-computation sanity check
         if np.isinf(result[self.name]).any():
             logger.warning(f"⚠️ Factor {self.name} contains infinite values. Replacing with NaN.")
             result[self.name] = result[self.name].replace([np.inf, -np.inf], np.nan)
@@ -159,8 +199,8 @@ class FundamentalFactor(BaseFactor):
     
     def _validate_input(self, data: pd.DataFrame):
         """
-        Override validation for fundamental factors.
-        Fundamental data is static (no date/ticker index required).
+        Override: Fundamental datasets often use wide formats or sparse indexing,
+        relaxing the strict (date, ticker) requirement found in time-series data.
         """
         if data.empty:
             raise ValueError(f"Empty DataFrame provided to {self.name}")
@@ -171,8 +211,8 @@ class EarningsFactor(BaseFactor):
 
 class AlternativeFactor(BaseFactor):
     def __init__(self, name: str, description: str, **kwargs):
-        # FIX: Single correct initialization with macro-specific defaults
-        # Macro data usually doesn't need cross-sectional normalization
+        # Default Behavior: Macro/Alternative data is often absolute (e.g., VIX, Sentiment)
+        # and does not require cross-sectional normalization (Z-Scoring).
         kwargs.setdefault('normalize', False) 
         super().__init__(name, 'alternative', description, lookback_period=None, **kwargs)
     
@@ -181,14 +221,14 @@ class AlternativeFactor(BaseFactor):
             raise ValueError(f"Empty DataFrame provided to {self.name}")
 
 class CompositeFactor(BaseFactor):
-    """Composite factors blend multiple signal types for regime-aware trading"""
+    """Composite factors blend multiple signal types for regime-aware ranking strategies."""
     def __init__(self, name: str, description: str, **kwargs):
         super().__init__(name, 'composite', description, lookback_period=None, **kwargs)
     
     def _validate_input(self, data: pd.DataFrame):
         """
-        Override validation for composite factors.
-        Composite data may mix macro-level (no ticker) with ticker-level data.
+        Override: Composite calculations may involve heterogeneous data sources 
+        (Macro + Ticker-level), requiring flexible validation.
         """
         if data.empty:
             raise ValueError(f"Empty DataFrame provided to {self.name}")
