@@ -1,13 +1,47 @@
 """
-validate_factors.py
-===================
-Factor Quality Assurance & Validation Suite  — v2 (Fixed)
-----------------------------------------------------------
+Factor Quality Assurance & Validation Engine
+============================================
+A rigorous statistical test suite for evaluating the predictive power, stability, and
+orthogonality of alpha factors before they are approved for the production model ensemble.
+
+Purpose
+-------
+This module serves as the **Alpha Gatekeeper**, implementing a battery of statistical tests
+to filter out noise and safeguard against overfitting. It assesses candidate factors on:
+1.  **Predictive Power**: Rank Information Coefficient (Rank IC) and Information Ratio (ICIR).
+2.  **Significance**: $t$-tests with Benjamini-Hochberg False Discovery Rate (FDR) correction.
+3.  **Stationarity**: Signal decay analysis (autocorrelation structure) to determine turnover.
+4.  **Orthogonality**: Correlation heatmaps to detect multicollinearity among top factors.
 
 Usage:
+------
+Executed via CLI during the research phase or as part of the re-training pipeline.
+
+.. code-block:: bash
+
+    # Standard validation with default thresholds (|IC| > 0.015)
     python scripts/validate_factors.py
-    python scripts/validate_factors.py --threshold 0.015 --top-n 20
+
+    # Strict validation for high-conviction signals (|IC| > 0.02)
+    python scripts/validate_factors.py --threshold 0.02 --top-n 25
+
+    # Force rebuild of the dataset before validation
     python scripts/validate_factors.py --force-rebuild
+
+Importance
+----------
+-   **Type I Error Mitigation**: Reduces the probability of false positives (spurious correlations)
+    via strict statistical significance testing ($p < 0.05$ after FDR correction).
+-   **Regime Robustness**: Sector-neutral IC checks ensure alpha is not merely a proxy for
+    beta or sector rotation.
+-   **Turnover Estimation**: IC decay analysis informs the optimal rebalancing frequency
+    (e.g., fast decay $\rightarrow$ daily rebalance).
+
+Tools & Frameworks
+------------------
+-   **Pandas/NumPy**: Vectorized rank correlation and rolling window statistics.
+  - **SciPy/Statsmodels**: Hypothesis testing ($t$-stats, $p$-values) and multiple testing correction.
+-   **Seaborn/Matplotlib**: Visualization of correlation matrices and cumulative IC curves.
 """
 
 import sys
@@ -38,7 +72,7 @@ setup_logging()
 logger = logging.getLogger("Quant_Alpha")
 warnings.filterwarnings("ignore")
 
-# Metadata columns — never treated as factors
+# Exclusion Set: Metadata and target columns strictly excluded from the alpha factor universe.
 META_COLS = {
     "date", "ticker", "open", "high", "low", "close", "volume", "vwap",
     "sector", "industry", "target", "raw_ret_5d", "next_open", "future_open",
@@ -46,18 +80,24 @@ META_COLS = {
     "macro_mom_5d", "macro_mom_21d", "macro_vix_proxy", "macro_trend_200d",
 }
 
-# IC decay lags to test (trading days)
+# Temporal Lags for IC Decay Analysis (Trading Days)
 IC_DECAY_LAGS = [1, 2, 3, 5, 10, 21]
 
 
 class FactorValidator:
+    """
+    Orchestrates the statistical validation of candidate alpha factors.
+    
+    Implements a rigorous testing pipeline including coverage analysis, Information Coefficient (IC)
+    profiling, signal decay measurement, and redundancy checks.
+    """
     def __init__(self, data: pd.DataFrame, target_col: str = "raw_ret_5d"):
         self.data       = data.sort_values(["ticker", "date"]).reset_index(drop=True)
         self.target_col = target_col
         self.factors    = self._identify_factors()
         self.results: dict[str, pd.DataFrame] = {}
 
-        # Sanity check: target must be a FORWARD return, not contemporaneous
+        # Data Integrity Check: target must be a FORWARD return, not contemporaneous
         self._assert_target_is_forward()
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -73,9 +113,11 @@ class FactorValidator:
 
     def _assert_target_is_forward(self):
         """
-        Sanity check: target should NOT be highly correlated with today's
-        intraday return. If it is, the shift is probably missing and IC will
-        be meaningless (look-ahead bias).
+        Data Integrity Audit: Detects potential Look-Ahead Bias.
+        
+        Verifies that the target variable (forward returns) is not highly correlated with
+        contemporaneous intraday returns ($R_{close}/R_{open} - 1$). A high correlation ($>0.5$)
+        implies the target was not properly shifted, invalidating all IC calculations.
         """
         if "close" not in self.data.columns or self.target_col not in self.data.columns:
             return
@@ -96,7 +138,12 @@ class FactorValidator:
     # ──────────────────────────────────────────────────────────────────────────
     @time_execution
     def check_coverage(self) -> pd.DataFrame:
-        """Vectorized coverage stats — O(cols) not O(cols × rows)."""
+        """
+        Computes data availability metrics for all factors.
+        
+        Complexity: $O(N_{cols} \times N_{rows})$ but vectorized for performance.
+        Metrics: Fill Rate (%), NaN count, Inf count, Zero prevalence.
+        """
         logger.info("🔍 Checking Data Coverage...")
         df = self.data[self.factors]
         n  = len(df)
@@ -113,14 +160,16 @@ class FactorValidator:
     @time_execution
     def compute_ic_stats(self) -> pd.DataFrame:
         """
-        Compute Rank IC (Spearman) and sector-neutral Rank IC per factor.
+        Calculates performance statistics: Rank IC, ICIR, and Statistical Significance.
 
-        Key fixes vs original:
-          - Target ranks cached ONCE (not recomputed per factor)
-          - Sector-neutral IC added (demean by date×sector before ranking)
-          - Correct t-stat: t = ICIR × sqrt(N)
-          - BH multiple-testing correction
-          - pos_ic_pct threshold added to PASS gate
+        Methodology:
+        1.  **Rank IC**: Spearman correlation between factor ranks and target ranks per period.
+        2.  **Sector-Neutral IC**: Ranks computed after de-meaning factors/targets within sectors
+            ($z_{i,t} = \\frac{x_{i,t} - \\mu_{s,t}}{\\sigma_{s,t}}$).
+        3.  **Significance**:
+            .. math:: t = ICIR \\times \\sqrt{N_{dates}}
+        4.  **FDR Correction**: Benjamini-Hochberg procedure to control the False Discovery Rate
+            among multiple hypotheses.
         """
         if "ic_stats" in self.results:
             return self.results["ic_stats"]
@@ -130,10 +179,11 @@ class FactorValidator:
         valid      = self.data.dropna(subset=[self.target_col])
         has_sector = "sector" in valid.columns
 
-        # Cache target ranks ONCE — big speedup vs original (recomputed per factor)
+        # Optimization: Pre-compute target ranks to reduce complexity from $O(F \times N \log N)$ to $O(N \log N)$.
         t_ranks_raw = valid.groupby("date")[self.target_col].rank(pct=True)
 
         if has_sector:
+            # Sector-Neutralization: Z-score target within date-sector groups.
             t_neutral = (valid.groupby(["date", "sector"])[self.target_col]
                          .transform(lambda x: (x - x.mean()) / (x.std() + 1e-8)))
         else:
@@ -145,9 +195,10 @@ class FactorValidator:
             try:
                 col = valid[f]
                 if col.isna().mean() > 0.5:
-                    continue  # skip sparse factors
+                    continue  # Skip sparse factors
 
                 # ── Raw Rank IC ───────────────────────────────────────────────
+                # Cross-sectional ranking (0 to 1) per timestamp
                 f_ranks  = valid.groupby("date")[f].rank(pct=True)
                 tmp      = pd.DataFrame({"f": f_ranks, "t": t_ranks_raw,
                                          "date": valid["date"]})
@@ -156,13 +207,13 @@ class FactorValidator:
                 ).dropna()
 
                 if len(daily_ic) < 3:
-                    continue  # too few dates — t-stat would be meaningless
+                    continue  # Insufficient samples for statistical inference
 
                 ic_mean = float(daily_ic.mean())
                 ic_std  = float(daily_ic.std()) + 1e-8
                 icir    = ic_mean / ic_std
                 n_dates = len(daily_ic)
-                # FIXED t-stat: t = ICIR × sqrt(N)  (original ignored IC_std)
+                # Statistical Significance: t-stat derivation
                 t_stat  = icir * np.sqrt(n_dates)
 
                 # ── Sector-neutral Rank IC ────────────────────────────────────
@@ -199,7 +250,7 @@ class FactorValidator:
         df = pd.DataFrame(ic_stats).set_index("factor")
 
         # ── Multiple-testing correction (Benjamini-Hochberg FDR) ─────────────
-        # Original: no correction → spurious significant factors
+        # Controls the expected proportion of false positives among rejected hypotheses.
         from scipy.stats import t as t_dist
         try:
             from statsmodels.stats.multitest import multipletests
@@ -225,17 +276,19 @@ class FactorValidator:
     @time_execution
     def compute_ic_decay(self, top_factors: list[str]) -> pd.DataFrame:
         """
-        IC at lags 1, 2, 3, 5, 10, 21 trading days.
-
+        Analyzes the temporal persistence of the alpha signal (Autoregressive Decay).
+        
+        Calculates IC at lags $L \\in \\{1, 2, 3, 5, 10, 21\\}$.
+        
         Interpretation:
-          Fast decay (IC collapses by lag 3) → daily rebalance needed (high t-cost)
-          Slow decay (IC stable to lag 10+)  → weekly/monthly rebalance fine
+        - **Fast Decay** ($IC_{t+3} \\approx 0$): Requires high-frequency rebalancing (Daily).
+        - **Slow Decay** ($IC_{t+10} \\approx IC_{t}$): Supports lower frequency rebalancing (Weekly/Monthly),
+          reducing transaction costs.
         """
         logger.info(f"⏳ Computing IC decay for top {len(top_factors)} factors...")
         decay_rows = []
 
-        # Pre-compute shifted targets ONCE per lag — O(lags) not O(factors x lags)
-        # Original computed this inside double loop = 20 factors x 6 lags = 120 groupby ops
+        # Optimization: Pre-compute shifted targets ONCE per lag — O(lags) not O(factors x lags)
         shifted_targets = {
             lag: self.data.groupby("ticker")[self.target_col].shift(-lag)
             for lag in IC_DECAY_LAGS
@@ -273,10 +326,10 @@ class FactorValidator:
     @time_execution
     def compute_autocorrelation(self) -> pd.DataFrame:
         """
-        Per-ticker AR(1), then average across tickers.
-
-        Original used panel-level corr which mixes cross-sectional and
-        time-series variation — produces inflated, misleading autocorrelation.
+        Estimates signal turnover via time-series autocorrelation ($AR(1)$).
+        
+        Computed per-ticker, then averaged cross-sectionally to isolate time-series properties
+        from cross-sectional structure.
         """
         logger.info("🔄 Computing Factor Autocorrelation (per-ticker AR1)...")
         auto_corrs = []
@@ -285,8 +338,8 @@ class FactorValidator:
             try:
                 def _ticker_autocorr(s: pd.Series) -> float:
                     # Constant series (std=0): quarterly fundamentals unchanged
-                    # for many days → s.corr(s.shift(1)) returns NaN.
-                    # A perfectly constant signal has AR(1) = 1.0 by definition.
+                    # for many days -> s.corr(s.shift(1)) returns NaN.
+                    # A perfectly constant signal has AR(1) = 1.0 by definition (zero turnover).
                     if s.std() < 1e-8:
                         return 1.0
                     return float(s.corr(s.shift(1)))
@@ -308,9 +361,10 @@ class FactorValidator:
     @time_execution
     def check_redundancy(self, top_n_factors: list[str]) -> None:
         """
-        Spearman correlation heatmap.
-        Uses year-stratified sample to preserve time structure.
-        Original used random sample which breaks temporal correlation structure.
+        Generates a Spearman correlation heatmap to detect multicollinearity among top factors.
+        
+        Sampling Strategy: Year-stratified sampling ensures the dataset represents different
+        market regimes while maintaining computational feasibility.
         """
         logger.info("📊 Generating Correlation Heatmap (year-stratified sample)...")
         if not top_n_factors:
@@ -346,7 +400,16 @@ class FactorValidator:
     # ──────────────────────────────────────────────────────────────────────────
     def generate_report(self, output_dir: Path, threshold: float = 0.015,
                         top_n: int = 20):
-        """Compile all metrics → master CSV + console summary."""
+        """
+        Aggregates all validation metrics into a master report and classifies factors.
+        
+        Classification Logic:
+        1.  **PASS**: Strong signal ($|IC| > \\tau$), high coverage, consistent sign.
+        2.  **PASS (Inverted)**: Strong negative signal (Flip sign for use).
+        3.  **WARN (Turnover)**: Strong signal but potentially high transaction costs ($AR(1) < 0.3$).
+        4.  **WARN (Sector Bias)**: Signal vanishes when sector-neutralized.
+        5.  **FAIL**: Weak signal or insufficient coverage.
+        """
         coverage = self.check_coverage()
         ic_stats = self.compute_ic_stats()
         autocorr = self.compute_autocorrelation()
@@ -374,7 +437,7 @@ class FactorValidator:
         report.loc[mask_pass, "status"] = "PASS"
 
         # 2. PASS (Inverted): negative IC but strong magnitude
-        #    → multiply factor by -1 before use, signal is valid
+        #    Action: multiply factor by -1 before use.
         mask_inverted = (
             (report["ic_mean"]       <= -threshold) &
             (report["coverage_pct"]  >   0.90) &
@@ -383,14 +446,14 @@ class FactorValidator:
         report.loc[mask_inverted, "status"]    = "PASS (Inverted — flip sign)"
         report.loc[mask_inverted, "rescuable"] = True
 
-        # 3. WARN: high turnover (good IC but autocorr < 0.3 → expensive)
+        # 3. WARN: high turnover (good IC but autocorr < 0.3 -> expensive execution)
         mask_warn_turnover = (
             report["status"].str.startswith("PASS") &
             (report["autocorr"] < 0.3)
         )
         report.loc[mask_warn_turnover, "status"] = "WARN (High Turnover)"
 
-        # 4. WARN: sector bias (raw IC >> sector-neutral ICIR)
+        # 4. WARN: sector bias (raw IC >> sector-neutral IC)
         if "sn_icir" in report.columns:
             mask_sector_bias = (
                 report["status"].str.startswith("PASS") &
@@ -399,7 +462,7 @@ class FactorValidator:
             )
             report.loc[mask_sector_bias, "status"] = "WARN (Sector Bias)"
 
-        # 5. RESCUABLE: low coverage but strong IC — fix data pipeline first
+        # 5. RESCUABLE: low coverage but strong IC — indicates upstream data gap
         mask_rescue_cov = (
             (report["ic_mean"].abs() >= threshold) &
             (report["coverage_pct"]  <= 0.90) &

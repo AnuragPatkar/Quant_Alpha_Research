@@ -1,22 +1,22 @@
 """
 Production Model Deployment & Lifecycle Management
 ==================================================
-Orchestration engine for the promotion, validation, and maintenance of alpha models
-in the live trading environment.
+Orchestration engine for the promotion, validation, and maintenance of alpha
+models in the live trading environment.
 
 Purpose
 -------
-This module serves as the **Gatekeeper** for the production inference pipeline. It
-enforces strict quality assurance protocols before allowing models to influence
-capital allocation. Key responsibilities include:
-1.  **Health Verification**: conducting "smoke tests" on serialized artifacts to ensure
-    loadability and schema compatibility.
-2.  **Degeneracy Detection**: identifying model collapse (zero-variance predictions)
-    prior to deployment.
-3.  **Lifecycle Management**: handling the archival of superseded models with
+This module serves as the **Gatekeeper** for the production inference pipeline.
+It enforces strict quality assurance protocols before allowing models to
+influence capital allocation. Key responsibilities include:
+1.  **Health Verification**: Conducting "smoke tests" on serialized artifacts
+    to ensure loadability and schema compatibility.
+2.  **Degeneracy Detection**: Identifying model collapse (zero-variance
+    predictions) prior to deployment.
+3.  **Lifecycle Management**: Handling the archival of superseded models with
     audit-grade manifests and automated disk space management (pruning).
-4.  **Staleness Monitoring**: ensuring the live signal cache (`ensemble_predictions.parquet`)
-    remains within the valid look-forward window.
+4.  **Staleness Monitoring**: Ensuring the live signal cache
+    (`ensemble_predictions.parquet`) remains within the valid look-forward window.
 
 Usage
 -----
@@ -32,19 +32,19 @@ Executed via the CLI or triggered by the CI/CD pipeline.
 
 Importance
 ----------
-- **Operational Risk**: Prevents "silent failures" where stale or corrupted models
-  generate invalid signals, potentially leading to unintended market exposure.
-- **Auditability**: Generates a persistent `manifest.json` for every deployment,
-  logging performance metrics ($IC$, $t$-stat) and feature sets for compliance.
-- **Resource Optimization**: Manages filesystem constraints by pruning legacy archives
-  based on modification time ($mtime$), preventing storage exhaustion.
+-   **Operational Risk**: Prevents "silent failures" where stale or corrupted
+    models generate invalid signals, potentially leading to unintended market exposure.
+-   **Auditability**: Generates a persistent `manifest.json` for every deployment,
+    logging performance metrics ($IC$, $t$-stat) and feature sets for compliance.
+-   **Resource Optimization**: Manages filesystem constraints by pruning legacy
+    archives based on modification time ($mtime$), preventing storage exhaustion.
 
 Tools & Frameworks
 ------------------
-- **Joblib**: Efficient serialization and deserialization of heavy model artifacts.
-**Pandas**: Time-series alignment and Parquet I/O for signal cache inspection.
-- **NumPy**: Statistical computations (variance, standard deviation) for degeneracy checks.
-- **Pathlib**: Object-oriented filesystem paths for robust cross-platform file handling.
+-   **Joblib**: Efficient serialization/deserialization of model artifacts.
+-   **Pandas**: Time-series alignment and Parquet I/O for signal cache inspection.
+-   **NumPy**: Statistical computations (variance, standard deviation) for checks.
+-   **Pathlib**: Object-oriented filesystem paths for robust cross-platform file handling.
 """
 
 import sys
@@ -76,14 +76,15 @@ logger = logging.getLogger("Quant_Alpha")
 # ==============================================================================
 def weighted_symmetric_mae(y_true, y_pred):
     """
-    Custom training objective — must match definition in train_models.py exactly.
+    Custom gradient/hessian for the Weighted Symmetric Mean Absolute Error objective.
+    Must match the definition in ``train_models.py`` exactly to ensure deserialization integrity.
 
-    Math:
+    Mathematical Form:
     .. math::
-        L(y, \\hat{y}) = -\\text{weights} \\times \\tanh(y - \\hat{y})
+        L(y, \\hat{y}) = -w \cdot \\tanh(y - \\hat{y})
 
-    Note: Required in the global scope for `joblib` deserialization if the model
-    was trained using a function defined in `__main__`.
+    Note: This function is required in the global namespace for ``joblib`` to resolve
+    the function pointer when unpickling models trained in a ``__main__`` context.
     """
     residuals = y_true - y_pred
     weights   = np.where(y_true * y_pred < 0, 2.0, 1.0)
@@ -92,14 +93,14 @@ def weighted_symmetric_mae(y_true, y_pred):
     return grad, hess
 
 
-# Namespace Injection:
-# Patches `__main__` to include the objective function, enabling `joblib` to
-# resolve the function path during the unpickling process of legacy models.
+# Deserialization Hook (Monkey Patch):
+# Injects the custom objective function into the `__main__` namespace to prevent
+# `AttributeError` during the unpickling of legacy artifacts.
 try:
     import __main__
     setattr(__main__, "weighted_symmetric_mae", weighted_symmetric_mae)  # type: ignore
 except Exception:
-    pass   # Safe to ignore — joblib.load() try/except handles failure gracefully
+    pass   # Defensive: joblib.load() try/except block handles failure gracefully
 
 
 # ==============================================================================
@@ -115,9 +116,9 @@ def _gate_tier(ic: float, ic_std: float, n_dates: int) -> str:
     """
     Classifies model quality based on Information Coefficient (IC) statistics.
 
-    Logic:
+    Statistical Significance ($t$-test):
     .. math::
-        t = \\frac{IC}{\\sigma_{IC} / \sqrt{N}}
+        t = \\frac{\\mu_{IC}}{\\sigma_{IC} / \sqrt{N}}
     """
     tstat = ic / (ic_std / (n_dates ** 0.5)) if n_dates > 0 and ic_std > 0 else 0.0
     if ic >= _PROD_IC_THRESHOLD and tstat >= _PROD_IC_TSTAT:
@@ -129,8 +130,10 @@ def _gate_tier(ic: float, ic_std: float, n_dates: int) -> str:
 
 def _prediction_cache_age() -> tuple[str | None, int | None]:
     """
-    Retrieves the freshness of the active signal cache (`ensemble_predictions.parquet`).
-    Returns: (last_signal_date_str, trading_days_latency)
+    Audits the temporal freshness of the active signal cache (`ensemble_predictions.parquet`).
+    Crucial for preventing Look-Ahead Bias by ensuring signals are actionable.
+
+    Returns: (last_signal_date_str, trading_days_latency_count)
     """
     cache_path = config.CACHE_DIR / "ensemble_predictions.parquet"
     if not cache_path.exists():
@@ -148,18 +151,19 @@ def _prediction_cache_age() -> tuple[str | None, int | None]:
 
 def _build_dummy_df(features: list, n_rows: int = 50, seed: int = 42) -> pd.DataFrame:
     """
-    Constructs a synthetic DataFrame for inference schema validation.
+    Generates a synthetic DataFrame for Fuzz Testing the inference engine.
 
-    Ensures Type Safety:
-    - **Categorical**: Assigned for columns like 'sector', 'industry', etc.
-    - **Numerical**: Assigned standard normal noise ($N(0,1)$) for other features.
-    - **Deterministic**: seeded generator to ensure reproducible tests.
+    Methodology:
+    - **Categorical Features**: Populated with "Unknown" to test pipeline resilience to missing categories.
+    - **Numerical Features**: Populated with Gaussian noise ($N(0,1)$) to verify computation stability.
+    
+    Used to detect schema mismatches or serialization corruption before production load.
     """
     KNOWN_CATS = {
         "sector", "industry", "ticker", "exchange",
         "country", "currency", "gics_sector", "gics_industry",
     }
-    rng = np.random.default_rng(seed=seed)    # Deterministic seeding for reproducibility
+    rng = np.random.default_rng(seed=seed)
 
     data = {}
     for col in features:
@@ -186,16 +190,16 @@ class DeploymentManager:
     # --------------------------------------------------------------------------
     def verify_deployment(self) -> bool:
         """
-        Executes a comprehensive health check on production artifacts.
+        Executes a comprehensive Health Check (Smoke Test) on production artifacts.
 
         Validation Steps:
-        1.  **Signal Freshness**: Verifies `ensemble_predictions.parquet` is within the
+        1.  **Latency Audit**: Verifies `ensemble_predictions.parquet` is within the
             re-training window ($T < 5$ days).
-        2.  **Artifact Integrity**: Attempts to deserialize (`joblib.load`) all models.
+        2.  **Deserialization Check**: Attempts to load (`joblib.load`) all model artifacts.
         3.  **Schema Compatibility**: Constructs a synthetic DataFrame with correct
             dtypes (Categorical vs. Float) to prevent inference engine crashes.
-        4.  **Degeneracy Check**: Asserts prediction variance $\\sigma^2 > \\epsilon$
-            to detect model collapse (constant output).
+        4.  **Variance Constraint**: Asserts prediction variance $\\sigma^2_{pred} > \\epsilon$
+            to detect model collapse (constant output) or gradient explosion.
 
         Returns:
             bool: True if all systems are nominal, False otherwise.
@@ -205,7 +209,7 @@ class DeploymentManager:
             logger.error("[CHECK] ❌ No models found in production directory.")
             return False
 
-        # 1. Latency Check: Verify signal cache recency relative to trading date
+        # 1. Latency Audit
         sig_date, sig_age = _prediction_cache_age()
         if sig_date is None:
             logger.warning(
@@ -233,7 +237,7 @@ class DeploymentManager:
         for model_path in sorted(models):
             name = model_path.stem.replace("_latest", "").capitalize()
             try:
-                # 2. Artifact Verification: Catch deserialization issues (e.g., missing custom objectives)
+                # 2. Artifact Integrity Check
                 try:
                     payload = joblib.load(model_path)
                 except AttributeError as exc:
@@ -252,17 +256,17 @@ class DeploymentManager:
                 model      = payload["model"]
                 features   = payload.get("feature_names", [])
                 trained_to = payload.get("trained_to", "Unknown")
-                m          = payload.get("oos_metrics", {})
+                metrics    = payload.get("oos_metrics", {})
 
-                # Metric Extraction: Quality Assurance Statistics
-                ic      = m.get("ic_mean",  0.0)
-                ic_std  = m.get("ic_std",   1e-8)
-                n_dates = m.get("n_dates",  1)
+                # QA Statistics: Extract OOS performance metrics
+                ic      = metrics.get("ic_mean",  0.0)
+                ic_std  = metrics.get("ic_std",   1e-8)
+                n_dates = metrics.get("n_dates",  1)
                 tstat    = ic / (ic_std / (n_dates ** 0.5)) if n_dates > 0 else 0.0
                 ann_icir = (ic / ic_std) * (252 ** 0.5) if ic_std > 0 else 0.0
                 tier     = _gate_tier(ic, ic_std, n_dates)
 
-                # 3. Inference Stability & Degeneracy Check
+                # 3. Inference Stability & Variance Check
                 smoke_ok  = True
                 smoke_msg = "No features stored — inference test skipped."
                 if features:
@@ -271,7 +275,7 @@ class DeploymentManager:
                         preds = model.predict(dummy)
                         preds = np.asarray(preds, dtype=float)
 
-                        # Degeneracy Detection: Check for zero-variance outputs
+                        # Variance Constraint: Detect trivial/collapsed models
                         pred_std = float(np.std(preds))
                         if pred_std < 1e-6:
                             smoke_ok  = False
@@ -314,9 +318,10 @@ class DeploymentManager:
     # --------------------------------------------------------------------------
     def archive_current_models(self) -> Path | None:
         """
-        Snapshots current production artifacts to an immutable archive.
+        Creates an immutable snapshot of current production artifacts.
 
-        Generates a `manifest.json` to provide a complete audit trail, recording:
+        Governance:
+        Generates a `manifest.json` to provide a regulatory audit trail, recording:
         - Model performance metrics ($IC$, $t$-stat).
         - Feature usage and training cutoff dates.
         - Signal cache latency at the time of archival.
@@ -354,13 +359,13 @@ class DeploymentManager:
             try:
                 shutil.copy2(model_path, snapshot_dir)
 
-                # Metadata Extraction: Enriched manifest generation
+                # Metadata Extraction: Enrich manifest with performance stats
                 payload = joblib.load(snapshot_dir / model_path.name)
-                m       = payload.get("oos_metrics", {})
-                feat    = payload.get("feature_names", [])
-                ic      = m.get("ic_mean", 0.0)
-                ic_std  = m.get("ic_std",  1e-8)
-                n_d     = m.get("n_dates", 1)
+                metrics = payload.get("oos_metrics", {})
+                features = payload.get("feature_names", [])
+                ic      = metrics.get("ic_mean", 0.0)
+                ic_std  = metrics.get("ic_std",  1e-8)
+                n_d     = metrics.get("n_dates", 1)
                 tstat   = ic / (ic_std / (n_d ** 0.5)) if n_d > 0 else 0.0
                 ann_icir = (ic / ic_std) * (252 ** 0.5) if ic_std > 0 else 0.0
 
@@ -372,8 +377,8 @@ class DeploymentManager:
                     "t_stat":        round(tstat, 2),
                     "ann_icir":      round(ann_icir, 2),
                     "gate_tier":     _gate_tier(ic, ic_std, n_d),
-                    "n_features":    len(feat),
-                    "feature_names": feat,
+                    "n_features":    len(features),
+                    "feature_names": features,
                 })
                 logger.info(f"   Archived: {model_path.name}")
             except AttributeError:
@@ -399,7 +404,7 @@ class DeploymentManager:
     # --------------------------------------------------------------------------
     def prune_archives(self, keep_last: int = 5, dry_run: bool = False) -> None:
         """
-        Enforces retention policies to manage disk usage.
+        Enforces the Archive Retention Policy to mitigate storage exhaustion.
 
         Strategy:
         - Retains the `keep_last` most recent archives.
@@ -407,7 +412,7 @@ class DeploymentManager:
           naming conventions, ensuring robustness against non-standard directory names.
         - Provides capacity alerts if total archive size exceeds 5GB.
         """
-        # Sort Strategy: Modification time ($mtime$) ensures chronological ordering
+        # Sorting: modification time ($mtime$) provides reliable chronological ordering
         archives = sorted(
             [d for d in self.archive_dir.iterdir() if d.is_dir()],
             key=lambda d: d.stat().st_mtime
@@ -464,7 +469,7 @@ class DeploymentManager:
 
         logger.info(f"[PRUNE] {action} {freed_mb:.0f} MB. Remaining: {remaining_mb:.0f} MB")
 
-        # Resource Monitoring: Pre-prune capacity check
+        # Capacity Alert: Pre-emptive warning for filesystem constraints
         if remaining_mb > 5_000:
             logger.warning(
                 f"[PRUNE] ⚠️  Archive folder is {remaining_mb/1000:.1f} GB. "

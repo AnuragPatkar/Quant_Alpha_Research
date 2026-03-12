@@ -1,20 +1,42 @@
 """
-download_data.py
-================
-Standalone Master Data Pipeline
---------------------------------
-Usage:
-    python download_data.py                  # Run all steps
-    python download_data.py --step prices    # Run one step
-    python download_data.py --force          # Re-download existing files
-    python download_data.py --step validate  # Just validate
+Master Data Acquisition Pipeline
+================================
+Orchestrates the ingestion, normalization, and persistence of multi-modal financial
+data required for quantitative research.
 
-Steps:
-    1. prices        — S&P 500 OHLCV via vectorized yfinance
-    2. fundamentals  — Balance Sheet, Income Stmt, Cashflow (threaded)
-    3. earnings      — Historical EPS dates & estimates (threaded)
-    4. macro         — VIX, Yields, Oil, USD, SP500
-    5. validate      — Health check & universe diagnosis
+Purpose
+-------
+This module serves as the **Data Lake Ingestion Layer** for the Quant Alpha platform.
+It creates a unified, queryable dataset by aggregating disparate data sources:
+1.  **Price Action (OHLCV)**: Adjusted for splits and dividends.
+2.  **Fundamentals**: Balance Sheets, Income Statements, and Cash Flows.
+3.  **Earnings**: Historical EPS surprises and analyst estimates.
+4.  **Macroeconomics**: Regime indicators (VIX, Yield Curves, Commodities).
+
+Usage:
+-----
+Executed via CLI to populate the `data/` directory. Supports granular execution
+steps and forced re-acquisition.
+
+.. code-block:: bash
+
+    # 1. Full Pipeline (Default)
+    python scripts/download_data.py
+
+    # 2. Specific Data Domain
+    python scripts/download_data.py --step prices
+
+    # 3. Force Re-download (Bypass Cache)
+    python scripts/download_data.py --force
+
+Importance
+----------
+-   **Data Integrity**: Enforces strict schema validation to prevent "Garbage In,
+    Garbage Out" in downstream ML models.
+-   **Rate Limit Management**: Implements exponential backoff and stochastic jitter
+    to handle upstream API constraints (HTTP 429/401).
+-   **Concurrency**: Utilizes `ThreadPoolExecutor` for I/O-bound tasks, optimizing
+    throughput for thousands of network requests.
 """
 
 import sys
@@ -58,8 +80,10 @@ ALT_DIR      = config.ALTERNATIVE_DIR
 START_DATE   = config.BACKTEST_START_DATE
 END_DATE     = config.BACKTEST_END_DATE
 
-# ⚠️  Keep FUND_WORKERS low — Yahoo's crumb/session expires fast under
-#     high concurrency, causing 401 "Invalid Crumb" floods.
+# Concurrency Control:
+# FUND_WORKERS is intentionally throttled (low count) to mitigate HTTP 429/401 errors
+# from the upstream provider. High concurrency triggers session invalidation ("Invalid Crumb").
+# Complexity: O(N / Workers) latency.
 FUND_WORKERS     = 4
 EARNINGS_WORKERS = 8
 
@@ -71,7 +95,7 @@ MACRO_TICKERS = {
     "SP500": "^GSPC",
 }
 
-# Browser-like headers to avoid 401s on .info calls
+# User-Agent spoofing to bypass basic bot detection logic during scraping.
 _YF_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -87,7 +111,13 @@ _YF_HEADERS = {
 # HELPERS
 # ---------------------------------------------------------
 def _retry(fn, retries: int = 3, delay: float = 3.0):
-    """Call fn(), retrying on exception with exponential back-off."""
+    """
+    Executes a callable with Exponential Backoff retry logic.
+
+    Strategy:
+        Wait time $t_n = delay \times n$ where $n$ is the attempt number.
+        Used to handle transient network partitions or temporary rate limits.
+    """
     for attempt in range(1, retries + 1):
         try:
             return fn()
@@ -104,7 +134,7 @@ def _section(title: str) -> None:
 
 
 def _yf_ticker(symbol: str) -> yf.Ticker:
-    """Return a Ticker with browser-like headers to reduce 401s."""
+    """Factory method: Instantiates a Ticker object with injected session headers."""
     t = yf.Ticker(symbol)
     t.session = requests.Session()
     t.session.headers.update(_YF_HEADERS)
@@ -115,7 +145,11 @@ def _yf_ticker(symbol: str) -> yf.Ticker:
 # 1.  S&P 500 TICKER LIST
 # =========================================================
 def get_sp500_tickers() -> list[str]:
-    """Scrapes Wikipedia for current S&P 500 constituents."""
+    """
+    Sourcing: Scrapes Wikipedia for the current S&P 500 constituent list.
+    
+    Note: Ticker symbols are normalized (e.g., 'BRK.B' -> 'BRK-B') to match Yahoo Finance convention.
+    """
     print("📋 Fetching S&P 500 tickers from Wikipedia…")
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
     try:
@@ -134,7 +168,12 @@ def get_sp500_tickers() -> list[str]:
 # 2.  PRICE DOWNLOAD
 # =========================================================
 def download_prices(force: bool = False) -> None:
-    """Downloads OHLCV data for all S&P 500 tickers."""
+    """
+    Ingests OHLCV (Open, High, Low, Close, Volume) data.
+
+    Optimization:
+        Uses `yf.download` in vectorized mode (bulk request) to reduce HTTP overhead.
+    """
     _section("📈 STEP 1 / 4 — PRICE DATA")
     PRICE_DIR.mkdir(parents=True, exist_ok=True)
     tickers = get_sp500_tickers()
@@ -186,11 +225,15 @@ def download_prices(force: bool = False) -> None:
 # 3.  FUNDAMENTAL DOWNLOAD
 # =========================================================
 def _fetch_fundamental(ticker: str, force: bool = False) -> str:
+    """
+    Worker task: Fetches financial statements (Balance Sheet, Income, Cash Flow).
+    """
     save_path = FUND_DIR / ticker
     if not force and save_path.exists() and (save_path / "info.csv").exists():
         return f"⏭️  {ticker}"
 
-    # Jitter: spread requests to avoid crumb invalidation under concurrency
+    # Jitter: Stochastic delay injection [0.3s, 1.2s] to decorrelate thread request spikes,
+    # preventing synchronized API hits that trigger rate limiters.
     time.sleep(random.uniform(0.3, 1.2))
 
     try:
@@ -198,7 +241,7 @@ def _fetch_fundamental(ticker: str, force: bool = False) -> str:
             stock = _yf_ticker(ticker)
             save_path.mkdir(parents=True, exist_ok=True)
 
-            # Guard: stock.info can return None or an empty/minimal dict
+            # Validation: Assert payload integrity. stock.info can return None/empty on failure.
             info = stock.info
             if not info or not isinstance(info, dict) or len(info) < 5:
                 raise ValueError(f"info dict empty or invalid for {ticker}")
@@ -222,7 +265,7 @@ def _fetch_fundamental(ticker: str, force: bool = False) -> str:
 
 
 def download_fundamentals(force: bool = False) -> None:
-    """Downloads fundamental data (threaded, rate-limited)."""
+    """Orchestrates threaded fundamental data ingestion with concurrency throttling."""
     _section("📊 STEP 2 / 4 — FUNDAMENTAL DATA")
     if not PRICE_DIR.exists():
         print("❌ Run prices first."); return
@@ -249,6 +292,9 @@ def download_fundamentals(force: bool = False) -> None:
 # 4.  EARNINGS DOWNLOAD
 # =========================================================
 def _fetch_earnings(ticker: str, force: bool = False) -> str:
+    """
+    Worker task: Fetches historical Earnings Per Share (EPS) estimates and actuals.
+    """
     save_path = EARNINGS_DIR / f"{ticker}.csv"
     if not force and save_path.exists():
         return f"⏭️  {ticker}"
@@ -283,7 +329,7 @@ def _fetch_earnings(ticker: str, force: bool = False) -> str:
 
 
 def download_earnings(force: bool = False) -> None:
-    """Downloads earnings history (threaded)."""
+    """Orchestrates threaded earnings data ingestion."""
     _section("📅 STEP 3 / 4 — EARNINGS DATA")
     if not PRICE_DIR.exists():
         print("❌ Run prices first."); return
@@ -304,7 +350,7 @@ def download_earnings(force: bool = False) -> None:
 # 5.  MACRO / ALTERNATIVE DOWNLOAD
 # =========================================================
 def download_macro(force: bool = False) -> None:
-    """Downloads macro-economic indicators."""
+    """Ingests global macro-economic regime indicators (VIX, Bond Yields, etc.)."""
     _section("🌍 STEP 4 / 4 — MACRO / ALTERNATIVE DATA")
     ALT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -348,7 +394,7 @@ def download_macro(force: bool = False) -> None:
 # 6.  VALIDATION
 # =========================================================
 def validate_all(force: bool = False) -> None:
-    """Health check across all data directories."""
+    """Executes a comprehensive audit of the Data Lake state and Universe integrity."""
     _section("🏥 MASTER DATA HEALTH CHECK")
 
     print("\n1️⃣  PRICE DATA")
@@ -396,6 +442,7 @@ def validate_all(force: bool = False) -> None:
         print("   ✅ All macro indicators present.")
 
     print(f"\n{'=' * 60}\n🏆 UNIVERSE DIAGNOSIS")
+    # Set-theoretic intersection to determine the tradeable universe size ($N_{stocks}$).
     partial = valid_prices & good_funds
     full    = partial & earn_tickers
     print(f"   ✅ Price + Fundamentals:            {len(partial)} stocks")

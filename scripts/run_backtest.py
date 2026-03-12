@@ -1,26 +1,52 @@
 """
-run_backtest.py
-===============
-Standalone Backtest Runner  — v2 (Fixed)
------------------------------------------
-Fixes vs original:
-  BUG1: IC attribution used shifted preds → understated IC. Fixed: keep raw copy.
-  BUG2: Fallback fwd_ret used Close-to-Close (inconsistent with training). Removed.
-  BUG3: Jensen's Alpha used diluted returns (cash included). Fixed: assert pure signal.
-  HIGH1: Cov matrix index mismatch when new-listed tickers drop from returns. Fixed.
-  HIGH2: apply_trading_lag mutated caller DataFrame. Fixed: always copy first.
-  HIGH3: Engine params hardcoded — silently diverge from trainer. Fixed: read config.
-  MED1: Lookback days ambiguity (calendar vs trading). Documented in config comment.
-  MED2: Tearsheet PDF may silently corrupt. Added format guard.
-  MED3: ICIR computed on rolling IC (biased). Fixed: use raw daily IC for ICIR.
-  LOW1: --top_n should be --top-n (CLI convention). Fixed.
-  LOW2: equity_curve date column assumed not indexed. Added defensive reset_index.
+Standalone Backtest Simulation Engine
+=====================================
+Executes a full historical simulation of a quantitative strategy based on generated alpha signals.
+
+Purpose
+-------
+This module serves as the **Strategy Validation Layer**, taking pre-generated alpha
+signals (from `generate_predictions.py`) and simulating their performance under
+realistic market conditions. It orchestrates the `BacktestEngine` to produce a
+comprehensive set of performance metrics, visualizations, and attribution analyses.
+
+The script is designed to be the final out-of-sample test before considering a
+strategy for live deployment.
 
 Usage:
-    python run_backtest.py --method top_n
-    python run_backtest.py --method mean_variance --top-n 25
-    python run_backtest.py --method risk_parity
-    python run_backtest.py --method kelly
+------
+Executed via the CLI to test different portfolio construction methodologies.
+
+.. code-block:: bash
+
+    # 1. Top-N Equal Weight (simplest baseline)
+    python scripts/run_backtest.py --method top_n --top-n 50
+
+    # 2. Mean-Variance Optimization
+    python scripts/run_backtest.py --method mean_variance --top-n 25
+
+    # 3. Risk Parity (Equal Risk Contribution)
+    python scripts/run_backtest.py --method risk_parity
+
+Importance
+----------
+-   **Performance Validation**: Generates key metrics (Sharpe, Sortino, CAGR, Max Drawdown)
+    to objectively measure strategy viability.
+-   **Friction Modeling**: The underlying `BacktestEngine` accounts for transaction costs,
+    slippage, and market impact, providing a realistic estimate of net returns.
+-   **Look-Ahead Bias Prevention**: Explicitly applies a 1-day lag to signals, ensuring
+    that information from Close(T) is only used for trading at Open(T+1).
+-   **Alpha Attribution**: Decomposes performance by calculating Information Coefficient (IC)
+    and benchmark-relative alpha/beta to understand the true sources of return.
+
+Tools & Frameworks
+------------------
+-   **BacktestEngine**: The core event-driven simulation engine.
+-   **PortfolioAllocator**: Facade for selecting optimization strategies (MVO, Risk Parity).
+-   **Scikit-Learn**: `LedoitWolf` for robust covariance matrix estimation.
+-   **Pandas/NumPy**: High-performance time-series manipulation and numerical computation.
+-   **Matplotlib**: Generation of performance visualizations (equity curve, tearsheet).
+-   **YFinance**: Retrieval of benchmark data (S&P 500) for relative performance metrics.
 """
 
 import argparse
@@ -62,7 +88,7 @@ CACHE_DATA_PATH = config.CACHE_DIR / "master_data_with_factors.parquet"
 # Backtest engine params — read from config to stay consistent with train_models.py
 # Add these to config/settings.py if not present:
 #   BACKTEST_SLIPPAGE        = 0.0002
-#   BACKTEST_POSITION_LIMIT  = 0.10
+#   BACKTEST_POSITION_LIMIT  = 0.10  (Max % of NAV in a single position)
 #   BACKTEST_MAX_TURNOVER    = 0.20
 #   BACKTEST_SPREAD          = 0.0005
 #   OPT_LOOKBACK_DAYS        = 252  (NOTE: this is CALENDAR days — ~174 trading days)
@@ -108,13 +134,16 @@ def load_data():
 # ==============================================================================
 def apply_trading_lag(preds: pd.DataFrame, pred_col: str) -> pd.DataFrame:
     """
-    Shift predictions forward 1 day: signal at Close(T) → trade at Open(T+1).
+    Applies a 1-day lag to signals to prevent look-ahead bias.
 
-    FIXED: original mutated caller's DataFrame in-place.
-    Now always returns a new copy — caller's preds remain unshifted.
-    This is important because IC attribution must use the UNSHIFTED preds.
+    A signal generated using market data up to the Close of day T is only
+    actionable at the Open of day T+1. This function simulates that delay by
+    shifting the prediction series forward.
+
+    Note: Returns a new DataFrame copy to ensure the original (unshifted)
+    predictions are preserved for Information Coefficient (IC) analysis.
     """
-    lagged = preds.copy()  # never mutate caller's data
+    lagged = preds.copy()
     lagged[pred_col] = lagged.groupby("ticker")[pred_col].shift(1)
     lagged = lagged.dropna(subset=[pred_col]).reset_index(drop=True)
     logger.info(
@@ -135,11 +164,7 @@ def run_optimization(
     top_n: int = 25,
 ) -> pd.DataFrame:
     """
-    Rolling portfolio optimisation to generate position weights.
-
-    FIXED: Covariance matrix index mismatch when tickers have short history.
-    Original: dropna() silently removed tickers → index=tickers had wrong length.
-    Now: use valid_tickers from returns.columns after dropping all-NaN columns.
+    Performs rolling-window portfolio optimization to generate target weights.
     """
     logger.info(f"Running Portfolio Optimisation ({method})...")
 
@@ -180,9 +205,10 @@ def run_optimization(
             )
 
             if not returns.empty:
-                # FIXED: use columns from returns (not original tickers list)
-                # Original used index=tickers which mismatched cov_ matrix shape
-                # when newly-listed tickers were dropped by dropna().
+                # Data Quality: Use the columns from the computed returns matrix as the
+                # definitive list of valid tickers. This prevents index mismatches if
+                # newly-listed tickers with insufficient history were dropped during
+                # the returns calculation.
                 valid_tickers = returns.columns.tolist()
                 valid_er      = {t: v for t, v in expected_returns.items()
                                  if t in valid_tickers}
@@ -216,8 +242,7 @@ def run_optimization(
 # ==============================================================================
 def _normalise_equity_curve(ec) -> pd.DataFrame:
     """
-    Ensure equity_curve is a DataFrame with a 'date' column.
-    BacktestEngine may return a DatetimeIndex-indexed Series or DataFrame.
+    Defensively ensures the equity curve is a DataFrame with a 'date' column.
     """
     if isinstance(ec, pd.Series):
         ec = ec.reset_index()
@@ -249,7 +274,7 @@ Examples:
         choices=["top_n", "mean_variance", "risk_parity", "kelly", "inverse_vol"],
         help="Portfolio optimisation method.",
     )
-    # FIXED: --top_n → --top-n (CLI convention; consistent with rest of codebase)
+    # Use --top-n for CLI consistency with other scripts.
     parser.add_argument(
         "--top-n", dest="top_n", type=int, default=25,
         help="Number of positions (default: 25).",
@@ -259,12 +284,11 @@ Examples:
     # 1. Load Data
     preds, data, pred_col = load_data()
 
-    # Save raw unshifted copy for IC attribution BEFORE applying lag
-    # FIXED BUG1: original used already-shifted preds for IC → understated IC
+    # Preserve a raw, unshifted copy of predictions for accurate IC attribution.
+    # Applying the lag before IC calculation would misalign signals and returns.
     raw_preds_for_ic = preds.copy()
 
     # Apply 1-day lag: Close(T) signal → Open(T+1) execution
-    # FIXED HIGH2: apply_trading_lag now returns a copy, never mutates preds
     lagged_preds = apply_trading_lag(preds, pred_col)
 
     # 2. Prepare predictions based on method
@@ -298,8 +322,7 @@ Examples:
     backtest_prices = data[price_cols].drop_duplicates(subset=["date", "ticker"])
 
     # 4. Configure engine
-    # FIXED HIGH3: all params now read from config — guaranteed consistency with train_models.py
-    logger.info(f"Initialising Backtest Engine (method={args.method.upper()})...")
+    # Parameters are read from config to ensure consistency with train_models.py
     engine = BacktestEngine(
         initial_capital       = config.INITIAL_CAPITAL,
         commission            = config.TRANSACTION_COST_BPS / 10_000.0,
@@ -316,6 +339,7 @@ Examples:
     )
 
     # 5. Run backtest
+    logger.info(f"Initialising Backtest Engine (method={args.method.upper()})...")
     logger.info("Running Simulation...")
     engine_kwargs = {"predictions": backtest_preds, "prices": backtest_prices}
     if args.method == "top_n":
@@ -324,7 +348,7 @@ Examples:
     results = engine.run(**engine_kwargs)
 
     # 6. Normalise equity curve
-    # FIXED LOW2: BacktestEngine may return DatetimeIndex Series — normalise defensively
+    # Defensively handle multiple possible output formats from the engine.
     results["equity_curve"] = _normalise_equity_curve(results["equity_curve"])
     eq_df = results["equity_curve"]
 
@@ -344,8 +368,8 @@ Examples:
     )
     plot_monthly_heatmap(returns_series, save_path=output_dir / "monthly_heatmap.png")
 
-    # FIXED MED2: check tearsheet format — PDF needs explicit matplotlib backend support
-    tearsheet_path = output_dir / "tearsheet.png"  # use PNG — universally safe
+    # Use PNG for tearsheet; it's universally supported without backend issues.
+    tearsheet_path = output_dir / "tearsheet.png"
     try:
         generate_tearsheet(results, save_path=tearsheet_path)
     except Exception as exc:
@@ -365,9 +389,8 @@ Examples:
     print(f"  Long PnL:       ${pnl_stats.get('long_pnl_contribution', 0):,.0f}")
     print(f"  Short PnL:      ${pnl_stats.get('short_pnl_contribution', 0):,.0f}")
 
-    # 9. Factor IC Analysis — use RAW (unshifted) preds
-    # FIXED BUG1: original used lagged_preds → IC understated by 1 day
-    # FIXED BUG2: removed Close-to-Close fallback — only Open-to-Open is valid
+    # 9. Factor IC Analysis
+    # Use the un-shifted `raw_preds_for_ic` to ensure correct alignment.
     data_sorted = data.sort_values(["ticker", "date"]).copy()
 
     if "open" not in data_sorted.columns:
@@ -393,8 +416,8 @@ Examples:
             rolling_ic = factor_attr.calculate_rolling_ic(factor_vals, fwd_rets, window=30)
             plot_ic_time_series(rolling_ic, save_path=output_dir / "ic_time_series.png")
 
-            # FIXED MED3: ICIR must use RAW daily IC, not rolling IC
-            # Rolling IC smooths out volatility → std is understated → ICIR biased high
+            # ICIR must be computed on raw daily ICs. Using a rolling mean of ICs
+            # would understate the standard deviation, artificially inflating the ICIR.
             try:
                 raw_daily_ic = factor_attr.calculate_raw_ic(factor_vals, fwd_rets)
                 icir = float(raw_daily_ic.mean() / (raw_daily_ic.std() + 1e-8))
@@ -437,10 +460,8 @@ Examples:
             strat_ret = returns_series.dropna()
 
             aligned = pd.DataFrame({"strat": strat_ret, "bench": spy_ret}).dropna()
-
             if not aligned.empty:
                 rf_daily = getattr(config, "RISK_FREE_RATE", 0.035) / 252
-
                 # Cash drag warning: BacktestEngine may not expose avg_invested_pct.
                 # Derive it from equity_curve instead — universally available.
                 # equity_curve["total_value"] includes cash; if engine also tracks
@@ -448,7 +469,8 @@ Examples:
                 # peak drawdown periods when cash allocation was high.
                 ec_tmp = results["equity_curve"].copy()
                 if "invested_value" in ec_tmp.columns and "total_value" in ec_tmp.columns:
-                    # Engine exposes invested_value directly — most accurate
+                    # If the engine provides invested_value, we can accurately
+                    # measure the average allocation to risk assets.
                     avg_invested = float(
                         (ec_tmp["invested_value"] / ec_tmp["total_value"]
                          .replace(0, np.nan)).dropna().mean()
@@ -457,7 +479,7 @@ Examples:
                     # Engine returns it as a top-level metric
                     avg_invested = float(results["avg_invested_pct"])
                 else:
-                    # Fallback: not available — warn but do not crash
+                    # Fallback: metric not available.
                     avg_invested = None
                     logger.debug(
                         "avg_invested_pct not available from BacktestEngine. "
@@ -471,6 +493,7 @@ Examples:
                         "Consider normalising returns to invested capital."
                     )
 
+                # Perform linear regression of excess returns to find alpha and beta.
                 reg = stats.linregress(
                     aligned["bench"].values.ravel() - rf_daily,
                     aligned["strat"].values.ravel() - rf_daily,

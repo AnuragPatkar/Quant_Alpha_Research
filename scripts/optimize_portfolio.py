@@ -1,30 +1,51 @@
 """
-optimize_portfolio.py
-=====================
-Production Portfolio Optimization Engine  — v2 (Fixed)
--------------------------------------------------------
-Fixes vs original:
-  CRIT1: Share counts used Close(T); orders fill at Open(T+1). Now warns + buffers.
-  CRIT2: Vol scaling created unintended leverage (>100% gross). Now renormalized.
-  CRIT3: prices.get() on pd.Series — wrong type + zero-price silently skipped.
-         Fixed: explicit index check + float cast + price <= 0 guard.
-  HIGH1: Timezone mismatch (UTC parquet vs local signal_date) → empty df → crash.
-         Fixed: strip tz on load.
-  HIGH2: Tickers silently dropped by risk model (>30% NaN). Now explicit warning.
-  HIGH3: top_n*2 alpha-filtered pool broke risk_parity/inverse_vol.
-         Fixed: risk-based methods use full universe.
-  MED1:  Orders silently overwritten same day. Now timestamped + latest copy.
-  MED2:  Staleness check used calendar days. Fixed: pd.bdate_range (trading days).
-  MED3:  Risk report missing gross/net exposure and HHI concentration.
-  LOW1:  Magic number +30 buffer undocumented. Named constant added.
-  LOW2:  market_caps missing from allocator.allocate() call.
-  LOW3:  score_col fallback raised confusing KeyError. Fixed: explicit raise.
+Production Portfolio Construction Engine
+========================================
+Transforms raw alpha signals into optimal executable orders using modern portfolio theory (MPT).
+
+Purpose
+-------
+This module serves as the **Portfolio Construction Layer**, bridging the gap between
+predictive modeling (Alpha) and execution (Orders). It solves the convex optimization
+problem:
+.. math::
+    \\max_{w} \\mu^T w - \\frac{\\lambda}{2} w^T \\Sigma w
+Subject to constraints (leverage, cardinality, sector exposure).
+
+Key capabilities:
+1.  **Risk Modeling**: Estimates the covariance matrix $\\Sigma$ via Ledoit-Wolf shrinkage.
+2.  **Objective Functions**: Supports Mean-Variance, Risk Parity, Black-Litterman, and Kelly Criterion.
+3.  **Volatility Targeting**: Dynamically scales exposure to maintain constant portfolio risk $\\sigma_{target}$.
+4.  **Order Generation**: Discretizes optimal weights into integer share counts, accounting for
+    Close(T) vs Open(T+1) price drift.
 
 Usage:
-    python scripts/optimize_portfolio.py --capital 1000000
-    python scripts/optimize_portfolio.py --method mean_variance --target-vol 0.15
+------
+Executed via CLI for daily portfolio rebalancing.
+
+.. code-block:: bash
+
+    # Standard Mean-Variance Optimization ($1M Capital)
+    python scripts/optimize_portfolio.py --capital 1000000 --method mean_variance
+
+    # Risk Parity (Equal Risk Contribution)
     python scripts/optimize_portfolio.py --method risk_parity --top-n 30
+
+    # Volatility Targeting ($\sigma = 15\%$)
+    python scripts/optimize_portfolio.py --method mean_variance --target-vol 0.15
+
     python scripts/optimize_portfolio.py --method black_litterman
+
+Importance
+----------
+-   **Risk Control**: Ensures the portfolio remains within defined volatility and drawdown limits.
+-   **Diversification**: Mitigates idiosyncratic risk via HHI concentration checks.
+-   **Alpha Conversion**: Translates rank-based signals into dollar-neutral or long-only allocations.
+
+Tools & Frameworks
+------------------
+-   **Scikit-Learn**: Ledoit-Wolf covariance estimation for robust risk modeling.
+-   **Pandas/NumPy**: Vectorized matrix operations for efficient frontier calculation.
 """
 
 import sys
@@ -59,19 +80,17 @@ OUTPUT_DIR      = config.RESULTS_DIR / "orders"
 DEFAULT_LOOKBACK_DAYS = getattr(config, "OPT_LOOKBACK_DAYS", 252)
 RISK_FREE_RATE        = getattr(config, "RISK_FREE_RATE", 0.04)
 
-# FIXED LOW1: named constant instead of magic number +30
-# Buffer ensures enough calendar days to cover weekends + holidays
+# Data Buffer:
+# Ensures sufficient calendar days are loaded to cover weekends + holidays
 # (~45 calendar days ≈ 30 trading days buffer beyond lookback)
 CALENDAR_BUFFER_DAYS = 45
 
-# Methods that optimise purely on risk (alpha scores irrelevant to weight calc)
+# Risk-Based Methods: Pure risk diversification (Alpha scores ignored for weighting)
 RISK_ONLY_METHODS = {"risk_parity", "inverse_vol"}
 
-# Maximum gross exposure allowed after volatility scaling.
-# 1.0 = no leverage (long-only, 100% invested)
-# 1.5 = modest leverage (e.g. 130/30 or vol-targeted long book)
-# Set via config.MAX_LEVERAGE or override here.
-# NOTE: values > 1.0 require broker margin and add funding cost risk.
+# Leverage Constraint: Maximum Gross Exposure ($|L| + |S|$).
+# 1.0 = Fully funded (Long-Only or 130/30 Net).
+# >1.0 requires margin facilities and incurs funding costs.
 MAX_LEVERAGE = getattr(config, "MAX_LEVERAGE", 1.0)
 
 
@@ -82,8 +101,7 @@ class ProductionOptimizer:
         self.method     = method
         self.top_n      = top_n
         self.target_vol = target_vol
-        # top_n = equal weight among top-N; not a PortfolioAllocator method.
-        # Use mean_variance as allocator base for all other methods.
+        # Strategy Pattern: Use Mean-Variance as the base allocator for custom logic
         allocator_method = "mean_variance" if method == "top_n" else method
         self.allocator  = PortfolioAllocator(
             method=allocator_method,
@@ -96,7 +114,7 @@ class ProductionOptimizer:
     # 1. LOAD SIGNALS
     # ──────────────────────────────────────────────────────────────────────────
     def load_latest_predictions(self) -> tuple[pd.DataFrame, date]:
-        """Finds and loads the most recent alpha signal file."""
+        """Retrieves the most recent alpha signal artifact from the Data Lake."""
         if not PREDICTIONS_DIR.exists():
             raise FileNotFoundError(f"Predictions directory missing: {PREDICTIONS_DIR}")
 
@@ -111,8 +129,8 @@ class ProductionOptimizer:
 
         df = load_parquet(latest_file)
 
-        # FIXED HIGH1: strip timezone from date column before comparison
-        # Parquet files written with pyarrow may store dates as UTC-aware timestamps.
+        # Timezone Normalization:
+        # Parquet files may store UTC-aware timestamps via PyArrow.
         # If signal_date is local date, tz mismatch → empty DataFrame → crash.
         df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
 
@@ -122,8 +140,7 @@ class ProductionOptimizer:
         except ValueError:
             signal_date = df["date"].max().date()
 
-        # FIXED MED2: trading days staleness (not calendar days)
-        # Original used calendar days → spurious warnings every Monday/holiday
+        # Latency Check: Warn if signals are stale ($T_{lag} > 1$ trading day)
         trading_days_old = len(pd.bdate_range(signal_date, datetime.now().date())) - 1
         if trading_days_old > 1:
             logger.warning(
@@ -142,12 +159,12 @@ class ProductionOptimizer:
     # ──────────────────────────────────────────────────────────────────────────
     def load_market_data(self, tickers: list[str], end_date: date) -> tuple[pd.DataFrame, dict]:
         """
-        Loads historical price data for covariance estimation.
-        Also extracts market caps for Black-Litterman equilibrium prior.
+        Ingests historical pricing for Risk Modeling ($\Sigma$) and Market Caps for
+        Black-Litterman Priors ($\Pi$).
 
         Returns:
-            price_matrix : Date × Ticker close price matrix
-            market_caps  : {ticker: market_cap} — real values from data if available,
+            price_matrix : $T \times N$ Close price matrix
+            market_caps  : {ticker: cap} — Real values if available,
                            else 1e9 dummy (signals equal market weight in BL prior)
         """
         logger.info(f"Loading market data for {len(tickers)} tickers...")
@@ -156,16 +173,16 @@ class ProductionOptimizer:
             raise FileNotFoundError(f"Master data cache missing: {PRICES_DIR}")
 
         master_df = load_parquet(PRICES_DIR)
-        # FIXED HIGH1: strip tz here too for consistent comparison
+        # Timezone Normalization
         master_df["date"] = pd.to_datetime(master_df["date"]).dt.tz_localize(None)
 
-        # FIXED LOW1: use named CALENDAR_BUFFER_DAYS instead of magic +30
+        # Date Range Slicing
         start_date = pd.Timestamp(end_date) - pd.Timedelta(
             days=DEFAULT_LOOKBACK_DAYS + CALENDAR_BUFFER_DAYS
         )
         mask = (master_df["date"] >= start_date) & (master_df["date"] <= pd.Timestamp(end_date))
 
-        # Load market_cap if available — required for Black-Litterman equilibrium prior
+        # Schema Validation: Check for 'market_cap' availability
         cols = ["date", "ticker", "close"]
         if "market_cap" in master_df.columns:
             cols.append("market_cap")
@@ -181,7 +198,7 @@ class ProductionOptimizer:
                 f"{sorted(missing)[:5]}{'...' if len(missing) > 5 else ''}. Dropping."
             )
 
-        # Extract latest market cap per ticker for Black-Litterman prior
+        # Extract Market Caps (Vectorized Last Observation)
         market_caps: dict = {}
         if "market_cap" in df.columns:
             last_caps = df.sort_values("date").groupby("ticker")["market_cap"].last()
@@ -196,11 +213,11 @@ class ProductionOptimizer:
     # 3. RISK MODEL
     # ──────────────────────────────────────────────────────────────────────────
     def estimate_risk_model(self, price_matrix: pd.DataFrame) -> pd.DataFrame:
-        """Estimates annualised covariance matrix using Ledoit-Wolf shrinkage."""
+        """Estimates Annualized Covariance Matrix $\Sigma$ via Ledoit-Wolf Shrinkage."""
         returns   = calculate_returns(price_matrix).dropna(how="all")
         valid_cols = returns.columns[returns.isnull().mean() < 0.3]
 
-        # FIXED HIGH2: warn explicitly when tickers are dropped
+        # Data Quality Check: Drop tickers with >30% missing history (IPO/Delisted)
         dropped = set(returns.columns) - set(valid_cols)
         if dropped:
             logger.warning(
@@ -237,15 +254,12 @@ class ProductionOptimizer:
     def generate_orders(self, weights: dict[str, float],
                         prices: pd.Series) -> pd.DataFrame:
         """
-        Converts target weights to share counts.
+        Discretizes target weights into integer share counts.
 
-        FIXED CRIT1: original used Close(T) for share sizing, but orders fill
-        at Open(T+1). Now warns about expected price deviation and uses Close(T)
-        as best available estimate (accept ~0.5% sizing error on execution).
-
-        FIXED CRIT3: original used prices.get(ticker) on pd.Series — wrong API.
-        pd.Series.get() exists but 'if not price' silently skips zero-price stocks.
-        Now: explicit index check + float cast + price <= 0 guard.
+        Implementation Note:
+            Sizing uses $Close_T$ as a proxy for execution price $Open_{T+1}$.
+            This introduces a drift/slippage component of $\approx 0.3-0.8\%$.
+            Precise execution requires an intraday execution algorithm.
         """
         logger.info(
             "Share counts based on Close(T). Orders execute at Open(T+1). "
@@ -257,7 +271,7 @@ class ProductionOptimizer:
             if abs(weight) < 1e-4:
                 continue
 
-            # FIXED CRIT3: explicit index check, float cast, <= 0 guard
+            # Validation: Ensure price existence and positivity
             if ticker not in prices.index:
                 logger.warning(f"No price found for {ticker}. Skipping.")
                 continue
@@ -286,16 +300,19 @@ class ProductionOptimizer:
     # ──────────────────────────────────────────────────────────────────────────
     def _print_risk_report(self, weights: dict, cov_matrix: pd.DataFrame,
                            orders_df: pd.DataFrame):
-        """Calculates and prints ex-ante portfolio risk metrics."""
+        """Calculates and reports Ex-Ante Portfolio Risk Metrics."""
         tickers = cov_matrix.index.tolist()
         w_vec   = np.array([weights.get(t, 0.0) for t in tickers])
 
+        # Variance Calculation: $\sigma^2 = w^T \Sigma w$
         port_var = float(w_vec.T @ cov_matrix.values @ w_vec)
         port_vol = np.sqrt(port_var) if port_var > 0 else 0.0
 
-        # FIXED MED3: gross/net exposure + HHI concentration index
+        # Exposure Metrics
         gross_exp = orders_df["value"].abs().sum() / self.capital
         net_exp   = orders_df["value"].sum() / self.capital
+        
+        # Concentration Risk (Herfindahl-Hirschman Index)
         hhi       = float((orders_df["weight"] ** 2).sum())
 
         top_buy  = orders_df.head(3)
@@ -336,7 +353,7 @@ class ProductionOptimizer:
         # ── 1. Load signals ───────────────────────────────────────────────────
         preds_df, signal_date = self.load_latest_predictions()
 
-        # FIXED LOW3: explicit error if neither alpha column exists
+        # Schema Validation: Ensure alpha score column exists
         if "ensemble_alpha" in preds_df.columns:
             score_col = "ensemble_alpha"
         elif "prediction" in preds_df.columns:
@@ -347,14 +364,11 @@ class ProductionOptimizer:
                 f"'prediction'. Available: {preds_df.columns.tolist()}"
             )
 
-        # FIXED HIGH3: risk-only methods should use full universe, not alpha-filtered pool
-        # top_n*2 alpha filter is fine for MVO/Kelly (alpha drives weights)
-        # but breaks risk_parity/inverse_vol (they only use covariance)
+        # Universe Selection:
+        # For Risk-Only methods (Risk Parity), use Top-N candidates to define the investable
+        # universe, even though weights are alpha-agnostic. This ensures we trade liquid,
+        # high-quality names.
         if self.method in RISK_ONLY_METHODS:
-            # Risk-only methods ignore alpha for weight calculation,
-            # but we still limit the universe to top_n*2 alpha picks.
-            # Reason: 499-ticker risk_parity = 300+ tiny positions (impractical).
-            # Top alpha tickers give a focused, tradeable universe.
             candidates = preds_df.sort_values(score_col, ascending=False).head(self.top_n * 2)
             logger.info(
                 f"Method '{self.method}': using top-{self.top_n * 2} alpha tickers "
@@ -405,9 +419,7 @@ class ProductionOptimizer:
             f"Alpha rescaled: [{scaled_rets.min():.1%}, {scaled_rets.max():.1%}] "
             f"(MAX_ALPHA_RET={MAX_ALPHA_RET:.0%}). Used for MVO/Kelly/BL.")
 
-        # Build market_caps: use real data if available, else 1e9 dummy
-        # Real caps matter for Black-Litterman equilibrium prior.
-        # Dummy 1e9 = equal market weight assumption (acceptable for MVO/Kelly/RP).
+        # Market Cap Extraction (Required for Black-Litterman Equilibrium)
         market_caps = {}
         for t in valid_tickers:
             cap = loaded_caps.get(t, np.nan)
@@ -424,9 +436,8 @@ class ProductionOptimizer:
             else:
                 logger.info(f"Black-Litterman: {real_caps}/{len(market_caps)} tickers have real market caps.")
 
-        # confidence_level: how strongly BL views override the equilibrium prior.
-        # 1.0 = fully trust alpha signals, 0.0 = ignore views, use prior only.
-        # From test script: 0.6 is a reasonable starting point.
+        # View Confidence (Black-Litterman):
+        # $\tau = 1.0 \rightarrow$ Full Alpha trust. $\tau = 0.0 \rightarrow$ Market Prior only.
         bl_confidence = getattr(config, "BL_CONFIDENCE_LEVEL", 0.6)
 
         if self.method == "top_n":
@@ -448,8 +459,8 @@ class ProductionOptimizer:
                 weights = {t: 1.0 / len(valid_tickers) for t in valid_tickers}
 
         # ── 3b. Volatility targeting ──────────────────────────────────────────
-        # top_n = equal weight; vol scaling would only reduce investment, skip it.
-        # For all other methods: scale to hit target_vol.
+        # Scale portfolio weights to match target annualized volatility.
+        # Formula: $w_{scaled} = w \times \min(\frac{\sigma_{target}}{\sigma_{port}}, 3.0)$
         if self.target_vol > 0 and self.method != "top_n":
             w_vec    = np.array([weights.get(t, 0.0) for t in valid_tickers])
             port_var = float(w_vec.T @ cov_matrix.values @ w_vec)
@@ -458,8 +469,7 @@ class ProductionOptimizer:
             if port_vol > 1e-6:
                 scaler = min(self.target_vol / port_vol, 3.0)
 
-                # Only scale DOWN if method requires leverage management (MVO/Kelly/BL)
-                # For risk_parity/inverse_vol, scaling down = under-investment, skip it
+                # Constraint: For Risk Parity/Inverse Vol, prevent de-leveraging below 1.0x
                 if scaler < 1.0 and self.method in RISK_ONLY_METHODS:
                     logger.info(
                         f"Vol targeting: raw vol={port_vol:.1%} > target={self.target_vol:.1%}. "
@@ -472,7 +482,7 @@ class ProductionOptimizer:
                     )
                     scaled = {t: w * scaler for t, w in weights.items()}
 
-                    # Cap gross exposure at MAX_LEVERAGE
+                    # Leverage Constraint Check
                     gross_exp = sum(abs(w) for w in scaled.values())
                     if gross_exp > MAX_LEVERAGE:
                         logger.warning(
@@ -500,8 +510,9 @@ class ProductionOptimizer:
         # ── 6. Save ───────────────────────────────────────────────────────────
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        # FIXED MED1: timestamped filename prevents silent overwrite same day
-        # Also write a "latest" copy for downstream systems that poll by name
+        # Persistence:
+        # 1. Timestamped log (Audit Trail)
+        # 2. "latest" pointer (Downstream consumption)
         ts         = datetime.now().strftime("%H%M%S")
         filename   = f"orders_{signal_date}_{ts}.csv"
         latest_fn  = "orders_latest.csv"

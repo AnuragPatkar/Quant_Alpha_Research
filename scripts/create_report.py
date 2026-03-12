@@ -1,46 +1,44 @@
 """
-create_report.py
-================
-Executive Quantitative Research Report  —  v2 (Fixed)
-------------------------------------------------------
-Aggregates insights from the entire alpha research pipeline into a single
-management view. Focuses on system health, factor quality, model robustness,
-and latest portfolio positioning.
+Executive Quantitative Research Report Generator
+================================================
+Aggregates insights from the alpha research pipeline into a management-level summary.
 
-FIXES vs v1:
-  BUG C1 [CRITICAL]: check_data_health() read price_files[0] — alphabetically
-    first ticker (arbitrary). Now samples 5 random tickers and checks the CSV
-    for a 'date' column defensively. Fundamentals now check last-modified date
-    for staleness, not just count.
-  BUG C2 [CRITICAL]: analyze_models() showed daily ICIR (0.29) which looked
-    bad. Now shows t-stat and annualized ICIR (4.67) — the correct quality
-    metrics. Also shows PROD vs ENSEMBLE tier from new 3-tier gate system.
-  BUG H1 [HIGH]: analyze_latest_orders() showed positions with no signal age.
-    Now loads signal_date from orders CSV (written by optimize_portfolio.py)
-    and warns if signals are stale (>5 trading days = warning, >21 = critical).
-  BUG H2 [HIGH]: _get_top_drawdowns() used val == 0 (exact float equality)
-    to detect recovery. Floating-point arithmetic means equity never returns
-    to EXACTLY the previous peak value — so recovery never triggered, and the
-    entire history became one merged drawdown. Fixed: recovery triggers when
-    dd_curve >= -0.001 (within 0.1% of ATH), consistent with industry practice.
-  BUG H3 [HIGH]: analyze_factors() sorted by raw 'icir' column from CSV, which
-    validate_factors.py may compute as daily ICIR (miscalibrated). Now sorts by
-    ic_mean (more stable) and shows t-stat alongside ICIR for context.
-  BUG H4 [HIGH]: Fundamentals freshness was never checked. Only counted dirs.
-    Now reads the most recent file in each fundamentals dir and checks its date.
-  BUG M1 [MEDIUM]: analyze_backtests() had no benchmark comparison. Now fetches
-    S&P 500 returns for the same period and shows excess return + Jensen alpha.
-    Falls back gracefully if yfinance unavailable.
-  BUG M2 [MEDIUM]: analyze_models() missing t-stat — addressed in C2 fix.
-  BUG L1 [LOW]: from config.logging_config import setup_logging — inconsistent
-    with all other scripts. Changed to from quant_alpha.utils import setup_logging
-    with graceful fallback.
-  BUG L3 [LOW]: Year-by-year performance breakdown was missing. Now added as
-    section 4b under backtest analysis, matching the output from train_models.py.
+Purpose
+-------
+This script serves as the final reporting layer of the quantitative research platform.
+It performs a holistic audit of the system state, assessing:
+1.  **Data Integrity**: Freshness and validity of market data (Prices, Fundamentals, Macro).
+2.  **Factor Efficacy**: Statistical strength ($IC$, $t$-stat) of the alpha factor library.
+3.  **Model Robustness**: Out-of-sample performance of ML models (Annualized ICIR, Tiering).
+4.  **Strategy Performance**: Historical backtest metrics (Sharpe, Sortino, MaxDD) vs Benchmark.
+5.  **Portfolio Positioning**: Current target weights, exposure analysis, and concentration risk (HHI).
 
 Usage:
+-----
+Intended for daily execution post-pipeline or ad-hoc review.
+
+.. code-block:: bash
+
+    # Generate report to console
     python scripts/create_report.py
+
+    # Save report to Markdown for distribution
     python scripts/create_report.py --output-file results/executive_summary.md
+
+Importance
+----------
+-   **Operational Risk Mitigation**: Identifies stale data or signal decay ($T > 5$ days)
+    before trades are generated.
+-   **Performance Attribution**: Decomposes returns into Alpha and Beta components,
+    providing transparency on strategy drivers.
+-   **Model Governance**: Enforces visibility on "PROD" vs "ENSEMBLE" model tiers based
+    on rigorous statistical gates ($t > 2.5$).
+
+Tools & Frameworks
+------------------
+-   **Pandas/NumPy**: Aggregation and statistical computation.
+-   **Joblib**: Deserialization of trained model artifacts.
+-   **YFinance**: Benchmark data retrieval for relative performance analysis.
 """
 
 import sys
@@ -64,7 +62,7 @@ setup_logging()
 
 logger = logging.getLogger("Quant_Alpha")
 
-# Benchmark for alpha comparison — fetched once, reused across sections
+# Benchmark Cache: Stores S&P 500 returns to avoid redundant API calls
 _SPY_CACHE: dict = {}
 
 # ==============================================================================
@@ -72,8 +70,9 @@ _SPY_CACHE: dict = {}
 # ==============================================================================
 def weighted_symmetric_mae(y_true, y_pred):
     """
-    Custom objective function used during training.
-    Must be defined here for joblib to unpickle models successfully.
+    Custom objective function for gradient boosting (Pickle compatibility).
+    .. math:: L(y, \\hat{y}) = -w \\cdot \\tanh(y - \\hat{y})
+    Defined globally to allow `joblib` to resolve the function reference during loading.
     """
     residuals = y_true - y_pred
     weights   = np.where(y_true * y_pred < 0, 2.0, 1.0)
@@ -81,7 +80,7 @@ def weighted_symmetric_mae(y_true, y_pred):
     hess      = np.maximum(weights * (1.0 - np.tanh(residuals) ** 2), 1e-3)
     return grad, hess
 
-# Ensure joblib finds the function in __main__ (fixes unpickling issues)
+# Namespace Injection: Ensures deserialization works even if function was pickled from __main__
 import sys as _sys
 _sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae  # type: ignore
 
@@ -101,7 +100,7 @@ def _format_float(x, prec=2):
     return f"{x:.{prec}f}"
 
 def _trading_days_old(signal_date) -> int | None:
-    """Return number of trading days between signal_date and today."""
+    """Calculates business day lag ($T_{now} - T_{signal}$) excluding weekends."""
     try:
         sig = pd.Timestamp(signal_date)
         today = pd.Timestamp(datetime.now().date())
@@ -112,10 +111,9 @@ def _trading_days_old(signal_date) -> int | None:
 
 def _calc_cagr(series: pd.Series) -> float:
     """
-    CAGR using calendar days — consistent with standard financial reporting.
-    equity_curve index = business days only, but span is measured in calendar
-    days so the annualisation factor correctly accounts for weekends/holidays.
-    This matches the BacktestEngine formula. Do NOT use trading-day count here.
+    Computes Compound Annual Growth Rate (CAGR).
+    .. math:: CAGR = (1 + R_{total})^{\\frac{365}{days}} - 1
+    Uses calendar days for annualization to align with standard financial reporting.
     """
     if len(series) < 2: return 0.0
     total_ret = (series.iloc[-1] / series.iloc[0]) - 1
@@ -124,17 +122,29 @@ def _calc_cagr(series: pd.Series) -> float:
     return (1 + total_ret) ** (365.0 / cal_days) - 1
 
 def _calc_max_dd(series: pd.Series) -> float:
+    """
+    Calculates Maximum Drawdown.
+    .. math:: MaxDD = \\min_t \\left( \\frac{NAV_t}{HWM_t} - 1 \\right)
+    """
     if len(series) < 1: return 0.0
     peak = series.cummax()
     return ((series / peak) - 1).min()
 
 def _calc_sharpe(series: pd.Series) -> float:
+    """
+    Calculates Annualized Sharpe Ratio (assuming zero risk-free for simplicity here).
+    .. math:: SR = \\frac{\\mu_{ret}}{\\sigma_{ret}} \\sqrt{252}
+    """
     if len(series) < 2: return 0.0
     rets = series.pct_change().dropna()
     if rets.std() == 0: return 0.0
     return (rets.mean() / rets.std()) * np.sqrt(252)
 
 def _calc_sortino(series: pd.Series, rf_annual: float = 0.035) -> float:
+    """
+    Calculates Annualized Sortino Ratio.
+    .. math:: Sortino = \\frac{E[R_p - R_f]}{\\sigma_{down}} \\sqrt{252}
+    """
     if len(series) < 2: return 0.0
     rets  = series.pct_change().dropna()
     rf_d  = rf_annual / 252
@@ -167,7 +177,7 @@ def _get_top_drawdowns(series: pd.Series, n: int = 3) -> list:
     start_d   = None
     min_val   = 0.0
     valley_d  = None
-    RECOVERY_THRESHOLD = -0.001   # within 0.1% of ATH = recovered
+    RECOVERY_THRESHOLD = -0.001   # Epsilon for recovery detection
 
     for date, val in dd_curve.items():
         if val < RECOVERY_THRESHOLD:
@@ -180,7 +190,6 @@ def _get_top_drawdowns(series: pd.Series, n: int = 3) -> list:
                 min_val  = val
                 valley_d = date
         else:
-            # val >= -0.001 → at or near ATH → end of drawdown period
             if in_dd:
                 in_dd = False
                 drawdowns.append({
@@ -243,19 +252,12 @@ class QuantitativeManagerReport:
     # --------------------------------------------------------------------------
     def check_data_health(self):
         """
-        Assess freshness of prices, fundamentals, and macro data.
-
-        FIXED C1: Original read price_files[0] — the alphabetically first
-        ticker file, not a representative sample. If that one file is stale or
-        has no 'date' column (e.g. date is the index), the check would silently
-        report wrong staleness or crash with KeyError.
-
-        Fix: Sample up to 5 random tickers and take the MEDIAN last-date across
-        them. Also added explicit column check before accessing 'date'.
-
-        FIXED H4: Fundamentals previously only counted directories — no date
-        freshness check. A fund dir from 2 years ago would show as 'covered'.
-        Fix: Read the most recently modified file in each dir and check its age.
+        Audits the Data Warehouse for staleness and integrity.
+        
+        Methodology:
+        - **Prices**: Samples 5 random tickers to estimate the median last-updated date.
+        - **Fundamentals**: Checks filesystem modification times ($mtime$) of SEC filings.
+        - **Inference**: Verifies that signal generation has run within the last 24h.
         """
         lines = []
 
@@ -269,7 +271,7 @@ class QuantitativeManagerReport:
             for pf in sample_files:
                 try:
                     tmp = pd.read_csv(pf, nrows=5)
-                    # FIXED C1: guard against 'date' being the index not a column
+                    # Defensive: check if date is a column or the index
                     if "date" in tmp.columns:
                         full = pd.read_csv(pf, usecols=["date"],
                                            parse_dates=["date"])
@@ -294,7 +296,6 @@ class QuantitativeManagerReport:
                 )
 
         # ── Fundamentals ────────────────────────────────────────────────────
-        # FIXED H4: check actual file dates, not just directory count
         fund_dirs = [d for d in config.FUNDAMENTALS_DIR.glob("*") if d.is_dir()]
         if not fund_dirs:
             lines.append("❌ Fundamentals: No data found.")
@@ -323,7 +324,7 @@ class QuantitativeManagerReport:
         lines.append(f"ℹ️  Macro/Alt Data: {len(macro_files)} indicators available.")
 
         # ── Daily Inference Freshness (results/predictions) ──────────────────
-        # FIXED: Check the latest inference file, not the training cache
+        # Check the latest inference output file
         pred_dir = config.RESULTS_DIR / "predictions"
         pred_files = sorted(pred_dir.glob("alpha_signals_*.parquet"))
         
@@ -359,15 +360,10 @@ class QuantitativeManagerReport:
     # --------------------------------------------------------------------------
     def analyze_factors(self):
         """
-        Summarize factor validation results.
-
-        FIXED H3: Original sorted by 'icir' column, which validate_factors.py
-        computes as daily ICIR — same miscalibration as the model gate. A factor
-        with IC=0.03/IC_std=0.08 = ICIR 0.38 ranked above IC=0.025/std=0.04
-        = ICIR 0.63 even though the latter is far more consistent.
-        Fix: Primary sort by ic_mean (most stable measure), secondary by t-stat.
-        Both metrics shown in table so executive can see signal quality and
-        consistency simultaneously.
+        Summarizes Alpha Factor efficacy.
+        
+        Sorting Logic:
+        Primary sort by Mean IC (Signal Strength), secondary by t-stat (Significance).
         """
         report_path = config.RESULTS_DIR / "validation" / "factor_validation_report.csv"
         if not report_path.exists():
@@ -391,7 +387,7 @@ class QuantitativeManagerReport:
         ]
 
         if "ic_mean" in df.columns:
-            # FIXED H3: sort by ic_mean not raw daily icir
+            # Robust Ranking: Prioritize signal magnitude, then stability
             ic_std_col = "ic_std" if "ic_std" in df.columns else None
             if ic_std_col and "n_dates" in df.columns:
                 df["_tstat"] = (
@@ -427,13 +423,12 @@ class QuantitativeManagerReport:
     # --------------------------------------------------------------------------
     def analyze_models(self):
         """
-        Summarize production model performance.
-
-        FIXED C2: Original showed daily ICIR (0.29) which looked near-failure
-        to any reader. Annualized ICIR = daily_ICIR × √252 = 4.67 — which is
-        the correct metric quant researchers use and shows the signal is excellent.
-        Also added t-statistic: IC/IC_std × √N_dates. t > 3 = strong signal.
-        Also added PROD vs ENSEMBLE tier status from the new 3-tier gate system.
+        Evaluates Out-of-Sample (OOS) Model Performance.
+        
+        Metrics:
+        - **AnnICIR**: Annualized Information Ratio ($ICIR_{daily} \\times \\sqrt{252}$).
+        - **t-stat**: Significance of the IC mean ($> 2.0$ implies $p < 0.05$).
+        - **Tier**: Governance classification (PROD / ENSEMBLE / GATED).
         """
         model_dir   = config.MODELS_DIR / "production"
         model_files = list(model_dir.glob("*_latest.pkl"))
@@ -451,7 +446,6 @@ class QuantitativeManagerReport:
             "AnnICIR = DailyICIR × √252. t > 3 = strong signal.\n"
         )
 
-        # FIXED C2: show t-stat, annualized ICIR, gate tier
         hdr = (f"| {'Model':<12} | {'OOS IC':>8} | {'t-stat':>7} | "
                f"{'AnnICIR':>8} | {'Tier':<10} | {'Trained To':<12} |")
         lines.append(hdr)
@@ -477,7 +471,7 @@ class QuantitativeManagerReport:
                 tstat     = ic / (std / (n_d ** 0.5)) if n_d > 0 else 0.0
                 ann_icir  = (ic / std) * (252 ** 0.5) if std > 0 else 0.0
 
-                # Determine tier (mirrors train_models.py gate logic)
+                # Governance: Mirror gate thresholds from train_models.py
                 PROD_IC     = getattr(config, "PROD_IC_THRESHOLD",  0.010)
                 PROD_TSTAT  = getattr(config, "PROD_IC_TSTAT",       2.5)
                 ENS_IC      = getattr(config, "MIN_OOS_IC_THRESHOLD", 0.005)
@@ -506,10 +500,10 @@ class QuantitativeManagerReport:
     # --------------------------------------------------------------------------
     def analyze_backtests(self):
         """
-        Summarize backtest performance across methods.
-
-        FIXED M1: No benchmark comparison. Added S&P 500 excess return column.
-        FIXED L3: Year-by-year breakdown was absent. Added per-method annual table.
+        Compares Strategy Performance vs. S&P 500 Benchmark.
+        
+        Aggregates key risk/return metrics and provides annual breakdown tables
+        to assess regime sensitivity.
         """
         results_dir  = config.RESULTS_DIR
         backtest_dirs = sorted(results_dir.glob("backtest_*"))
@@ -551,7 +545,7 @@ class QuantitativeManagerReport:
                 s_date  = eq.index[0].strftime("%Y-%m-%d")
                 e_date  = eq.index[-1].strftime("%Y-%m-%d")
 
-                # FIXED M1: SPY benchmark comparison
+                # Benchmark Relative Analysis
                 spy_ret = _fetch_spy(s_date, e_date)
                 if spy_ret is not None:
                     strat_ret = eq.pct_change().dropna()
@@ -602,7 +596,6 @@ class QuantitativeManagerReport:
                             f"{rec_str:<10} | {dd['days']:>5} |"
                         )
 
-                # FIXED L3: Year-by-year breakdown
                 # ── Year-by-Year ────────────────────────────────────────────
                 rets = eq.pct_change().dropna()
                 rets.index = pd.to_datetime(rets.index)
@@ -656,15 +649,12 @@ class QuantitativeManagerReport:
     # --------------------------------------------------------------------------
     def analyze_latest_orders(self):
         """
-        Summarize current portfolio positioning.
-
-        FIXED H1: Original showed positions with zero indication of signal age.
-        With 568-trading-day-old signals, a manager could act on severely stale
-        data. Fix: read signal_date from orders CSV, compute trading-day age,
-        and show prominent warning if signals are stale.
-
-        Also added gross/net exposure and HHI concentration — same metrics
-        optimize_portfolio.py risk report already computes.
+        Audits current target portfolio construction.
+        
+        Checks:
+        - **Signal Latency**: Ensures orders are derived from recent inference.
+        - **Concentration**: HHI Index to detect lack of diversification.
+        - **Exposure**: Gross/Net leverage ratios.
         """
         order_path = config.RESULTS_DIR / "orders" / "orders_latest.csv"
 
@@ -678,7 +668,7 @@ class QuantitativeManagerReport:
         df = pd.read_csv(order_path)
         lines = []
 
-        # FIXED H1: Signal staleness check
+        # Latency Guard: Prevent trading on stale signals
         signal_date = None
         if "signal_date" in df.columns:
             signal_date = pd.to_datetime(df["signal_date"].iloc[0]).date()
@@ -717,7 +707,7 @@ class QuantitativeManagerReport:
         gross_pct = (long_val + abs(short_val)) / total_val if total_val > 0 else 0.0
         net_pct   = (long_val - abs(short_val)) / total_val if total_val > 0 else 0.0
 
-        # HHI concentration
+        # Herfindahl-Hirschman Index (Concentration)
         if "weight" in df.columns:
             w   = df["weight"].abs()
             hhi = (w ** 2).sum()
