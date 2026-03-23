@@ -47,57 +47,66 @@ import numpy as np
 import logging
 from pathlib import Path
 
-# --- Project Setup ---
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-# Core Quant Alpha Imports
 from quant_alpha.data.DataManager import DataManager
 from quant_alpha.models.lightgbm_model import LightGBMModel
 from quant_alpha.models.xgboost_model import XGBoostModel
 from quant_alpha.models.catboost_model import CatBoostModel
 from quant_alpha.utils import setup_logging
 
-from quant_alpha.models.hyperopt import HyperparameterOptimizer # ✅ Import instead of define
+from quant_alpha.models.hyperopt import HyperparameterOptimizer
 
-# Logging setup
 setup_logging()
 logger = logging.getLogger("Hyperopt")
 
 def run_hyperopt():
+    """
+    Executes the Bayesian hyperparameter optimization sequence across the modeling ensemble.
+
+    Acquires the full historical dataset, constructs volatility-dampened forward 
+    return targets, and delegates Tree-structured Parzen Estimator (TPE) tuning 
+    to the underlying model wrappers. Output parameters are strictly evaluated 
+    via purged walk-forward cross-validation to guarantee out-of-sample robustness.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
     logger.info("🚀 Starting Full Ensemble Optimization...")
     dm = DataManager()
     data = dm.get_master_data()
 
-    # Schema Validation: Enforce strict temporal indexing.
+    # Enforce strict temporal indexing to guarantee chronological walk-forward splitting
     if 'date' not in data.columns:
         data = data.reset_index()
     
     if 'date' not in data.columns:
-        # Fallback for potential capitalization issues
+        # Resolves potential upstream data provider capitalization inconsistencies
         if 'Date' in data.columns:
             data.rename(columns={'Date': 'date'}, inplace=True)
         
     data['date'] = pd.to_datetime(data['date'])
     
-    # Target & Feature Preparation
     data = data.sort_values(['ticker', 'date'])
     
-    # Forward Return Construction:
-    # Calculates $R_{t+1 \\to t+6}$ (5-day forward return).
-    # Logic handles both Open-to-Open (tradeable) and Close-to-Close (indicative) prices.
+    # Target Construction: Extracts $R_{t+1 \to t+6}$ (5-day forward return)
+    # Binds execution structurally to Open-to-Open prices to reflect realistic trade entry
     if 'open' in data.columns:
         next_open = data.groupby('ticker')['open'].shift(-1)
         future_open = data.groupby('ticker')['open'].shift(-6)
         data['raw_ret_5d'] = (future_open / next_open) - 1
     else:
-        # Fallback: Close-to-Close implies execution at Close(T), susceptible to bid-ask bounce noise.
+        # Fallback formulation: Close-to-Close proxy, introducing bid-ask bounce noise
         data['raw_ret_5d'] = data.groupby('ticker')['close'].shift(-5) / data['close'] - 1
     
-    # FIX BUG-092: Target must match production build_target() exactly — with vol dampening.
-    # Original: plain sector-neutral residual (no dampening) -> different loss landscape
-    # than production trainer -> Optuna finds params optimal for wrong objective.
+    # Volatility Dampening: Adjusts the objective landscape to prioritize persistent,
+    # structural alpha over transient variance spikes. Exact match to the production
+    # target generation logic to guarantee hyperparameter convergence.
     sector_mean = data.groupby(['date', 'sector'])['raw_ret_5d'].transform('mean')
     resid = data['raw_ret_5d'] - sector_mean
     roll_std = (
@@ -109,7 +118,8 @@ def run_hyperopt():
 
     data = data.dropna(subset=['target'])
 
-    # Feature Selection Mask
+    # Establish isolation masks for strict exclusion of non-predictive metadata 
+    # and look-ahead temporal markers
     exclude = [
         'open', 'high', 'low', 'close', 'volume', 'target', 'date',
         'ticker', 'index', 'level_0', 'raw_ret_5d',
@@ -117,18 +127,15 @@ def run_hyperopt():
         'us_10y_close', 'vix_close', 'oil_close', 'usd_close', 'sp500_close'
     ]
 
-    # Identify numeric vs categorical features
     numeric_features = data.select_dtypes(include=[np.number]).columns.tolist()
     numeric_features = [c for c in numeric_features if c not in exclude]
 
-    # Feature Universe Definition
+    # Bind the final actionable feature matrix for optimization
     features = [c for c in data.columns if c not in exclude]
 
-    # FIX BUG-088: Full-panel WinsorisationScaler / SectorNeutralScaler removed.
-    # Fitting scalers on the full dataset leaks test-fold distribution into clip bounds,
-    # inflating IC estimates by ~5-15% and selecting overfit hyperparameters.
-    # Per-fold preprocessing fires inside HyperparameterOptimizer ->
-    # WalkForwardTrainer -> _train_single_model -> winsorize_fold(). No scaling here.
+    # Data Leakage Prevention: Defers scalar operations strictly to per-fold initialization.
+    # Executing global standardization prior to the TPE search would inject future 
+    # statistical moments, invalidating the optimization integrity.
 
     # Strategy Pattern: Map identifiers to concrete model implementations
     models_to_run = {
@@ -141,7 +148,7 @@ def run_hyperopt():
 
     for name, m_class in models_to_run.items():
         opt = HyperparameterOptimizer(model_class=m_class, model_name=name)
-        # Execution: Runs $N=20$ trials. In production, $N \\ge 50$ is recommended for convergence.
+        # Hyperparameter Search: Executes $N=20$ Bayesian trials via TPE.
         best = opt.optimize(data, features, 'target', n_trials=20)
         global_best_params[name] = best
 
@@ -154,14 +161,3 @@ def run_hyperopt():
 
 if __name__ == "__main__":
     run_hyperopt()
-
-
-"""
-═════════════════════════════════════════════
-🏆 FINAL MULTI-MODEL SUMMARY
-═════════════════════════════════════════════
-✅ LightGBM: {'num_leaves': 46, 'max_depth': 4, 'learning_rate': 0.023087828391001746, 'reg_lambda': 68.09528642110561, 'subsample': 0.7604141133605463}
-✅ XGBoost: {'max_depth': 6, 'learning_rate': 0.020859390326749598, 'reg_lambda': 83.12165551680617, 'min_child_weight': 9, 'subsample': 0.9293913220462858}
-✅ CatBoost: {'subsample': 0.7599253260040655, 'depth': 4, 'learning_rate': 0.010188046124634994, 'l2_leaf_reg': 13.333479718677754}
-═════════════════════════════════════════════
-"""

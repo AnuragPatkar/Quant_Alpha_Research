@@ -11,8 +11,12 @@ signals (from `generate_predictions.py`) and simulating their performance under
 realistic market conditions. It orchestrates the `BacktestEngine` to produce a
 comprehensive set of performance metrics, visualizations, and attribution analyses.
 
-The script is designed to be the final out-of-sample test before considering a
-strategy for live deployment.
+Role in Quantitative Workflow
+-----------------------------
+Executed as the final out-of-sample stress test prior to capital deployment. It
+validates the mathematical integrity of the target portfolio construction logic
+against the raw generated alpha scores, accounting for transaction costs, market
+impact, and execution slippage.
 
 Usage
 -----
@@ -29,35 +33,8 @@ Usage
 
 Tools & Frameworks
 ------------------
--   **BacktestEngine**: The core event-driven simulation engine.
--   **PortfolioAllocator**: Facade for selecting optimization strategies (MVO, Risk Parity).
--   **Scikit-Learn**: LedoitWolf for robust covariance matrix estimation.
--   **Pandas/NumPy**: High-performance time-series manipulation.
--   **Matplotlib**: Generation of performance visualizations.
--   **YFinance**: Retrieval of benchmark data (S&P 500).
-
-FIXES
------
-  BUG-076 (HIGH): OPT_LOOKBACK_DAYS was used as a calendar Timedelta
-           (pd.Timedelta(days=252)) for the covariance lookback window.
-           Because price_matrix has a DatetimeIndex of TRADING days only,
-           subtracting 252 calendar days gives ~174 trading-day rows —
-           not the intended 252 trading-day window.
-           Fix: use integer iloc offset instead of a date subtraction.
-           hist_prices = price_matrix.iloc[max(0, loc-lookback_td):loc]
-           where lookback_td = OPT_LOOKBACK_DAYS (integer trading days).
-
-  BUG-079 (HIGH): returns = calculate_returns(clean_prices).fillna(0)
-           was applied BEFORE fitting LedoitWolf. Filling NaN returns with
-           zero biases the covariance matrix toward zero for tickers with
-           missing history — artificially reducing their estimated variance
-           and making them appear safer than they are.
-           Fix: drop columns that still have NaN after ffill before fitting,
-           then pass only clean return series to LedoitWolf.
-
-  BUG-082 (LOW): MVO-specific constraints (min_weight, max_weight, sector
-           limits) were present in the allocator but never passed from this
-           script. Added explicit constraint kwargs to allocator.allocate().
+-   **Ledoit-Wolf Shrinkage**: Guarantees positive-definite covariance matrix inversion.
+-   **BacktestEngine**: Event-driven execution modeling with Almgren-Chriss impact logic.
 """
 
 import argparse
@@ -71,7 +48,6 @@ import pandas as pd
 from sklearn.covariance import LedoitWolf
 from tqdm import tqdm
 
-# ---- Project path setup ----
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
@@ -95,11 +71,9 @@ setup_logging()
 logger = logging.getLogger("Quant_Alpha")
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn.covariance")
 
-# ---- Cache paths ----
 CACHE_PRED_PATH = config.CACHE_DIR / "ensemble_predictions.parquet"
 CACHE_DATA_PATH = config.CACHE_DIR / "master_data_with_factors.parquet"
 
-# ---- Backtest engine params (read from config) ----
 _SLIPPAGE       = getattr(config, "BACKTEST_SLIPPAGE", getattr(config, "SLIPPAGE_PCT", 0.0005))
 _POSITION_LIMIT = getattr(config, "BACKTEST_POSITION_LIMIT", getattr(config, "MAX_POSITION_SIZE", 0.10))
 _MAX_TURNOVER   = getattr(config, "BACKTEST_MAX_TURNOVER", 0.20)
@@ -111,17 +85,24 @@ if _REBALANCE_FREQ == 'w': _REBALANCE_FREQ = 'weekly'
 elif _REBALANCE_FREQ == 'd': _REBALANCE_FREQ = 'daily'
 elif _REBALANCE_FREQ == 'm': _REBALANCE_FREQ = 'monthly'
 
-# FIX BUG-076: OPT_LOOKBACK_DAYS is an INTEGER trading-day count.
-# Do NOT convert to pd.Timedelta — use iloc-based slicing on the price matrix.
+# Enforces integer boundary resolution for precise trading-day rolling windows
 _OPT_LOOKBACK_TD = int(getattr(config, "OPT_LOOKBACK_DAYS", 252))
 
 
-# ==============================================================================
-# DATA LOADING
-# ==============================================================================
-
 def load_data():
-    """Loads cached predictions and master data."""
+    """
+    Hydrates cached prediction and master data artifacts for simulation.
+
+    Args:
+        None
+
+    Returns:
+        tuple[pd.DataFrame, pd.DataFrame, str]: A tuple containing the predictions 
+            dataframe, the master dataset, and the target prediction column name.
+
+    Raises:
+        SystemExit: If required cached artifacts are missing or invalid.
+    """
     if not CACHE_PRED_PATH.exists() or not CACHE_DATA_PATH.exists():
         logger.error(
             "Cache files not found. "
@@ -139,7 +120,7 @@ def load_data():
     data["date"] = pd.to_datetime(data["date"])
     data = data.drop_duplicates(subset=["date", "ticker"])
     
-    # STRICT DATE FILTER: Enforce the backtest start date from config
+    # Temporal Gate: Binds boundaries strictly to the configured backtest environment
     start_date = pd.to_datetime(config.BACKTEST_START_DATE)
     preds = preds[preds["date"] >= start_date].reset_index(drop=True)
     data  = data[data["date"] >= start_date].reset_index(drop=True)
@@ -158,20 +139,21 @@ def load_data():
     return preds, data, pred_col
 
 
-# ==============================================================================
-# TRADING LAG
-# ==============================================================================
-
 def apply_trading_lag(preds: pd.DataFrame, pred_col: str) -> pd.DataFrame:
     """
-    Applies a 1-day lag to signals to prevent look-ahead bias.
+    Applies a strict 1-day execution lag to alpha signals to prevent look-ahead bias.
 
     A signal generated using market data up to the Close of day T is only
-    actionable at the Open of day T+1. This function simulates that delay by
-    shifting the prediction series forward per ticker.
+    actionable at the Open of day T+1.
 
-    Note: Returns a copy so the original (unshifted) predictions are preserved
-    for Information Coefficient (IC) analysis.
+    Args:
+        preds (pd.DataFrame): The raw alpha predictions mapped by date and ticker.
+        pred_col (str): The column containing the predictive signal.
+
+    Returns:
+        pd.DataFrame: A copy of the predictions with signals shifted forward 
+            by one trading day. The original dataframe remains intact for exact
+            Signal-to-Return temporal alignment during IC analysis.
     """
     lagged = preds.copy()
     lagged[pred_col] = lagged.groupby("ticker")[pred_col].shift(1)
@@ -183,10 +165,6 @@ def apply_trading_lag(preds: pd.DataFrame, pred_col: str) -> pd.DataFrame:
     return lagged
 
 
-# ==============================================================================
-# PORTFOLIO OPTIMISATION
-# ==============================================================================
-
 def run_optimization(
     preds: pd.DataFrame,
     data: pd.DataFrame,
@@ -195,17 +173,18 @@ def run_optimization(
     top_n: int = 25,
 ) -> pd.DataFrame:
     """
-    Performs rolling-window portfolio optimization to generate target weights.
+    Executes rolling-window convex portfolio optimization to derive target weights.
 
-    FIX BUG-076: Uses integer iloc offset for the covariance lookback window
-    instead of pd.Timedelta, which would give incorrect row counts when applied
-    to a trading-day-indexed price matrix.
+    Args:
+        preds (pd.DataFrame): The lagged prediction dataset.
+        data (pd.DataFrame): The master historical OHLCV dataset.
+        pred_col (str): The column identifying the alpha signal.
+        method (str, optional): The optimization objective. Defaults to "mean_variance".
+        top_n (int, optional): Maximum cardinality of the portfolio. Defaults to 25.
 
-    FIX BUG-079: Drops columns with any remaining NaN before LedoitWolf.fit()
-    to prevent zero-biased covariance estimates.
-
-    FIX BUG-082: Passes explicit constraint kwargs to allocator.allocate() so
-    MVO min_weight / max_weight / sector limits are applied.
+    Returns:
+        pd.DataFrame: A longitudinal ledger mapping optimal fractional weights 
+            for each target asset across the simulation horizon.
     """
     logger.info(f"Running Portfolio Optimisation ({method})...")
 
@@ -217,11 +196,11 @@ def run_optimization(
     )
 
     price_matrix = data.pivot(index="date", columns="ticker", values="close")
-    price_matrix = price_matrix.sort_index()           # ensure chronological order
+    price_matrix = price_matrix.sort_index()
     unique_dates = sorted(preds["date"].unique())
     lw_estimator = LedoitWolf()
 
-    # FIX BUG-082: MVO constraints read from config with sensible defaults
+    # Defines explicit boundaries for positional constraints and limits
     _min_weight = getattr(config, "OPT_MIN_WEIGHT", 0.0)
     _max_weight = getattr(config, "OPT_MAX_WEIGHT", _POSITION_LIMIT)
 
@@ -236,11 +215,10 @@ def run_optimization(
         tickers          = top_candidates["ticker"].tolist()
         expected_returns = top_candidates.set_index("ticker")[pred_col].to_dict()
 
-        weights = {t: 1.0 / len(tickers) for t in tickers}  # default fallback
+        weights = {t: 1.0 / len(tickers) for t in tickers}
 
-        # FIX BUG-076: integer iloc offset, not pd.Timedelta calendar subtraction.
-        # price_matrix index is trading days only; subtracting 252 calendar days
-        # would return ~174 trading-day rows instead of 252.
+        # Utilizes integer iloc offset for the covariance lookback window rather than 
+        # calendar deltas to guarantee exact trading-day chronological alignment.
         try:
             loc = price_matrix.index.searchsorted(current_date)
         except Exception:
@@ -250,13 +228,11 @@ def run_optimization(
         hist_prices = price_matrix.iloc[start_iloc:loc][tickers]
 
         if len(hist_prices) >= 60 and not hist_prices.isnull().all().all():
-            # Forward-fill prices within history window, then compute returns
             clean_prices = hist_prices.dropna(how="all").ffill()
             returns      = calculate_returns(clean_prices)
 
-            # FIX BUG-079: drop columns that still have NaN after ffill + pct_change.
-            # Passing NaN-containing columns to LedoitWolf.fit() fills them with 0,
-            # biasing the covariance matrix toward zero for tickers with sparse history.
+            # Isolates and drops sparse historical series with unresolved NaNs to prevent 
+            # zero-biased variance artifacts during Ledoit-Wolf shrinkage.
             returns = returns.dropna(how="all").dropna(axis=1, how="any")
 
             if not returns.empty and returns.shape[1] >= 2:
@@ -267,7 +243,7 @@ def run_optimization(
                 }
 
                 if len(valid_tickers) >= 2 and len(valid_er) >= 2:
-                    # Rescale Alpha scores [0, 1] to expected returns [-MAX, MAX]
+                    # Remaps strict ordinal rank bounds [0, 1] to standardized return ranges
                     max_alpha = getattr(config, "MAX_ALPHA_RET", 0.30)
                     valid_er = {
                         t: float((v - 0.5) * 2.0 * max_alpha) 
@@ -279,9 +255,8 @@ def run_optimization(
                             lw_estimator.fit(returns).covariance_,
                             index=valid_tickers,
                             columns=valid_tickers,
-                        ) * 252  # annualise
+                        ) * 252
 
-                        # FIX BUG-082: pass explicit MVO constraints
                         weights = allocator.allocate(
                             expected_returns=valid_er,
                             covariance_matrix=cov_matrix,
@@ -292,7 +267,7 @@ def run_optimization(
                             max_weight=_max_weight,
                         )
                         
-                        # Volatility Targeting (Matches optimize_portfolio.py)
+                        # Systemic Volatility Targeting matching exact execution methodology
                         target_vol = getattr(config, "BACKTEST_TARGET_VOL", 0.15)
                         if target_vol > 0 and method not in {"top_n", "kelly"}:
                             w_vec = np.array([weights.get(t, 0.0) for t in valid_tickers])
@@ -322,14 +297,15 @@ def run_optimization(
     return pd.DataFrame(optimized_allocations)
 
 
-# ==============================================================================
-# EQUITY CURVE HELPER
-# ==============================================================================
-
 def _normalise_equity_curve(ec) -> pd.DataFrame:
     """
-    Defensively ensures the equity curve is a DataFrame with a 'date' column.
-    Handles both Series and DataFrame outputs from BacktestEngine.
+    Defensively coerces engine equity curve outputs into a standardized DataFrame.
+
+    Args:
+        ec (pd.Series | pd.DataFrame): The raw equity curve output from the BacktestEngine.
+
+    Returns:
+        pd.DataFrame: A normalized DataFrame with explicit 'date' and 'total_value' columns.
     """
     if isinstance(ec, pd.Series):
         ec = ec.reset_index()
@@ -341,11 +317,19 @@ def _normalise_equity_curve(ec) -> pd.DataFrame:
     return ec
 
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
-
 def main():
+    """
+    Primary orchestrator for historical strategy simulation.
+
+    Parses execution constraints, loads required artifacts, executes the 
+    BacktestEngine, and generates attribution metrics and teardown visualizations.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser(
         description="Quant Alpha Backtest Runner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -373,17 +357,13 @@ Examples:
     )
     args = parser.parse_args()
 
-    # 1. Load data
     preds, data, pred_col = load_data()
 
-    # Preserve un-shifted copy for IC attribution.
-    # Applying the lag before IC analysis would misalign signals and returns.
+    # Preserves un-shifted copy for strict point-in-time IC attribution
     raw_preds_for_ic = preds.copy()
 
-    # Apply 1-day lag: Close(T) signal → Open(T+1) execution
     lagged_preds = apply_trading_lag(preds, pred_col)
 
-    # 2. Build prediction DataFrame for the engine
     if args.method == "top_n":
         logger.info("Using raw alpha scores (Top-N equal weight in engine)")
         backtest_preds = lagged_preds[["date", "ticker", pred_col]].rename(
@@ -404,7 +384,6 @@ Examples:
 
     backtest_preds = backtest_preds.drop_duplicates(subset=["date", "ticker"])
 
-    # 3. Prepare price data
     if "volatility" not in data.columns:
         data["volatility"] = 0.02
 
@@ -413,12 +392,11 @@ Examples:
         price_cols.append("sector")
     backtest_prices = data[price_cols].drop_duplicates(subset=["date", "ticker"])
 
-    # Truncate backtest timeline to start exactly when Out-Of-Sample predictions begin
+    # Align the execution price matrix exactly to the available Out-of-Sample boundaries
     if not backtest_preds.empty:
         first_signal_date = backtest_preds["date"].min()
         backtest_prices = backtest_prices[backtest_prices["date"] >= first_signal_date]
 
-    # 4. Configure BacktestEngine
     engine = BacktestEngine(
         initial_capital       = config.INITIAL_CAPITAL,
         commission            = config.TRANSACTION_COST_BPS / 10_000.0,
@@ -434,7 +412,6 @@ Examples:
         max_turnover          = _MAX_TURNOVER,
     )
 
-    # 5. Run simulation
     logger.info(
         f"Initialising BacktestEngine (method={args.method.upper()})..."
     )
@@ -448,11 +425,9 @@ Examples:
 
     results = engine.run(**engine_kwargs)
 
-    # 6. Normalise equity curve
     results["equity_curve"] = _normalise_equity_curve(results["equity_curve"])
     eq_df = results["equity_curve"]
 
-    # 7. Save results
     output_dir = config.RESULTS_DIR / f"backtest_{args.method}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -477,7 +452,6 @@ Examples:
     if not results["trades"].empty:
         results["trades"].to_csv(output_dir / "trades.csv", index=False)
 
-    # 8. PnL Attribution
     logger.info("Running Attribution Analysis...")
     simple_attr = SimpleAttribution()
     pnl_stats   = simple_attr.analyze_pnl_drivers(results["trades"])
@@ -488,20 +462,18 @@ Examples:
     print(f"  Long PnL:       ${pnl_stats.get('long_pnl_contribution', 0):,.0f}")
     print(f"  Short PnL:      ${pnl_stats.get('short_pnl_contribution', 0):,.0f}")
 
-    # 9. Factor IC Analysis
-    # Use the un-shifted raw_preds_for_ic to ensure correct signal/return alignment.
     data_sorted = data.sort_values(["ticker", "date"]).copy()
 
     if "open" not in data_sorted.columns:
         logger.warning("'open' column missing — skipping IC analysis.")
     else:
-        # 5-day forward return: Open(T+1) to Open(T+6), consistent with training target
+        # 5-day forward return: strictly matches walk-forward Open(T+1) to Open(T+6) target structure
         next_open   = data_sorted.groupby("ticker")["open"].shift(-1)
         future_open = data_sorted.groupby("ticker")["open"].shift(-6)
         data_sorted["fwd_ret_5d"] = (future_open / next_open) - 1
 
         ic_df = pd.merge(
-            raw_preds_for_ic[["date", "ticker", pred_col]],   # un-shifted
+            raw_preds_for_ic[["date", "ticker", pred_col]], 
             data_sorted[["date", "ticker", "fwd_ret_5d"]],
             on=["date", "ticker"],
             how="inner",
@@ -519,8 +491,7 @@ Examples:
                 rolling_ic, save_path=output_dir / "ic_time_series.png"
             )
 
-            # ICIR must be computed from raw daily ICs.
-            # Using rolling mean of ICs would understate std, artificially inflating ICIR.
+            # Extracts daily ICs rather than rolling smoothed metrics to prevent variance deflation
             try:
                 raw_daily_ic = factor_attr.calculate_raw_ic(factor_vals, fwd_rets)
                 mean_ic_raw  = float(raw_daily_ic.mean())
@@ -543,7 +514,6 @@ Examples:
 
             rolling_ic.to_csv(output_dir / "rolling_ic.csv")
 
-    # 10. Alpha Metrics vs S&P 500 Benchmark
     try:
         import yfinance as yf
         from scipy import stats
@@ -569,7 +539,7 @@ Examples:
             spy_ret   = spy_close.squeeze().pct_change().dropna()
             strat_ret = returns_series.dropna()
 
-            # FIX BUG-079 extension: strip tz from spy_ret.index before merge
+            # Coerces timezone naivety to guarantee accurate benchmark indexing alignment
             spy_ret.index = pd.to_datetime(spy_ret.index).tz_localize(None)
 
             aligned = pd.DataFrame({"strat": strat_ret, "bench": spy_ret}).dropna()
@@ -577,7 +547,6 @@ Examples:
             if not aligned.empty:
                 rf_daily = getattr(config, "RISK_FREE_RATE", 0.035) / 252
 
-                # Cash drag detection
                 ec_tmp = results["equity_curve"].copy()
                 if (
                     "invested_value" in ec_tmp.columns

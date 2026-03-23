@@ -106,7 +106,7 @@ class Return252D(TechnicalFactor):
 
 @FactorRegistry.register()
 class MomentumAcceleration10D(TechnicalFactor):
-    """
+    r"""
     10-Day Momentum Acceleration.
     
     Measures the rate of change of momentum (Convexity/Second Derivative).
@@ -140,7 +140,7 @@ class MomentumAcceleration21D(TechnicalFactor):
 
 @FactorRegistry.register()
 class RSI14D(TechnicalFactor):
-    """
+    r"""
     Relative Strength Index (RSI) - 14 Day.
     
     Momentum oscillator measuring the speed and change of price movements.
@@ -188,7 +188,7 @@ class RSI21(TechnicalFactor):
 
 @FactorRegistry.register()
 class MACD(TechnicalFactor):
-    """
+    r"""
     Moving Average Convergence Divergence (MACD) - Main Line.
     
     Trend-following momentum indicator.
@@ -208,7 +208,7 @@ class MACD(TechnicalFactor):
     
 @FactorRegistry.register()
 class MACDSignal(TechnicalFactor):
-    """
+    r"""
     MACD Signal Line.
     
     The EMA of the MACD Line, acting as a trigger for buy/sell signals.
@@ -236,7 +236,7 @@ class MACDSignal(TechnicalFactor):
 
 @FactorRegistry.register()
 class StochasticOscillator(TechnicalFactor):
-    """
+    r"""
     Stochastic Oscillator %K.
     
     Compares a particular closing price to a range of its prices over a certain period.
@@ -269,7 +269,7 @@ class StochasticOscillator(TechnicalFactor):
 
 @FactorRegistry.register()
 class WilliamsR(TechnicalFactor):
-    """
+    r"""
     Williams %R.
     
     Momentum indicator that is the inverse of the Fast Stochastic Oscillator.
@@ -301,7 +301,7 @@ class WilliamsR(TechnicalFactor):
 
 @FactorRegistry.register()
 class TSI(TechnicalFactor):
-    """
+    r"""
     True Strength Index (TSI).
     
     A variation of the double smoothed momentum indicator.
@@ -334,7 +334,7 @@ class TSI(TechnicalFactor):
 
 @FactorRegistry.register()
 class RateOfChange20D(TechnicalFactor):
-    """
+    r"""
     Rate of Change (ROC) - 20 Day.
     
     Momentum oscillator measuring the percentage change in price.

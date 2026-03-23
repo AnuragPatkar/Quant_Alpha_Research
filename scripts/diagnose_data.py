@@ -1,8 +1,24 @@
 """
-Data Ingestion Diagnostic Script
-================================
-Verifies the alignment, consistency, and integrity of the downloaded data 
-and the generated membership mask.
+Data Lake Diagnostic and Integrity Suite
+========================================
+Verifies the alignment, consistency, and structural integrity of the ingested 
+Data Lake relative to the point-in-time universe membership mask.
+
+Purpose
+-------
+This script acts as a strict validation gate before feature engineering. It audits 
+the intersection of disparate datasets (OHLCV, Fundamentals, Earnings, Macro) 
+against the historical S&P 500 constituents to ensure no data leakage, missing 
+observations, or survivorship bias exist in the downstream pipeline.
+
+Role in Quantitative Workflow
+-----------------------------
+Executed post-ingestion (`update_data.py`) and pre-engineering to assert that 
+the active universe matrix is fully populated and temporally aligned.
+
+Dependencies
+------------
+- **Pandas/NumPy**: In-memory data manipulation and alignment checks.
 """
 
 import sys
@@ -13,7 +29,6 @@ import pandas as pd
 import numpy as np
 from datetime import timedelta
 
-# --- Project Setup ---
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
@@ -25,13 +40,23 @@ setup_logging(default_level=logging.INFO)
 logger = logging.getLogger("Diagnostics")
 
 def run_diagnostics():
+    """
+    Executes the comprehensive data diagnostic sequence.
+
+    Evaluates price alignment, fundamental statement completeness, earnings 
+    history, macro indicator presence, and survivorship bias retention. Prints 
+    a formatted audit report to standard output.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
     print("=" * 70)
     print(" 🕵️‍♂️ DATA INGESTION DIAGNOSTIC REPORT")
     print("=" * 70)
 
-    # ---------------------------------------------------------
-    # 1. LOAD DATA
-    # ---------------------------------------------------------
     mask_path = config.MEMBERSHIP_MASK_PATH
     if not mask_path.exists():
         print(f"❌ ERROR: Membership mask not found at {mask_path}")
@@ -65,9 +90,6 @@ def run_diagnostics():
     earn_tickers = set([f.stem for f in earn_files])
     macro_files = set([f.stem.lower() for f in alt_dir.glob("*.csv")]) if alt_dir.exists() else set()
 
-    # ---------------------------------------------------------
-    # 2. PRICE DATA CONSISTENCY
-    # ---------------------------------------------------------
     print("\n[1] PRICE DATA CONSISTENCY CHECK")
     missing_in_prices = mask_tickers - price_tickers
     missing_in_mask = price_tickers - mask_tickers
@@ -81,9 +103,6 @@ def run_diagnostics():
     if missing_in_mask:
         print(f"  ℹ️ {len(missing_in_mask)} tickers in Price Data but missing from Mask (likely extra downloads).")
 
-    # ---------------------------------------------------------
-    # 3. FUNDAMENTAL DATA CHECK
-    # ---------------------------------------------------------
     print("\n[2] FUNDAMENTAL DATA CHECK")
     missing_fund = mask_tickers - fund_tickers
     if missing_fund:
@@ -105,6 +124,8 @@ def run_diagnostics():
             if not has_core:
                 incomplete_funds.append(t)
             else:
+                # Extract temporal boundaries for fundamental data to ensure sufficient 
+                # history exists for trailing indicator generation (e.g. 3-year averages)
                 for fname in ['financials.csv', 'balance_sheet.csv', 'cashflow.csv']:
                     fpath = fund_dir / t / fname
                     if fpath.exists():
@@ -127,9 +148,6 @@ def run_diagnostics():
     if fund_min_dates and fund_max_dates:
         print(f"  📅 Fundamental Date Range: {min(fund_min_dates)} to {max(fund_max_dates)}")
 
-    # ---------------------------------------------------------
-    # 4. EARNINGS DATA CHECK
-    # ---------------------------------------------------------
     print("\n[3] EARNINGS DATA CHECK")
     missing_earn = mask_tickers - earn_tickers
     if missing_earn:
@@ -167,9 +185,6 @@ def run_diagnostics():
     if earn_min_dates and earn_max_dates:
         print(f"  📅 Earnings Date Range: {min(earn_min_dates)} to {max(earn_max_dates)}")
 
-    # ---------------------------------------------------------
-    # 5. ALTERNATIVE / MACRO DATA CHECK
-    # ---------------------------------------------------------
     print("\n[4] ALTERNATIVE / MACRO DATA CHECK")
     expected_macro = {'vix', 'us_10y', 'oil', 'usd', 'sp500'}
     missing_macro = expected_macro - macro_files
@@ -197,9 +212,6 @@ def run_diagnostics():
     if macro_min_dates and macro_max_dates:
         print(f"  📅 Macro Date Range: {min(macro_min_dates)} to {max(macro_max_dates)}")
 
-    # ---------------------------------------------------------
-    # 6. PRICE DATE ALIGNMENT CHECK
-    # ---------------------------------------------------------
     print("\n[5] PRICE DATE ALIGNMENT CHECK")
     
     print("  Aggregating close prices to check alignment and NaNs (this may take a moment)...")
@@ -228,7 +240,8 @@ def run_diagnostics():
             missing_close_tickers.append(ticker)
             continue
             
-        # Zero-Price Hygiene: Auto-clean bankrupt/OTC artifacts
+        # Stability Guard: Auto-clean bankrupt/OTC artifacts where price drops to zero or below,
+        # which would otherwise trigger DivisionByZero or log(0) exceptions during factor generation.
         if (df[price_col] <= 0).any():
             auto_cleaned_tickers.append(ticker)
             df = df[df[price_col] > 0.0]
@@ -256,9 +269,6 @@ def run_diagnostics():
     else:
         print("  ✅ All dates in Mask are present in Price Data.")
 
-    # ---------------------------------------------------------
-    # 7. PRICE INTEGRITY & CORPORATE ACTION CHECK
-    # ---------------------------------------------------------
     print("\n[6] PRICE INTEGRITY & CORPORATE ACTION CHECK")
     if missing_close_tickers:
         print(f"  ❌ {len(missing_close_tickers)} tickers missing 'close'/'adj close' column.")
@@ -271,14 +281,13 @@ def run_diagnostics():
     else:
         print("  ✅ No 0 or negative prices detected.")
 
-    # ---------------------------------------------------------
-    # 8. SURVIVORSHIP BIAS TEST
-    # ---------------------------------------------------------
     print("\n[7] SURVIVORSHIP BIAS TEST")
     
     end_date = mask.index.max()
     removed_tickers = [col for col in mask.columns if mask[col].any() and not mask.loc[end_date, col]]
     
+    # Isolate known bankrupt or acquired assets to explicitly verify that the historical 
+    # ingestion pipeline has not inadvertently dropped them from the dataset.
     test_tickers = ['YHOO', 'FRC', 'SIVB', 'TWTR', 'SBNY']
     found_test_tickers = [t for t in test_tickers if t in removed_tickers]
     
@@ -306,9 +315,6 @@ def run_diagnostics():
         else:
             print(f"     - Price data continues after removal: ⚠️ No (Likely acquired/bankrupt immediately)")
 
-    # ---------------------------------------------------------
-    # 9. SUMMARY REPORT & DATE SPAN VALIDATION
-    # ---------------------------------------------------------
     print("\n[8] SUMMARY REPORT & DATE SPAN VALIDATION")
     
     price_start = min(price_dates).date() if price_dates else None

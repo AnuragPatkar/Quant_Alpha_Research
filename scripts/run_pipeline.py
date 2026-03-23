@@ -61,7 +61,6 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-# --- PROJECT SETUP ---
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
@@ -73,12 +72,24 @@ logger = logging.getLogger("Quant_Alpha")
 
 def run_step(script_name: str, args: Optional[list[str]] = None):
     """
-    Executes a script in a dedicated subprocess.
+    Executes a quantitative script within an isolated subprocess environment.
     
     Isolation Strategy:
-    Using `subprocess` ensures that each step starts with a clean memory heap and
-    namespace, preventing memory leaks and side effects (e.g., modified singletons)
-    from propagating between heavy ML tasks.
+    Using `subprocess` guarantees that each pipeline step initializes with a clean 
+    memory heap and namespace. This strictly prevents memory leaks and cross-contamination 
+    of global singletons across computationally intensive ML tasks.
+
+    Args:
+        script_name (str): The filename of the target script located in the `scripts/` directory.
+        args (Optional[list[str]], optional): A list of string arguments to pass to the 
+            target executable. Defaults to None.
+
+    Returns:
+        None
+
+    Raises:
+        SystemExit: If the target script is missing, returns a non-zero exit code, 
+            or an unhandled execution exception occurs.
     """
     if args is None:
         args = []
@@ -92,8 +103,8 @@ def run_step(script_name: str, args: Optional[list[str]] = None):
     logger.info(f"🚀 [PIPELINE] Running {script_name} {' '.join(args)}...")
     
     try:
-        # Fail-Fast: check=True raises CalledProcessError on non-zero exit codes,
-        # halting the pipeline immediately to prevent cascading failures.
+        # Fail-Fast mechanism: Immediately aborts the pipeline upon a non-zero exit code, 
+        # preventing the propagation of corrupted states to downstream execution nodes.
         subprocess.run(cmd, check=True)
         logger.info(f"✅ [PIPELINE] {script_name} completed.\n")
     except subprocess.CalledProcessError as e:
@@ -105,12 +116,20 @@ def run_step(script_name: str, args: Optional[list[str]] = None):
 
 def run():
     """
-    Main entry point for the pipeline.
-    Parses command line arguments and executes steps in order.
+    Main execution routine for the pipeline orchestrator.
+
+    Parses command-line arguments to determine the active Directed Acyclic Graph (DAG) 
+    components, then sequentially dispatches execution while strictly enforcing 
+    dependency boundaries.
+
+    Args:
+        None
+
+    Returns:
+        None
     """
     parser = argparse.ArgumentParser(description="Quant Alpha Research Pipeline Orchestrator")
     
-    # Workflow Control Flags
     parser.add_argument("--skip-data", action="store_true", help="Skip data download/update step.")
     parser.add_argument("--validate", action="store_true", help="Run factor validation (validate_factors.py).")
     parser.add_argument("--train", action="store_true", help="Run model training (train_models.py).")
@@ -119,32 +138,34 @@ def run():
     parser.add_argument("--parallel-models", action="store_true", help="Train models in parallel (requires 16GB+ RAM).")
     parser.add_argument("--backtest", action="store_true", help="Run backtest simulation (run_backtest.py).")
     
-    # Portfolio Construction Parameters
     parser.add_argument("--capital", type=float, default=1000000, help="Capital for portfolio optimization.")
     parser.add_argument("--opt-method", type=str, default="mean_variance", help="Optimization method (mean_variance, risk_parity, etc).")
     parser.add_argument("--target-vol", type=float, default=0.15, help="Target annualized volatility (default: 0.15).")
     parser.add_argument("--top-n", type=int, default=25, help="Number of assets to hold (default: 25).")
     
-    # Parse arguments
     args = parser.parse_args()
 
     logger.info("=" * 60)
     logger.info("  QUANT ALPHA PIPELINE START")
     logger.info("=" * 60)
 
-    # 1. Data Ingestion (Dependency Root)
+    # 1. Data Ingestion
+    # Orchestrates updates to the local Data Lake, guaranteeing downstream models 
+    # consume the most current point-in-time universe data.
     if not args.skip_data:
         run_step("update_data.py")
     else:
         logger.info("⏭️  [PIPELINE] Skipping data update.")
 
-    # 2. Factor Quality Assurance (Optional)
+    # 2. Factor Quality Assurance
+    # Validates alpha factor cross-sectional efficacy prior to model ingestion.
     if args.validate:
         run_step("validate_factors.py")
     else:
         logger.info("⏭️  [PIPELINE] Skipping factor validation (use --validate to run).")
 
-    # 3. Model Training & Validation (Optional / Rebuild)
+    # 3. Model Training & Validation
+    # Executes purged K-Fold walk-forward training for the GBDT ensemble.
     if args.train or args.full_rebuild:
         train_args = []
         if args.full_rebuild:
@@ -156,19 +177,23 @@ def run():
     else:
         logger.info("⏭️  [PIPELINE] Skipping model training (use --train to run).")
 
-    # 4. Model Deployment (Gatekeeping)
+    # 4. Model Deployment
+    # Conducts artifact health checks and enforces promotion criteria.
     if args.deploy:
         run_step("deploy_model.py", ["--all"])
     else:
         logger.info("⏭️  [PIPELINE] Skipping deployment checks (use --deploy to run).")
 
-    # 5. Inference (Production Signal Generation)
+    # 5. Inference
+    # Applies localized scaling and generates out-of-sample alpha signals.
     run_step("generate_predictions.py")
 
-    # 6. Production Monitoring (Drift Detection)
+    # 6. Production Monitoring
+    # Quantifies distributional drift and guards against model collapse.
     run_step("monitor_production.py")
 
-    # 7. Historical Simulation (Optional)
+    # 7. Historical Simulation
+    # Evaluates strategy integrity with transaction costs and slippage logic.
     if args.backtest:
         run_step("run_backtest.py", [
             "--method", args.opt_method,
@@ -177,7 +202,8 @@ def run():
     else:
         logger.info("⏭️  [PIPELINE] Skipping backtest (use --backtest to run).")
 
-    # 8. Portfolio Construction (Order Generation)
+    # 8. Portfolio Construction
+    # Solves the optimal convex allocation mapping given institutional constraints.
     opt_args = [
         "--capital", str(args.capital),
         "--method", args.opt_method,
@@ -187,6 +213,7 @@ def run():
     run_step("optimize_portfolio.py", opt_args)
 
     # 9. Executive Reporting
+    # Summarizes state diagnostics into management-level artifacts.
     run_step("create_report.py")
 
     logger.info("=" * 60)

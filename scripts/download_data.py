@@ -1,17 +1,18 @@
 """
-Master Data Acquisition Pipeline
-================================
-Orchestrates the ingestion, normalization, and persistence of multi-modal financial
-data required for quantitative research.
+Data Lake Ingestion and Normalization Engine
+============================================
+Orchestrates the acquisition and persistence of multi-modal financial datasets
+required for cross-sectional quantitative research.
 
 Purpose
 -------
-This module serves as the **Data Lake Ingestion Layer** for the Quant Alpha platform.
-It creates a unified, queryable dataset by aggregating disparate data sources:
-1.  **Price Action (OHLCV)**: Adjusted for splits and dividends.
+This module serves as the authoritative Data Lake Ingestion Layer for the Quant Alpha
+platform. It synchronizes disparate market data sources into a unified, point-in-time
+correct repository comprising:
+1.  **Price Action**: OHLCV data rigorously adjusted for splits and dividends.
 2.  **Fundamentals**: Balance Sheets, Income Statements, and Cash Flows.
-3.  **Earnings**: Historical EPS surprises and analyst estimates.
-4.  **Macroeconomics**: Regime indicators (VIX, Yield Curves, Commodities).
+3.  **Earnings**: Historical EPS actuals, estimates, and surprise magnitudes.
+4.  **Macroeconomics**: Systemic regime indicators (VIX, Yield Curves, Commodities).
 
 Usage:
 -----
@@ -31,12 +32,12 @@ steps and forced re-acquisition.
 
 Importance
 ----------
--   **Data Integrity**: Enforces strict schema validation to prevent "Garbage In,
-    Garbage Out" in downstream ML models.
--   **Rate Limit Management**: Implements exponential backoff and stochastic jitter
-    to handle upstream API constraints (HTTP 429/401).
--   **Concurrency**: Utilizes `ThreadPoolExecutor` for I/O-bound tasks, optimizing
-    throughput for thousands of network requests.
+-   **Data Integrity**: Enforces strict schema validation to prevent downstream
+    model collapse due to unhandled Structural NaNs.
+-   **Rate Limit Management**: Implements linear backoff and stochastic jitter
+    to circumnavigate upstream API constraints (HTTP 429/401).
+-   **Concurrency**: Utilizes `ThreadPoolExecutor` for I/O-bound tasks, ensuring
+    high-throughput ingestion for expanded universe cohorts.
 """
 
 import sys
@@ -56,9 +57,6 @@ from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
-# ---------------------------------------------------------
-# PROJECT SETUP
-# ---------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
@@ -66,9 +64,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from config.settings import config
 from quant_alpha.utils import setup_logging
 
-# ---------------------------------------------------------
-# LOGGING SETUP
-# ---------------------------------------------------------
 setup_logging(default_level=logging.WARNING)
 log = logging.getLogger("Quant_Alpha")
 
@@ -79,10 +74,7 @@ ALT_DIR      = config.ALTERNATIVE_DIR
 START_DATE   = config.BACKTEST_START_DATE
 END_DATE     = config.BACKTEST_END_DATE
 
-# Concurrency Control:
-# FUND_WORKERS is intentionally throttled (low count) to mitigate HTTP 429/401 errors
-# from the upstream provider. High concurrency triggers session invalidation ("Invalid Crumb").
-# Complexity: O(N / Workers) latency.
+# Concurrency limitations required to prevent upstream 429/401 API rejections
 FUND_WORKERS     = 4
 EARNINGS_WORKERS = 8
 
@@ -94,7 +86,7 @@ MACRO_TICKERS = {
     "SP500": "^GSPC",
 }
 
-# User-Agent spoofing to bypass basic bot detection logic during scraping.
+# Emulate standard browser sessions to circumvent rudimentary anti-scraping filters
 _YF_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -105,17 +97,21 @@ _YF_HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
 }
 
-
-# ---------------------------------------------------------
-# HELPERS
-# ---------------------------------------------------------
 def _retry(fn, retries: int = 3, delay: float = 3.0):
     """
-    Executes a callable with Exponential Backoff retry logic.
+    Executes a callable with Linear Backoff retry logic to handle transient network faults.
 
-    Strategy:
-        Wait time $t_n = delay \times n$ where $n$ is the attempt number.
-        Used to handle transient network partitions or temporary rate limits.
+    Args:
+        fn (Callable): The parameterless function or closure to execute.
+        retries (int, optional): Maximum number of execution attempts. Defaults to 3.
+        delay (float, optional): Base delay scalar in seconds. Wait time scales as $delay \times attempt$. 
+            Defaults to 3.0.
+
+    Returns:
+        Any: The result of the target function if successful.
+
+    Raises:
+        Exception: Re-raises the terminal exception if all retry attempts are exhausted.
     """
     for attempt in range(1, retries + 1):
         try:
@@ -129,26 +125,45 @@ def _retry(fn, retries: int = 3, delay: float = 3.0):
 
 
 def _section(title: str) -> None:
+    """
+    Renders a formatted section header to standard output.
+
+    Args:
+        title (str): The section title to display.
+
+    Returns:
+        None
+    """
     print(f"\n{'=' * 60}\n{title}\n{'=' * 60}")
 
-
 def _yf_ticker(symbol: str) -> yf.Ticker:
-    """Factory method: Instantiates a Ticker object with injected session headers."""
+    """
+    Instantiates a yfinance Ticker object injected with spoofed session headers.
+
+    Args:
+        symbol (str): The target market ticker symbol (e.g., 'AAPL').
+
+    Returns:
+        yf.Ticker: A configured Ticker instance capable of bypassing basic upstream 
+            bot-detection mechanisms.
+    """
     t = yf.Ticker(symbol)
     t.session = requests.Session()
     t.session.headers.update(_YF_HEADERS)
     return t
 
-
-# =========================================================
-# 1.  S&P 500 TICKER LIST
-# =========================================================
 def get_sp500_tickers() -> list[str]:
     """
-    Sourcing: Loads the historical S&P 500 constituents from disk.
+    Loads the historical point-in-time S&P 500 universe constituents from disk.
 
-    This list is generated by `config/extract_ticker.py` and contains all unique
-    tickers that were part of the S&P 500 over the last 10 years.
+    Args:
+        None
+
+    Returns:
+        list[str]: A sequence of deduplicated historical ticker symbols.
+
+    Raises:
+        SystemExit: If the constituent file cannot be located or parsed.
     """
     print("📋 Loading historical S&P 500 tickers from data/sp500_tickers.txt…")
     ticker_file = config.DATA_DIR / "sp500_tickers.txt"
@@ -160,7 +175,6 @@ def get_sp500_tickers() -> list[str]:
 
     try:
         with open(ticker_file, 'r') as f:
-            # Read tickers, strip whitespace/newlines
             tickers = [line.strip() for line in f if line.strip()]
 
         print(f"✅ Found {len(tickers)} tickers.")
@@ -169,16 +183,20 @@ def get_sp500_tickers() -> list[str]:
         print(f"❌ Critical Error reading ticker file: {e}")
         sys.exit(1)
 
-
-# =========================================================
-# 2.  PRICE DOWNLOAD
-# =========================================================
 def download_prices(force: bool = False) -> None:
     """
-    Ingests OHLCV (Open, High, Low, Close, Volume) data.
+    Ingests and normalizes historical OHLCV data for the target universe.
 
-    Optimization:
-        Uses `yf.download` in vectorized mode (bulk request) to reduce HTTP overhead.
+    Leverages bulk retrieval vectorization to minimize network overhead and 
+    enforces structural hygiene by omitting completely empty pricing series 
+    or unadjusted zero-prices.
+
+    Args:
+        force (bool, optional): If True, bypasses local disk cache and forces a 
+            network retrieval for all assets. Defaults to False.
+
+    Returns:
+        None
     """
     _section("📈 STEP 1 / 4 — PRICE DATA")
     PRICE_DIR.mkdir(parents=True, exist_ok=True)
@@ -216,7 +234,7 @@ def download_prices(force: bool = False) -> None:
                 df = df.reset_index()
                 df.columns = [str(c).lower() for c in df.columns]
                 
-                # Zero-Price Hygiene: Remove bankrupt/OTC artifacts (0.0 prices)
+                # Stability Guard: Cleanse structural zeros indicating OTC or bankrupt regimes
                 for col in ["close", "adj close"]:
                     if col in df.columns:
                         df = df[df[col] > 0.0]
@@ -236,20 +254,23 @@ def download_prices(force: bool = False) -> None:
     except Exception as e:
         print(f"❌ Critical Error: {e}")
 
-
-# =========================================================
-# 3.  FUNDAMENTAL DOWNLOAD
-# =========================================================
 def _fetch_fundamental(ticker: str, force: bool = False) -> str:
     """
-    Worker task: Fetches financial statements (Balance Sheet, Income, Cash Flow).
+    Worker task: Fetches comprehensive financial statements for a single entity.
+
+    Args:
+        ticker (str): The target market ticker symbol.
+        force (bool, optional): If True, bypasses local caching. Defaults to False.
+
+    Returns:
+        str: An execution status message prefix ('⏭️', '✅', or '❌') alongside the ticker.
     """
     save_path = FUND_DIR / ticker
     if not force and save_path.exists() and (save_path / "info.csv").exists():
         return f"⏭️  {ticker}"
 
-    # Jitter: Stochastic delay injection [0.3s, 1.2s] to decorrelate thread request spikes,
-    # preventing synchronized API hits that trigger rate limiters.
+    # Stochastic Jitter: Injects random decorrelation logic into concurrent thread spikes
+    # to structurally mitigate API rate limiting.
     time.sleep(random.uniform(0.3, 1.2))
 
     try:
@@ -257,7 +278,7 @@ def _fetch_fundamental(ticker: str, force: bool = False) -> str:
             stock = _yf_ticker(ticker)
             save_path.mkdir(parents=True, exist_ok=True)
 
-            # Validation: Assert payload integrity. stock.info can return None/empty on failure.
+            # Data Integrity Assertion: Validates structural completeness of the payload
             info = stock.info
             if not info or not isinstance(info, dict) or len(info) < 5:
                 raise ValueError(f"info dict empty or invalid for {ticker}")
@@ -281,7 +302,18 @@ def _fetch_fundamental(ticker: str, force: bool = False) -> str:
 
 
 def download_fundamentals(force: bool = False) -> None:
-    """Orchestrates threaded fundamental data ingestion with concurrency throttling."""
+    """
+    Orchestrates highly concurrent fundamental statement ingestion.
+
+    Applies intentional execution throttling to manage connection state integrity
+    with upstream data vendors.
+
+    Args:
+        force (bool, optional): If True, bypasses local caches. Defaults to False.
+
+    Returns:
+        None
+    """
     _section("📊 STEP 2 / 4 — FUNDAMENTAL DATA")
     if not PRICE_DIR.exists():
         print("❌ Run prices first."); return
@@ -303,13 +335,16 @@ def download_fundamentals(force: bool = False) -> None:
     if errors:
         print(f"   ⚠️  {len(errors)} failed. Re-run to retry (skips already saved).")
 
-
-# =========================================================
-# 4.  EARNINGS DOWNLOAD
-# =========================================================
 def _fetch_earnings(ticker: str, force: bool = False) -> str:
     """
-    Worker task: Fetches historical Earnings Per Share (EPS) estimates and actuals.
+    Worker task: Captures historical analyst estimates and actual surprise magnitudes.
+
+    Args:
+        ticker (str): The target market ticker symbol.
+        force (bool, optional): If True, overrides local caching. Defaults to False.
+
+    Returns:
+        str: An execution status message prefix.
     """
     save_path = EARNINGS_DIR / f"{ticker}.csv"
     if not force and save_path.exists():
@@ -345,7 +380,15 @@ def _fetch_earnings(ticker: str, force: bool = False) -> str:
 
 
 def download_earnings(force: bool = False) -> None:
-    """Orchestrates threaded earnings data ingestion."""
+    """
+    Orchestrates parallel retrieval of historical earnings event distributions.
+
+    Args:
+        force (bool, optional): Controls cache bypass. Defaults to False.
+
+    Returns:
+        None
+    """
     _section("📅 STEP 3 / 4 — EARNINGS DATA")
     if not PRICE_DIR.exists():
         print("❌ Run prices first."); return
@@ -361,12 +404,16 @@ def download_earnings(force: bool = False) -> None:
 
     print(f"🏆 Earnings done! → {EARNINGS_DIR}")
 
-
-# =========================================================
-# 5.  MACRO / ALTERNATIVE DOWNLOAD
-# =========================================================
 def download_macro(force: bool = False) -> None:
-    """Ingests global macro-economic regime indicators (VIX, Bond Yields, etc.)."""
+    """
+    Ingests sequential global macroeconomic series representing systemic regime risk.
+
+    Args:
+        force (bool, optional): Controls cache bypass. Defaults to False.
+
+    Returns:
+        None
+    """
     _section("🌍 STEP 4 / 4 — MACRO / ALTERNATIVE DATA")
     ALT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -377,7 +424,8 @@ def download_macro(force: bool = False) -> None:
             continue
 
         print(f"⬇️  {name} ({ticker})…")
-        time.sleep(random.uniform(2.0, 4.0))   # macro calls are sequential; be polite
+        # Throttle constraints sequentially due to cross-asset nature of API boundaries
+        time.sleep(random.uniform(2.0, 4.0))
 
         try:
             df = _retry(lambda t=ticker: _yf_ticker(t).history(
@@ -389,8 +437,11 @@ def download_macro(force: bool = False) -> None:
 
             df = df.reset_index()
             df.columns = [str(c).lower() for c in df.columns]
+            
+            # Forcing localization naivety to guarantee timezone-agnostic joins
             if "date" in df.columns:
                 df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+                
             if "close" in df.columns:
                 keep = ["date", "close"] + (["volume"] if "volume" in df.columns else [])
                 df = df[keep].rename(columns={
@@ -405,12 +456,19 @@ def download_macro(force: bool = False) -> None:
 
     print(f"🏆 Macro done! → {ALT_DIR}")
 
-
-# =========================================================
-# 6.  VALIDATION
-# =========================================================
 def validate_all(force: bool = False) -> None:
-    """Executes a comprehensive audit of the Data Lake state and Universe integrity."""
+    """
+    Compiles a comprehensive quantitative health audit of the aggregated Data Lake.
+
+    Calculates survival matrices ($N_{stocks}$ across regimes) to ensure temporal 
+    alignment logic will satisfy downstream Point-in-Time (PiT) requirements.
+
+    Args:
+        force (bool, optional): Required parameter to match Step signature. Ignored.
+
+    Returns:
+        None
+    """
     _section("🏥 MASTER DATA HEALTH CHECK")
 
     print("\n1️⃣  PRICE DATA")
@@ -458,7 +516,8 @@ def validate_all(force: bool = False) -> None:
         print("   ✅ All macro indicators present.")
 
     print(f"\n{'=' * 60}\n🏆 UNIVERSE DIAGNOSIS")
-    # Set-theoretic intersection to determine the tradeable universe size ($N_{stocks}$).
+    
+    # Establish combinatorial overlap for the target modeling universe
     partial = valid_prices & good_funds
     full    = partial & earn_tickers
     print(f"   ✅ Price + Fundamentals:            {len(partial)} stocks")
@@ -471,10 +530,6 @@ def validate_all(force: bool = False) -> None:
     else:
         print("\n🔴 STATUS: POOR — significant data gaps detected.")
 
-
-# =========================================================
-# MAIN
-# =========================================================
 STEPS: dict[str, Callable] = {
     "prices":       download_prices,
     "fundamentals": download_fundamentals,
@@ -485,6 +540,15 @@ STEPS: dict[str, Callable] = {
 
 
 def main() -> None:
+    """
+    Main orchestration routine resolving CLI arguments against discrete pipeline steps.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser(
         description="Master Data Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -1,85 +1,26 @@
-"""
-main.py
-=======
-Central Command-Line Interface (CLI) for the Quant Alpha Research Platform.
+r"""
+Central Command-Line Interface (CLI) Orchestrator
+=================================================
+Unified entry point and orchestration layer for the Quant Alpha Research Platform.
 
 Purpose
 -------
-Serves as the unified entry point and orchestration layer for the quantitative research
-lifecycle. It abstracts complex underlying scripts into a consistent command structure,
-managing the transition from Data Ingestion $\rightarrow$ Alpha Research $\rightarrow$
-Production Deployment.
+Abstracts complex underlying quantitative scripts into a consistent, easily 
+executable command structure. Manages the transition of data states from 
+Ingestion $\rightarrow$ Alpha Research $\rightarrow$ Production Deployment.
 
-Usage:
--------
-    $ python main.py <command> [options]
+Role in Quantitative Workflow
+-----------------------------
+Enforces operational discipline by providing a standardized interface for all 
+research activities, mitigating manual execution errors. Dispatches heavy 
+computational tasks (e.g., Model Training, Backtesting) to isolated subprocesses 
+to guarantee clean memory heaps and prevent global state pollution.
 
-Importance
-----------
-1.  **Operational Discipline**: Enforces a standardized interface for all research activities,
-    reducing "fat-finger" errors in production.
-2.  **Process Isolation**: Dispatches heavy computational tasks (e.g., Model Training,
-    Backtesting) to separate subprocesses. This ensures a clean memory heap for each stage,
-    preventing memory fragmentation and side-effects from global state (e.g., Numba JIT
-    compilation artifacts).
-3.  **Environment Control**: Pre-configures critical environment variables for BLAS/LAPACK
-    threading (e.g., `OMP_NUM_THREADS`) to prevent CPU oversubscription during
-    matrix operations.
-
-Tools & Frameworks
-------------------
-*   **`argparse`**: Implements the Subcommand Pattern for robust CLI argument parsing.
-*   **`subprocess`**: Manages child processes for script execution, ensuring GIL release
-    and memory isolation.
-*   **`logging`**: Provides centralized telemetry and error reporting.
-*   **`os` / `sys`**: Handles low-level environment configuration for numerical libraries
-    (NumPy, SciPy, Numba).
-
-Commands:
----------
-    pipeline    : Orchestrates the full lifecycle (Data -> Train -> Backtest).
-    data        : Ingests and normalizes market data (Prices, Fundamentals).
-    validate    : Performs statistical validation (IC, Turnover) on alpha factors.
-    train       : Executes Walk-Forward Cross-Validation for ML models.
-    predict     : Generates alpha signals (Inference) using production models.
-    monitor     : Checks for concept drift (PSI) and signal staleness.
-    backtest    : Simulates strategy performance (Vectorized & Event-Driven).
-    optimize    : Solves for optimal portfolio weights (Mean-Variance, Risk Parity).
-    report      : Compiles executive summaries and performance metrics.
-    hyperopt    : Runs Bayesian Optimization for hyperparameter tuning.
-    deploy      : Manages model artifacts (Archival, Pruning, Health Checks).
-    test        : Executes the automated test suite (Unit & Integration).
-    typecheck   : Runs static type checking (mypy) using mypy.ini config.
-    clean       : Purges temporary artifacts and caches.
-
-Examples:
----------
-    # Run the entire pipeline: data -> validate -> train -> deploy -> backtest -> report
-    $ python main.py pipeline --all
-
-    # Train models using parallel processing (for multi-core machines)
-    $ python main.py train --parallel-models
-
-    # Generate new alpha signals for the most recent day of data
-    $ python main.py predict --last-day-only
-
-    # Generate a target portfolio of 50 stocks using risk parity optimization
-    $ python main.py optimize --method risk_parity --top-n 50
-
-    # Check the health of currently deployed models and the signal cache
-    $ python main.py deploy --action check
-
-    # Run production monitoring for signal drift (Population Stability Index)
-    $ python main.py monitor
-
-    # Launch a hyperparameter search for the models
-    $ python main.py hyperopt
-
-    # Run the full unit and integration test suite
-    $ python main.py test
-
-    # Run static type checking to catch bugs
-    $ python main.py typecheck
+Dependencies
+------------
+- **Argparse**: Robust Subcommand Pattern parsing for granular execution control.
+- **Subprocess**: Child process management ensuring GIL release and memory isolation.
+- **OS/Sys**: Low-level environment configuration for BLAS/LAPACK threading limits.
 """
 
 import os
@@ -90,14 +31,8 @@ import subprocess
 import shutil
 from pathlib import Path
 
-# --- 1. Environment Configuration (Critical Initialization) ---
-# Configure linear algebra backends (MKL, OpenBLAS) prior to importing numerical libraries.
-# This prevents thread oversubscription (Context Switching Thrashing) when multiple
-# parallel processes are spawned.
-#
-# Default: 4 threads.
-# Rationale: Limits CPU contention in multi-process environments (e.g., concurrent backtests).
-# Specific scripts (e.g., `train_models.py`) may override this for dedicated HPC tasks.
+# Configures linear algebra backends (MKL, OpenBLAS) prior to importing numerical libraries.
+# Limits CPU contention in multi-process environments preventing Context Switching Thrashing.
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
 os.environ["MKL_NUM_THREADS"] = "4"
@@ -105,25 +40,32 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
 os.environ["NUMEXPR_NUM_THREADS"] = "4"
 os.environ["NUMBA_CACHE_DIR"] = ".numba_cache"
 
-# Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from config.settings import config
 
-# --- 2. Command Handlers ---
-
 def _run_script(script_name: str, args: list[str]):
     """
-    Executes a target script within an isolated subprocess.
+    Executes a target quantitative script within an isolated subprocess environment.
 
     Architectural Note:
         Using `subprocess.run` guarantees a pristine memory heap for each task.
-        This prevents:
-        1.  Global state pollution (e.g., Singleton configurations, Numba JIT caches).
-        2.  Memory fragmentation from long-running processes (e.g., Training).
-        3.  GIL (Global Interpreter Lock) contention between disparate modules.
+        This explicitly prevents global state pollution (e.g., Singleton 
+        configurations, Numba JIT caches), memory fragmentation from long-running 
+        processes, and Global Interpreter Lock (GIL) contention.
+
+    Args:
+        script_name (str): The filename of the target script located in the `scripts/` directory.
+        args (list[str]): A list of string arguments to pass to the target executable.
+
+    Returns:
+        None
+
+    Raises:
+        SystemExit: If the target script is missing, returns a non-zero exit code, 
+            or an unhandled execution exception occurs.
     """
     script_path = PROJECT_ROOT / "scripts" / script_name
     if not script_path.exists():
@@ -145,17 +87,23 @@ def _run_script(script_name: str, args: list[str]):
 
 def handle_pipeline(args):
     """
-    Orchestrates the full end-to-end research pipeline.
+    Orchestrates the full end-to-end research pipeline via sub-script dispatch.
     
-    Mapping Logic:
-        Translates high-level CLI flags (e.g., `--all`) into granular arguments
-        required by the underlying `run_pipeline.py` script.
+    Translates high-level CLI flags into granular arguments required by the 
+    underlying `run_pipeline.py` script, managing the full execution Directed 
+    Acyclic Graph (DAG).
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments containing 
+            execution modifiers.
+
+    Returns:
+        None
     """
     script_args = []
-    # run_pipeline.py does not accept --all; map it to specific steps
+    # Maps aggregate flags to specific execution parameters
     if args.all:
         script_args.extend(["--validate", "--train", "--deploy", "--backtest"])
-    # run_pipeline.py uses --full-rebuild, not --force-rebuild
     if args.force_rebuild: script_args.append("--full-rebuild")
     if args.parallel_models: script_args.append("--parallel-models")
     if args.skip_data: script_args.append("--skip-data")
@@ -163,15 +111,39 @@ def handle_pipeline(args):
     _run_script("run_pipeline.py", script_args)
 
 def handle_data(args):
-    """Dispatches the Market Data Ingestion process."""
+    """
+    Dispatches the Market Data Ingestion process.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+
+    Returns:
+        None
+    """
     _run_script("update_data.py", [])
 
 def handle_validate(args):
-    """Dispatches the Factor Validation (IC/Turnover analysis) process."""
+    """
+    Dispatches the Factor Validation (Information Coefficient/Turnover analysis) process.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+
+    Returns:
+        None
+    """
     _run_script("validate_factors.py", [])
 
 def handle_train(args):
-    """Dispatches the Walk-Forward Model Training process."""
+    """
+    Dispatches the Walk-Forward Model Training process.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+
+    Returns:
+        None
+    """
     script_args = []
     if args.force_rebuild: script_args.append("--force-rebuild")
     if args.parallel_models: script_args.append("--parallel-models")
@@ -180,21 +152,46 @@ def handle_train(args):
     _run_script("train_models.py", script_args)
 
 def handle_predict(args):
-    """Dispatches the Alpha Signal Generation (Inference) process."""
+    """
+    Dispatches the Alpha Signal Generation (Inference) process.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+
+    Returns:
+        None
+    """
     script_args = []
     if args.last_day_only: script_args.append("--last-day-only")
 
     _run_script("generate_predictions.py", script_args)
 
 def handle_monitor(args):
-    """Dispatches the Production Health Monitoring process (Drift/Staleness)."""
+    """
+    Dispatches the Production Health Monitoring process (Drift/Staleness evaluation).
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+
+    Returns:
+        None
+    """
     script_args = []
     if args.psi_threshold: script_args.extend(["--psi-threshold", str(args.psi_threshold)])
 
     _run_script("monitor_production.py", script_args)
 
 def handle_backtest(args):
-    """Dispatches the Historical Simulation Engine."""
+    """
+    Dispatches the Historical Simulation Engine.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments mapping 
+            optimization boundaries.
+
+    Returns:
+        None
+    """
     script_args = []
     if args.method: script_args.extend(["--method", args.method])
     if args.top_n: script_args.extend(["--top-n", str(args.top_n)])
@@ -202,7 +199,16 @@ def handle_backtest(args):
     _run_script("run_backtest.py", script_args)
 
 def handle_optimize(args):
-    """Dispatches the Portfolio Construction & Optimization Engine."""
+    """
+    Dispatches the Portfolio Construction & Optimization Engine.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments mapping 
+            capital and target bounds.
+
+    Returns:
+        None
+    """
     script_args = []
     if args.capital: script_args.extend(["--capital", str(args.capital)])
     if args.method: script_args.extend(["--method", args.method])
@@ -212,27 +218,49 @@ def handle_optimize(args):
     _run_script("optimize_portfolio.py", script_args)
 
 def handle_report(args):
-    """Dispatches the Executive Reporting module."""
+    """
+    Dispatches the Executive Reporting module.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments defining output targets.
+
+    Returns:
+        None
+    """
     script_args = []
     if args.output: script_args.extend(["--output-file", args.output])
 
     _run_script("create_report.py", script_args)
 
 def handle_hyperopt(args):
-    """Dispatches the Bayesian Hyperparameter Optimization process."""
+    """
+    Dispatches the Bayesian Hyperparameter Optimization process.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+
+    Returns:
+        None
+    """
     _run_script("run_hyperopt.py", [])
 
 def handle_deploy(args):
-    """Dispatches the Model Lifecycle Manager (Archive/Prune)."""
+    """
+    Dispatches the Model Lifecycle Manager (Archive/Prune procedures).
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+
+    Returns:
+        None
+    """
     script_args = []
-    # The --all flag takes precedence over a specific action.
+    # Resolves precedence logic where global flags override specific action parameters
     if args.all:
         script_args.append("--all")
     else:
-        # The parser for this command sets a default of 'check'.
         script_args.extend(["--action", args.action])
 
-    # These options are relevant for 'prune' and 'all' actions.
     if args.keep: script_args.extend(["--keep", str(args.keep)])
     if args.dry_run: script_args.append("--dry-run")
 
@@ -242,9 +270,14 @@ def handle_test(args):
     """
     Executes the automated test suite via Pytest.
     
-    Scope:
-        - Unit Tests: Verify individual component logic (e.g., Factor calculations).
-        - Integration Tests: Validate cross-module workflows (e.g., Data -> Model -> Signal).
+    Runs both unit tests verifying individual component logic (e.g., Factor calculations)
+    and integration tests validating cross-module workflows (e.g., Data -> Model -> Signal).
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments controlling test verbosity.
+
+    Returns:
+        None
     """
     logger = logging.getLogger("TestRunner")
     logger.info("🚀 Running Tests (pytest)...")
@@ -260,11 +293,16 @@ def handle_test(args):
 
 def handle_typecheck(args):
     """
-    Executes static type checking via Mypy.
+    Executes static type checking via Mypy to assert structural safety.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+
+    Returns:
+        None
     """
     logger = logging.getLogger("TypeCheck")
 
-    # Pre-flight check: ensure mypy is installed
     try:
         import mypy
     except ImportError:
@@ -281,7 +319,15 @@ def handle_typecheck(args):
         sys.exit(e.returncode)
 
 def handle_clean(args):
-    """Purges temporary artifacts, caches, and logs to reset the environment."""
+    """
+    Purges temporary artifacts, caches, and logs to reset the environment state.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments defining purge scope.
+
+    Returns:
+        None
+    """
     logger = logging.getLogger("Cleaner")
     logger.info("🧹 Cleaning cache and temporary files...")
 
@@ -309,16 +355,19 @@ def handle_clean(args):
 
     logger.info("✅ Clean complete.")
 
-# --- 3. Main Entry Point ---
-
 def setup_logging():
     """
-    Initializes the logging subsystem with minimal overhead.
+    Initializes the logging subsystem with minimal initialization overhead.
     
-    Optimization:
-        Configures logging locally to avoid importing heavy numerical dependencies
-        (Pandas, NumPy) located in `quant_alpha.utils`. This ensures the CLI
-        starts in $O(1)$ time relative to the project size.
+    Configures logging locally to avoid importing heavy numerical dependencies 
+    (Pandas, NumPy) located in `quant_alpha.utils`. This ensures the CLI 
+    starts in $O(1)$ time relative to the project size.
+
+    Args:
+        None
+
+    Returns:
+        None
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -327,6 +376,18 @@ def setup_logging():
     )
 
 def main():
+    """
+    Primary execution routine defining the CLI argument parser boundaries.
+
+    Constructs the Subcommand Pattern parser and dynamically routes execution 
+    to the appropriate handler function based on user input.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
     setup_logging()
     parser = argparse.ArgumentParser(prog="main.py", description="Quant Alpha Research Platform CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")

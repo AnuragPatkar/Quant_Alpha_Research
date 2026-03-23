@@ -35,9 +35,7 @@ import pytest
 import pandas as pd
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Dynamic Import Handling (Graceful Degradation)
-# ---------------------------------------------------------------------------
+# Graceful degradation mapping to safely bypass integration boundaries if feature engines are missing
 try:
     from quant_alpha.features.registry import FactorRegistry
     # Technical
@@ -71,18 +69,21 @@ pytestmark = pytest.mark.skipif(
     reason=f"Feature module import failed: {_IMPORT_ERROR}",
 )
 
-# ---------------------------------------------------------------------------
-# M1 FIX: Module-level registry — created once after imports so all
-# self-registration side effects have already run. Passed as a fixture
-# so tests share the same populated instance.
-# ---------------------------------------------------------------------------
+# Module-level registry — created once after imports so all self-registration 
+# side effects have already run. Passed as a fixture so tests share the same populated instance.
 @pytest.fixture(scope="module")
 def registry():
     """
-    Singleton FactorRegistry instance for all tests.
+    Initializes a Singleton FactorRegistry instance for test execution.
     
     Ensures that side-effect imports have populated the registry before tests
     attempt to retrieve factors. Scope is module-level to reduce overhead.
+
+    Args:
+        None
+
+    Returns:
+        FactorRegistry: The globally populated factor registry instance.
     """
     reg = FactorRegistry()
     assert len(reg.factors) > 0, (
@@ -93,9 +94,6 @@ def registry():
     return reg
 
 
-# ---------------------------------------------------------------------------
-# Synthetic Data Generation (Deterministic)
-# ---------------------------------------------------------------------------
 @pytest.fixture
 def sample_market_data():
     r"""
@@ -105,6 +103,12 @@ def sample_market_data():
     $High \ge \max(Open, Close)$ and $Low \le \min(Open, Close)$.
     
     Used to validate cross-sectional logic and rolling window calculations.
+
+    Args:
+        None
+
+    Returns:
+        pd.DataFrame: Synthetic market data matrix with fully populated OHLCV and fundamentals.
     """
     rng   = np.random.default_rng(seed=42)
     dates   = pd.date_range("2023-01-01", periods=100, freq="B")
@@ -115,7 +119,6 @@ def sample_market_data():
         rng_t = np.random.default_rng(seed=42 + seed_offset * 7)
         n     = len(dates)
 
-        # Construct realistic OHLCV paths
         close  = 100.0 + rng_t.standard_normal(n).cumsum()
         open_  = np.roll(close, 1); open_[0] = close[0]
         noise  = rng_t.uniform(0.001, 0.015, n)
@@ -132,7 +135,6 @@ def sample_market_data():
                 "low":           low[i],
                 "close":         close[i],
                 "volume":        volume[i],
-                # Quarterly-ish fundamentals (populated every ~60 rows)
                 "net_income":    5000.0 if i % 60 == 0 else np.nan,
                 "total_revenue": 10000.0 if i % 60 == 0 else np.nan,
                 "market_cap":    1_000_000.0,
@@ -140,7 +142,6 @@ def sample_market_data():
                 # eps needed for val_earnings_yield (eps/price) calculation
                 "eps":           (5000.0 if i % 60 == 0 else np.nan) / 1000,
                 "fwd_eps":       (5500.0 if i % 60 == 0 else np.nan) / 1000,
-                # Additional fields for other feature sets
                 "eps_estimate":  5.0 + rng_t.uniform(-0.5, 0.5),
                 "eps_actual":    5.0 + rng_t.uniform(-0.5, 0.5),
                 "total_debt":    50000.0,
@@ -150,7 +151,6 @@ def sample_market_data():
     df = pd.DataFrame(rows)
 
     # Forward fill fundamental data to simulate periodic reporting
-    df = df.sort_values(["ticker", "date"]).reset_index(drop=True)
     for col in df.columns:
         if col not in ("date", "ticker"):
             df[col] = df.groupby("ticker")[col].transform("ffill")
@@ -162,11 +162,10 @@ def sample_market_data():
     return df
 
 
-# ===========================================================================
-# TESTS
-# ===========================================================================
-
 class TestFeatures:
+    """
+    Validation suite for algorithmic feature generation and extraction boundaries.
+    """
 
     # ──────────────────────────────────────────────────────────────────────────
     # M1 FIX: Registry discovery
@@ -177,6 +176,12 @@ class TestFeatures:
         
         The registry must contain entries for all core factor categories 
         (Momentum, Volatility, Value).
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+
+        Returns:
+            None
         """
         registered = list(registry.factors.keys())
         assert len(registered) > 0, "Registry should not be empty after imports"
@@ -189,13 +194,18 @@ class TestFeatures:
             )
 
     # ──────────────────────────────────────────────────────────────────────────
-    # H3 FIX: Technical factor — verify non-NaN output after warmup
-    # ──────────────────────────────────────────────────────────────────────────
     def test_technical_factor_calculation(self, registry, sample_market_data):
         r"""
         Verifies that technical factors produce valid numerical output after the warmup period.
         
         Constraint: $Values_{t} \neq NaN \quad \forall t > WindowSize$.
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+            sample_market_data (pd.DataFrame): The deterministic test dataset.
+
+        Returns:
+            None
         """
         factor_name = "volatility_21d"
         assert factor_name in registry.factors, (
@@ -228,11 +238,16 @@ class TestFeatures:
         )
 
     # ──────────────────────────────────────────────────────────────────────────
-    # L1 FIX: Fundamental factor — verify non-NaN output
-    # ──────────────────────────────────────────────────────────────────────────
     def test_fundamental_factor_pass_through(self, registry, sample_market_data):
         """
         Verifies correct calculation of fundamental ratios (e.g., Earnings Yield).
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+            sample_market_data (pd.DataFrame): The deterministic test dataset.
+
+        Returns:
+            None
         """
         factor_name = "val_earnings_yield"
         assert factor_name in registry.factors, (
@@ -269,6 +284,12 @@ class TestFeatures:
         Ensures graceful degradation or explicit failure when input data is malformed.
         
         The system should raise a `KeyError` or return `None`/Empty, but never silent failure.
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+
+        Returns:
+            None
         """
         bad_data = pd.DataFrame({
             "date":   pd.date_range("2023-01-01", periods=30),
@@ -289,6 +310,7 @@ class TestFeatures:
             result = factor.calculate(bad_data)
         except (KeyError, ValueError, AttributeError) as e:
             raised = True  # expected: factor detected missing column
+            raised = True  
 
         # Accept either: exception raised, OR result is None/empty
         if not raised:
@@ -309,11 +331,19 @@ class TestFeatures:
         1. Ticker A (Uptrend) -> Positive Momentum.
         2. Ticker B (Downtrend) -> Negative Momentum.
         3. Calculations for A are not contaminated by B's data.
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+            sample_market_data (pd.DataFrame): The deterministic test dataset.
+
+        Returns:
+            None
         """
         # Dynamic factor selection
         # Try common momentum factor names in priority order.
         factor_name = None
         # FIX: Prioritize daily rolling factors (return_21d) over monthly (mom_1m)
+        # Prioritize daily rolling factors (return_21d) over monthly (mom_1m)
         for candidate in ("return_21d", "momentum_21d", "mom_1m", "ret_1m"):
             if candidate in registry.factors:
                 factor_name = candidate
@@ -327,6 +357,7 @@ class TestFeatures:
         
         # Add metadata for sector-neutral factors
         # require these to compute relative strength. Missing them can lead to 0.0 values.
+        # Inject categorical structures required to evaluate relative neutral boundaries
         df["sector"]   = "Technology"
         df["industry"] = "Software"
         df["sector"]   = df["sector"].astype("category")
@@ -338,6 +369,7 @@ class TestFeatures:
 
         # Expand universe to satisfy potential Z-score minimum group sizes (N>3)
         # Some factors return 0.0 if group size < 3 or 5. We add 3 flat tickers.
+        # Injects sufficient cross-sectional cardinality to satisfy Z-score boundaries
         extra_tickers = ["TICK_C", "TICK_D", "TICK_E"]
         dfs = [df]
         base_data = df[df["ticker"] == "TICK_A"].copy()
@@ -356,12 +388,14 @@ class TestFeatures:
         n_b = mask_b.sum()
 
         # Inject trend + noise to avoid zero-volatility artifacts
+        # Injects isolated mathematical trends paired with noise to evaluate strict directionality extraction
         rng = np.random.default_rng(42)
         df.loc[mask_a, "close"] = np.linspace(100, 200, n_a) + rng.normal(0, 0.1, n_a)
         df.loc[mask_b, "close"] = np.linspace(200, 100, n_b) + rng.normal(0, 0.1, n_b)
 
         # Force ALL price columns to match close trend.
         # FIX: Ensure High > Low to avoid zero-volatility crashes in factors (e.g. Sharpe/Sortino)
+        # Ensure High > Low to avoid zero-volatility crashes in factors (e.g. Sharpe/Sortino)
         df["open"]      = df["close"]
         df["vwap"]      = df["close"]  # Some factors use vwap
         df["high"]      = df["close"] * 1.001
@@ -402,6 +436,7 @@ class TestFeatures:
         # --- Robust Value Extraction ---
         # Avoid merge collisions and sorting issues by aligning on (date, ticker).
         
+        # Binds cross-sectional extraction parameters enforcing rigid index mapping
         SAFE_COL = "_factor_result_"
         df_indexed = df.set_index(["date", "ticker"])
         
@@ -468,6 +503,16 @@ class TestFeatures:
           1. Column list unchanged (no added/dropped columns)
           2. Index unchanged
           3. Values unchanged (assert_frame_equal for full equality)
+          1. Column list unchanged (no added/dropped columns).
+          2. Index unchanged.
+          3. Values unchanged (assert_frame_equal for full equality).
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+            sample_market_data (pd.DataFrame): The deterministic test dataset.
+
+        Returns:
+            None
         """
         factor_name = "volatility_21d"
         if factor_name not in registry.factors:
@@ -504,7 +549,14 @@ class TestFeatures:
     def test_fixture_ohlc_consistency(self, sample_market_data):
         r"""
         Validates the integrity of the synthetic market data fixture.
+        
         Invariant: $High \ge \max(Open, Close)$ and $Low \le \min(Open, Close)$.
+
+        Args:
+            sample_market_data (pd.DataFrame): The deterministic test dataset.
+
+        Returns:
+            None
         """ 
         df = sample_market_data
         assert (df["high"] >= df["open"]).all(),  "Fixture: high < open"
@@ -517,8 +569,15 @@ class TestFeatures:
     # NEW: Division by Zero Handling
     # ──────────────────────────────────────────────────────────────────────────
     def test_division_by_zero_handling(self, registry):
-        """
+        
+        r"""
         Ensures numerical stability ($\frac{x}{0} \to NaN/Inf$) instead of runtime crashes.
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+
+        Returns:
+            None
         """
         # Create data with 0.0 in a denominator column (e.g. eps for P/E)
         # Note: val_earnings_yield usually calculates eps / price. 
@@ -526,12 +585,12 @@ class TestFeatures:
         bad_data = pd.DataFrame({
             "date": pd.date_range("2023-01-01", periods=10),
             "ticker": ["Z"] * 10,
-            "close": [0.0] * 10,  # Zero price
+            "close": [0.0] * 10,  
             "eps": [1.0] * 10,
-            "pe_ratio": [0.0] * 10 # Zero P/E
+            "pe_ratio": [0.0] * 10 
         })
         
-        factor_name = "val_earnings_yield" # usually 1/PE
+        factor_name = "val_earnings_yield" 
         if factor_name in registry.factors:
             factor = registry.factors[factor_name]
             try:
@@ -547,6 +606,15 @@ class TestFeatures:
     def test_empty_input_handling(self, registry):
         """Factors should return empty result (or None) for empty input, not crash."""
         # Provide full OHLCV schema to prevent KeyErrors in factors that need High/Low
+        """
+        Verifies factors return empty result (or None) for empty input, not crash.
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+
+        Returns:
+            None
+        """
         empty_df = pd.DataFrame(columns=[
             "date", "ticker", "open", "high", "low", "close", "volume"
         ])
@@ -565,9 +633,17 @@ class TestFeatures:
     # NEW: Edge Case - Insufficient History
     # ──────────────────────────────────────────────────────────────────────────
     def test_insufficient_history(self, registry):
-        """
+        
+        r"""
         Verifies windowing constraints ($N < Window$).
+        
         Rolling factors on insufficient history should return NaN or 0, not crash.
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+
+        Returns:
+            None
         """
         short_df = pd.DataFrame({
             "date": [pd.Timestamp("2023-01-01")],
@@ -585,6 +661,7 @@ class TestFeatures:
             res = factor.calculate(short_df)
             
             # Fix: Accept empty result (if factor drops NaNs) OR result with NaNs
+            # Accept empty result (if factor drops NaNs) OR result with NaNs
             if res is None or (hasattr(res, "empty") and res.empty):
                 return
 
@@ -606,6 +683,13 @@ class TestFeatures:
     def test_duplicate_index_handling(self, registry, sample_market_data):
         """
         Tests system robustness when encountering duplicate (Date, Ticker) keys.
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+            sample_market_data (pd.DataFrame): The deterministic test dataset.
+
+        Returns:
+            None
         """
         # Create duplicates
         df_dupe = pd.concat([sample_market_data.iloc[:5], sample_market_data.iloc[:5]])
@@ -627,6 +711,13 @@ class TestFeatures:
     def test_earnings_factors(self, registry, sample_market_data):
         """
         Smoke test for earnings-related factors (Surprises, Revisions).
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+            sample_market_data (pd.DataFrame): The deterministic test dataset.
+
+        Returns:
+            None
         """
         # Find an earnings factor
         candidates = [f for f in registry.factors if "earn" in f or "surprise" in f]
@@ -647,6 +738,13 @@ class TestFeatures:
     def test_composite_factors(self, registry, sample_market_data):
         """
         Smoke test for composite factors (Multi-factor scores).
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+            sample_market_data (pd.DataFrame): The deterministic test dataset.
+
+        Returns:
+            None
         """
         candidates = [f for f in registry.factors if "comp" in f or "smart" in f]
         if not candidates:
@@ -667,9 +765,17 @@ class TestFeatures:
     # NEW: Earnings Logic Specifics
     # ──────────────────────────────────────────────────────────────────────────
     def test_earnings_streak_logic(self, registry):
-        """
+    
+        r"""
         Verifies logic for consecutive earnings beats.
+        
         Logic: $Streak_t = Streak_{t-1} + 1$ if Beat, else $0$.
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+
+        Returns:
+            None
         """
         # Create enough data to establish a pattern
         # Pattern: Beat, Beat, Miss, Beat, Beat, Beat
@@ -724,7 +830,14 @@ class TestFeatures:
     def test_beat_miss_momentum_logic(self, registry):
         r"""
         Verifies "Beat/Miss Momentum": The percentage of recent quarters with positive surprises.
+        
         $Mom = \frac{\sum \mathbb{I}(Surprise > 0)}{N_{quarters}}$
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+
+        Returns:
+            None
         """
         # 12 periods to ensure sufficient history for rolling windows
         df = pd.DataFrame({
@@ -774,17 +887,25 @@ class TestFeatures:
             # The last valid value should be lower than the max valid value
             if vals[valid_idx][-1] < np.max(vals[valid_idx]):
                 pass # Logic holds
+                pass 
 
     def test_eps_sue_zero_price_handling(self, registry):
-        """
+        r"""
         Verifies Standardized Unexpected Earnings (SUE) numerical stability.
+        
         Formula: $SUE = \frac{Actual - Estimate}{Price}$
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+
+        Returns:
+            None
         """
         df = pd.DataFrame({
             "date": pd.date_range("2023-01-01", periods=1),
             "ticker": ["A"],
             "eps_actual": [1.1], "eps_estimate": [1.0],
-            "close": [0.0] # Zero price should not cause crash
+            "close": [0.0] 
         })
         
         factor_name = "eps_sue_price"
@@ -810,13 +931,19 @@ class TestFeatures:
     # INSTITUTIONAL CHECK: Look-ahead Bias
     # ──────────────────────────────────────────────────────────────────────────
     def test_lookahead_bias(self, registry):
-        """
+        r"""
         Crucial verification of Look-Ahead Bias invariance.
         
         Methodology:
         1. Calculate factors on a base dataset.
         2. Modify data at time $T$.
         3. Assert that factors at $T-1$ remain strictly unchanged.
+
+        Args:
+            registry (FactorRegistry): The initialized registry fixture.
+
+        Returns:
+            None
         """
         factor_name = "volatility_21d"
         if factor_name not in registry.factors:
@@ -836,7 +963,7 @@ class TestFeatures:
             # Create realistic close prices with clear trends
             close = 100.0 + rng_t.standard_normal(n_rows).cumsum()
             if ticker == "B":
-                close = 200.0 - rng_t.standard_normal(n_rows).cumsum()  # Downtrend
+                close = 200.0 - rng_t.standard_normal(n_rows).cumsum()  
             
             # Make high volatility by adding noise
             close = close + rng_t.normal(0, 2, n_rows)

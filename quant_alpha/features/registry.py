@@ -1,16 +1,28 @@
 """
-Factor Registry & Orchestration Engine
-======================================
+Factor Registry and Orchestration Engine
+========================================
 Centralized command and control system for the discovery, configuration, and
 parallel execution of alpha factors.
 
-FIXES:
-  BUG-030: select_features() now uses year-stratified sampling when the dataset
-           is large (> 100,000 rows) instead of a random unstratified sample.
-           An unstratified sample on a 10-year panel under-samples early years
-           and oversamples recent years, producing a time-contaminated correlation
-           estimate that causes the wrong features to be dropped or kept.
-           Minimum 60 rows per year enforced (G6 from known project context).
+Purpose
+-------
+This module implements a Singleton-based registry pattern to manage the lifecycle
+of alpha factors. It dynamically instantiates registered feature engineering
+classes and orchestrates their parallel execution across the target universe.
+Additionally, it provides robust multicollinearity filtering via year-stratified
+correlation analysis.
+
+Role in Quantitative Workflow
+-----------------------------
+Acts as the central integration point for the feature engineering pipeline.
+Consumed by both the training (`train_models.py`) and inference 
+(`generate_predictions.py`) layers to ensure deterministic and parallelized 
+factor computation.
+
+Dependencies
+------------
+- **Pandas/NumPy**: In-memory data manipulation and correlation matrix computation.
+- **Concurrent.Futures**: Thread-pool execution for parallel factor calculations.
 """
 
 import pandas as pd
@@ -35,6 +47,13 @@ class FactorRegistry:
     _registered_classes: Dict[str, Type[BaseFactor]] = {}
 
     def __init__(self, factor_config: Optional[Dict[str, Any]] = None):
+        """
+        Initializes the FactorRegistry with specific hyperparameters.
+
+        Args:
+            factor_config (Optional[Dict[str, Any]]): Dictionary mapping factor class 
+                names to their respective initialization arguments. Defaults to None.
+        """
         self.factors: Dict[str, BaseFactor] = {}
         self.factor_config = factor_config or {}
         self._initialize_factors()
@@ -42,7 +61,13 @@ class FactorRegistry:
     @classmethod
     def register(cls):
         """
-        Decorator: Registers a factor class with the global registry blueprint.
+        Decorator: Registers a factor blueprint with the global registry.
+
+        Args:
+            None
+
+        Returns:
+            Callable: A wrapper function that adds the class to the registry.
         """
         def wrapper(factor_class: Type[BaseFactor]):
             key = factor_class.__name__
@@ -52,7 +77,17 @@ class FactorRegistry:
 
     def _initialize_factors(self):
         """
-        Factory Method: Instantiates all registered factor classes.
+        Factory Method: Instantiates all registered factor blueprints.
+
+        Iterates through the globally registered class blueprints, injects
+        their respective configurations, and provisions them into the active
+        instance dictionary for computation.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         for class_name, factor_cls in self._registered_classes.items():
             try:
@@ -66,8 +101,6 @@ class FactorRegistry:
 
         logger.info(f"✅ FactorRegistry initialized with {len(self.factors)} factors.")
 
-    # ==================== COMPUTATION ENGINE ====================
-
     @staticmethod
     def _compute_single_wrapper(
         factor_instance: BaseFactor,
@@ -75,7 +108,16 @@ class FactorRegistry:
         original_index: pd.Index,
     ) -> Optional[pd.Series]:
         """
-        Static worker method for concurrent execution.
+        Static worker method executing a single factor's computation logic.
+
+        Args:
+            factor_instance (BaseFactor): The instantiated factor object to execute.
+            df (pd.DataFrame): The target dataset containing prerequisite features.
+            original_index (pd.Index): The expected index to ensure structural alignment.
+
+        Returns:
+            Optional[pd.Series]: The computed factor values aligned to the original 
+                index, or None if computation fails or returns exclusively NaNs.
         """
         try:
             result = factor_instance.calculate(df)
@@ -105,6 +147,15 @@ class FactorRegistry:
     def compute_all(self, df: pd.DataFrame, max_workers: int = 4) -> pd.DataFrame:
         """
         Orchestrates the parallel computation of all registered factors.
+
+        Args:
+            df (pd.DataFrame): The raw historical data warehouse slice.
+            max_workers (int, optional): The maximum number of concurrent threads. 
+                Defaults to 4.
+
+        Returns:
+            pd.DataFrame: A concatenated dataframe integrating the original dataset
+                with all successfully computed factor series.
         """
         if df.empty:
             return df
@@ -142,7 +193,7 @@ class FactorRegistry:
             logger.info("🔗 Merging features...")
             features_df = pd.concat(new_features, axis=1)
 
-            # Drop overlapping columns so new computations overwrite cached values
+            # Isolate and drop overlapping columns so new computations implicitly overwrite cached values
             overlap_cols = [c for c in features_df.columns if c in df.columns]
             if overlap_cols:
                 df = df.drop(columns=overlap_cols)
@@ -155,21 +206,21 @@ class FactorRegistry:
         logger.info(f"✅ Computed {success_count}/{len(self.factors)} factors in {elapsed:.2f}s")
         return final_df
 
-    # ==================== FEATURE SELECTION ====================
-
     def select_features(self, df: pd.DataFrame, threshold: float = 0.95) -> List[str]:
         """
-        Multicollinearity Filter: Removes highly correlated features.
+        Multicollinearity Filter: Prunes highly correlated features.
 
-        FIX BUG-030: When len(df) > 100,000 rows, uses year-stratified sampling
-        (minimum 60 rows per year) instead of a purely random sample. A random
-        sample on a multi-year panel concentrates observations in years with more
-        data, producing a time-contaminated correlation estimate.
+        Implements year-stratified sampling to prevent temporal contamination 
+        in correlation estimates across multi-year longitudinal panels.
 
-        Algorithm:
-        1. Compute Correlation Matrix.
-        2. Identify pairs with |r| > threshold.
-        3. Drop the second element of each correlated pair.
+        Args:
+            df (pd.DataFrame): The aggregated feature matrix.
+            threshold (float, optional): The absolute Pearson correlation limit 
+                above which features are deemed redundant. Defaults to 0.95.
+
+        Returns:
+            List[str]: A list of selected feature column names satisfying the 
+                orthogonality constraints.
         """
         factor_cols = [f for f in self.factors.keys() if f in df.columns]
         if not factor_cols:
@@ -177,7 +228,7 @@ class FactorRegistry:
 
         logger.info("🔍 Analyzing Feature Correlations...")
 
-        # FIX BUG-030: Year-stratified sampling preserves time structure.
+        # Year-stratified sampling prevents temporal distribution bias during correlation estimation
         if len(df) > 100_000:
             if 'date' in df.columns:
                 years = df['date'].dt.year.unique()
@@ -197,7 +248,7 @@ class FactorRegistry:
                 )
                 corr_matrix = sample.corr().abs()
             else:
-                # No date column — fall back to random sample with fixed seed
+                # Fallback purely to randomized structural boundaries for legacy frames
                 corr_matrix = (
                     df[factor_cols]
                     .sample(100_000, random_state=42)
@@ -207,7 +258,7 @@ class FactorRegistry:
         else:
             corr_matrix = df[factor_cols].corr().abs()
 
-        # Upper triangle only to avoid double-counting
+        # Isolate the upper triangle to bypass strictly diagonal or duplicative pairings
         upper = corr_matrix.where(
             np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
         )
@@ -220,23 +271,65 @@ class FactorRegistry:
         )
         return selected
 
-    # ==================== UTILITIES ====================
-
     def get_factor(self, name: str) -> Optional[BaseFactor]:
+        """
+        Retrieves a specific instantiated factor by name.
+
+        Args:
+            name (str): The string identifier of the target factor.
+
+        Returns:
+            Optional[BaseFactor]: The factor instance, or None if not found.
+        """
         return self.factors.get(name)
 
     def list_factors(self) -> List[str]:
+        """
+        Returns a list of all actively registered factor names.
+
+        Args:
+            None
+
+        Returns:
+            List[str]: The string identifiers of all active factors.
+        """
         return list(self.factors.keys())
 
     def clear(self):
+        """
+        Purges all instantiated factors from the active registry.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         self.factors = {}
         logger.info("🗑️ Cleared all factors.")
 
     def __len__(self) -> int:
+        """
+        Returns the total number of instantiated factors.
+
+        Args:
+            None
+
+        Returns:
+            int: The count of active factors in the registry.
+        """
         return len(self.factors)
 
     def print_registry(self):
-        """Diagnostics: Outputs the current registry state to stdout."""
+        """
+        Outputs the current registry state and category distributions to standard output.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         print(f"\n📚 Factor Registry Status:")
         print(f"   - Total Factors: {len(self.factors)}")
 

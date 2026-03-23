@@ -1,61 +1,26 @@
 """
-train_models.
-Production Walk-Forward Training Pipeline  —  v4.1 (All Bugs Fixed)
-------------------------------------------------------------------------
-Production Walk-Forward Training Pipeline — v4.1 (All Bugs Fixed)
-----------------------------------------------------------------------
-This script is the core of the alpha modeling system. It performs a rigorous
-walk-forward cross-validation to train and evaluate multiple GBDT models,
-gates them based on performance, and saves production-ready artifacts.
+Walk-Forward Production Training Pipeline
+=========================================
+Orchestrates the rigorous out-of-sample training, evaluation, and promotion 
+of the Gradient Boosted Decision Tree (GBDT) ensemble.
 
-KEY ARCHITECTURE CHANGES vs v3 (which caused 28GB OOM):
+Purpose
+-------
+This module serves as the primary machine learning engine for the alpha platform. 
+It executes purged walk-forward cross-validation to construct robust, non-linear 
+alpha models. Strict look-ahead bias prevention is enforced via per-fold 
+cross-sectional normalization and embargo periods.
 
-  ROOT CAUSE OF OOM:
-    _generate_folds() built a list of 20 full DataFrame copies BEFORE training.
-    3 parallel models × 20 folds × 482MB/copy = ~28GB peak RAM.
-    Fix: fold boundaries are date-tuples only. Data is sliced INSIDE the fold
-    loop, one fold at a time, then immediately freed.
+Role in Quantitative Workflow
+-----------------------------
+Executes after feature generation to select orthogonal signals, optimize trees, 
+and persist gate-passing artifacts for the production inference pipeline.
 
-  PARALLEL → SERIAL (default):
-    3 parallel models each calling _generate_folds() = triple the RAM.
-    Serial = 1/3 peak RAM. Use --parallel-models only on 32GB+ machines.
-
-  PREPROCESSING MOVED PER-FOLD (no global preprocessing leak):
-    v3 winsorized/normalized the FULL dataset before walk-forward.
-    This leaks future stats into training. Now: fit scalers on train fold only.
-    FIX BUG-1: Per-fold winsorisation/sector-normalisation now correctly
-    applied inside _train_single_model() using winsorize_fold() and
-    sector_neutral_normalize_fold() helpers. Global preprocessing removed.
-
-  FEATURE SELECTION CACHED (not re-run every fold):
-    ICIR-based feature selection re-runs every FEATURE_RESELECT_EVERY_N_FOLDS folds.
-
-  PRODUCTION MODEL SAVES:
-    Gate-passing models saved to models/production/ with feature_names AND scalers.
-    FIX BUG-6: Scalers now saved alongside model weights for inference consistency.
-
-BUG FIX SUMMARY (v4 → v4.1):
-  BUG-1  [CRITICAL] Global preprocessing leaked future data — moved per-fold
-  BUG-2  [CRITICAL] OOS IC was graded vs raw_ret_5d, not sector-neutral target
-  BUG-3  [CRITICAL] raw_ret_5d and pnl_return had no outlier clipping (.clip)
-  BUG-4  [HIGH]     Feature selection ran on unprocessed data — now winsorised first
-  BUG-5  [HIGH]     Jensen alpha report block had indentation bug — never printed
-  BUG-6  [HIGH]     Production scaler not saved with model — now saved in pkl
-  BUG-7  [HIGH]     IC gate evaluated on EWM-smoothed signal — assertion added
-  BUG-8  [MEDIUM]   Python list inside prange disabled Numba parallelism — fixed
-  BUG-9  [MEDIUM]   Duplicate target computation — replaced with build_target()
-  BUG-10 [MEDIUM]   WF_EMBARGO_DAYS renamed to WF_EMBARGO_TRADING_DAYS for clarity
-  BUG-11 [MEDIUM]   Gated ensemble silent fallback — now raises RuntimeError
-
-RAM PROFILE:
-  v3 parallel:   ~28 GB peak (OOM on most laptops)
-  v4 serial:     ~3-4 GB peak (safe on 8 GB machines)
-  v4 parallel:   ~9-12 GB peak (safe on 16 GB machines)
-
-Usage:
-    python scripts/train_models.py
-    python scripts/train_models.py --force-rebuild
-    python scripts/train_models.py --parallel-models   # 16GB+ RAM only
+Dependencies
+------------
+- **NumPy/Numba**: JIT-compiled kernels for high-frequency ranking and IC computations.
+- **Pandas**: Temporal and cross-sectional alignment.
+- **LightGBM/XGBoost/CatBoost**: Core non-linear estimators.
 """
 
 from __future__ import annotations  # PEP 604/585 on Python 3.9+
@@ -81,7 +46,15 @@ MODEL_THREADS    = CPU_CORES_TO_USE
 
 
 def _set_thread_env(n: int) -> None:
-    """Set threading env vars. Skip NUMBA_NUM_THREADS if already locked."""
+    """
+    Globally binds multithreading constraints for BLAS/OpenMP backend operations.
+
+    Args:
+        n (int): The absolute maximum number of parallel threads permitted.
+
+    Returns:
+        None
+    """
     os.environ["OMP_NUM_THREADS"]      = str(n)
     os.environ["OPENBLAS_NUM_THREADS"] = str(n)
     os.environ["MKL_NUM_THREADS"]      = str(n)
@@ -180,24 +153,11 @@ WF_MIN_TRAIN_MONTHS    = getattr(config, "MIN_TRAIN_MONTHS", 36)
 WF_TEST_MONTHS         = getattr(config, "TEST_WINDOW_MONTHS", 6)
 WF_STEP_MONTHS         = getattr(config, "STEP_SIZE_MONTHS", 3)
 WF_WINDOW_TYPE         = getattr(config, "VALIDATION_METHOD", "walk_forward_expanding").replace("walk_forward_", "")
-# FIX BUG-10: Renamed from WF_EMBARGO_DAYS to WF_EMBARGO_TRADING_DAYS.
-# The value (21) is used as a trading-date index offset, not calendar days.
-# 21 trading-date indices ≈ 1 calendar month embargo.
-# Old name implied calendar days which is misleading.
+
+# 21 trading-date indices map strictly to a 1 calendar month structural embargo
 WF_EMBARGO_TRADING_DAYS = getattr(config, "EMBARGO_TRADING_DAYS", 21)
 
-# IC gate thresholds — calibrated for daily equity alpha signals
-#
-# WHY NOT daily ICIR 0.30:
-#   Daily ICIR = IC_mean / IC_std (on daily series).
-#   For equity alpha, IC_std ≈ 3-4x IC_mean is normal (IC_std ~0.06, IC ~0.015-0.02).
-#   Daily ICIR of 0.30 would require IC_std < IC_mean/0.30 — unrealistically tight.
-#   Our ensemble hits ICIR=0.29 over 1228 days = annualized ICIR of 4.67 (excellent).
-#
-# CORRECT GATE: IC t-statistic = IC_mean / (IC_std / sqrt(N_days))
-#   t > 2.0 = p < 0.05 (statistically significant IC over sample period)
-#   t > 3.0 = strong signal (use this for production gate)
-#   t < 1.5 = probably random noise (exclude from ensemble)
+# Statistical significance boundaries required for ensemble promotion
 MIN_OOS_IC_THRESHOLD   = getattr(config, "MIN_OOS_IC_THRESHOLD", 0.005)
 MIN_OOS_IC_TSTAT       = getattr(config, "MIN_OOS_IC_TSTAT", 1.5)
 PROD_IC_THRESHOLD      = getattr(config, "PROD_IC_THRESHOLD", 0.010)
@@ -206,14 +166,11 @@ MIN_OOS_ICIR_THRESHOLD = 0.30    # kept for backwards compat — NOT used for ga
 ALPHA_SMOOTHING_LAMBDA = getattr(config, "ALPHA_SMOOTHING_LAMBDA", 0.70)
 RANDOM_SEED            = 42
 
-# Feature selection cache — re-run ICIR every N folds
+# Defines structural latency for computationally expensive feature bootstrapping
 FEATURE_RESELECT_EVERY_N_FOLDS = 4
 ICIR_N_BOOTSTRAP               = 20
 ICIR_SAMPLE_SIZE               = 50_000
 
-# Return clip bounds — prevents stock halts/splits/data errors from
-# corrupting loss functions. Applied to raw_ret_5d and pnl_return.
-# FIX BUG-3: these constants centralise the clip logic.
 RETURN_CLIP_MIN = getattr(config, "RETURN_CLIP_MIN", -0.50)
 RETURN_CLIP_MAX = getattr(config, "RETURN_CLIP_MAX",  0.50)
 
@@ -224,7 +181,16 @@ RETURN_CLIP_MAX = getattr(config, "RETURN_CLIP_MAX",  0.50)
 
 @njit(cache=True)
 def _rank1d(arr: np.ndarray) -> np.ndarray:
-    """Fractional rank of 1D array. NaN → 0. O(N log N)."""
+    """
+    Computes the fractional cross-sectional rank of a 1D array.
+
+    Args:
+        arr (np.ndarray): The continuous input values (e.g., target returns or factors).
+
+    Returns:
+        np.ndarray: Evaluated rank metrics uniformly distributed bounded by [0, 1].
+            NaNs strictly resolve to 0. Runtime complexity guaranteed at O(N log N).
+    """
     n   = len(arr)
     out = np.zeros(n, dtype=np.float64)
     valid = np.empty(n, dtype=np.int64)
@@ -253,7 +219,16 @@ def _rank1d(arr: np.ndarray) -> np.ndarray:
 
 @njit(parallel=True, cache=True)
 def spearman_ic_nb(feat_matrix: np.ndarray, target: np.ndarray) -> np.ndarray:
-    """Parallel Spearman IC per feature vs target."""
+    """
+    Calculates parallelized Spearman Rank Information Coefficients across features.
+
+    Args:
+        feat_matrix (np.ndarray): The 2D subset mapping extracted signal values.
+        target (np.ndarray): The ground truth expected return vectors.
+
+    Returns:
+        np.ndarray: A 1D array quantifying the monotonic strength of each feature.
+    """
     n_samples, n_features = feat_matrix.shape
     ic_out  = np.zeros(n_features, dtype=np.float64)
     t_ranks = _rank1d(target)
@@ -272,21 +247,28 @@ def spearman_ic_nb(feat_matrix: np.ndarray, target: np.ndarray) -> np.ndarray:
     return ic_out
 
 
-# FIX BUG-8: Replaced Python list accumulation inside prange with a
-# pre-allocated fixed-size buffer array. Python list allocation inside a
-# Numba parallel loop forces object-mode fallback and disables parallelism.
-# Pre-allocated np.empty buffer keeps everything in nopython mode.
+# Utilizes pre-allocated static buffers to strictly prevent Numba object-mode fallback
 @njit(parallel=True, cache=True)
 def rank_pct_parallel_nb(
     pred_matrix: np.ndarray,
     date_ids: np.ndarray,
     n_dates: int,
 ) -> np.ndarray:
-    """Per-date percentile ranks across all model columns."""
+    """
+    Generates cross-sectional rank percentiles iteratively segmented by trading date.
+
+    Args:
+        pred_matrix (np.ndarray): The $N \times M$ matrix of predictions.
+        date_ids (np.ndarray): Mapped identifiers representing contiguous trade dates.
+        n_dates (int): Total unique dates mapping execution boundaries.
+
+    Returns:
+        np.ndarray: Realigned matrix preserving zero mean and consistent variance,
+            which is essential for market-neutral alpha construction.
+    """
     n_rows, n_models = pred_matrix.shape
     out = np.zeros_like(pred_matrix)
     for m in prange(n_models):
-        # FIX BUG-8: pre-allocate max possible size — no Python list in prange
         idx_buf = np.empty(n_rows, dtype=np.int64)
         for d in range(n_dates):
             cnt = 0
@@ -311,7 +293,17 @@ def compound_return_nb(
     ticker_idx: np.ndarray,
     returns_matrix: np.ndarray,
 ) -> float:
-    """Compound portfolio return over a period."""
+    """
+    Computes the aggregate geometric growth rate of the portfolio slice.
+
+    Args:
+        weights (np.ndarray): Initial normalized fractional allocations.
+        ticker_idx (np.ndarray): Dimensional mapping integers linking to returns.
+        returns_matrix (np.ndarray): Sub-slice mapping daily asset price variances.
+
+    Returns:
+        float: The cumulative compounded return boundary logic over the holding period.
+    """
     n_hold   = len(weights)
     n_days   = returns_matrix.shape[0]
     port_ret = 0.0
@@ -329,7 +321,15 @@ def compound_return_nb(
 
 
 def _warmup_numba() -> None:
-    """Compile all kernels once; .numba_cache makes reruns instant."""
+    """
+    Pre-compiles critical JIT mathematical paths to ensure low latency during optimization.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
     d  = np.random.rand(60, 4).astype(np.float64)
     t  = np.random.rand(60).astype(np.float64)
     di = np.zeros(60, dtype=np.int64)
@@ -347,6 +347,15 @@ def _warmup_numba() -> None:
 # CACHE + DATA LOADING
 # ==============================================================================
 def get_data_hash(data_dir) -> str:
+    """
+    Computes a deterministic MD5 hash of the data warehouse payload.
+
+    Args:
+        data_dir (Path): Source directory containing ingested parquet blocks.
+
+    Returns:
+        str: The digest hash verifying the structural integrity of the Data Lake.
+    """
     hasher    = hashlib.md5()
     data_path = data_dir if hasattr(data_dir, "glob") else Path(data_dir)
     for f in sorted(data_path.glob("*.parquet")):
@@ -358,6 +367,16 @@ def get_data_hash(data_dir) -> str:
 
 @time_execution
 def load_and_build_full_dataset(force_rebuild: bool = False) -> pd.DataFrame:
+    """
+    Orchestrates the hydration, feature aggregation, and caching of the master dataset.
+
+    Args:
+        force_rebuild (bool, optional): Overrides valid hashes to trigger cold start generation.
+
+    Returns:
+        pd.DataFrame: The structurally sound, target-appended global universe dataset
+            ready for downstream chronological stratification.
+    """
     cache_path   = config.CACHE_DIR / "master_data_with_factors.parquet"
     hash_path    = config.CACHE_DIR / "master_data_hash.txt"
     current_hash = get_data_hash(config.DATA_DIR)
@@ -414,10 +433,8 @@ def load_and_build_full_dataset(force_rebuild: bool = False) -> pd.DataFrame:
         data = data.sort_values(["ticker", "date"])
         next_open   = data.groupby("ticker")["open"].shift(-1).replace(0, np.nan)
         future_open = data.groupby("ticker")["open"].shift(-6)
-        # FIX BUG-3: clip raw_ret_5d to prevent stock halts/splits/data errors
-        # from producing extreme outliers that corrupt loss functions.
-        # Without clipping, a single halt row (ret=50x) dominates gradient updates
-        # across all models. Clip bounds are ±50% — aggressive moves but still valid.
+        # Applies robust clipping bounds to prevent market micro-structure artifacts 
+        # (e.g., halts, gaps) from dominating gradient updates.
         data["raw_ret_5d"] = (
             (future_open / next_open) - 1
         ).clip(RETURN_CLIP_MIN, RETURN_CLIP_MAX)
@@ -445,7 +462,17 @@ def winsorize_fold(
     test_df: pd.DataFrame,
     features: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fit winsoriser on train only, transform both. Used in fold loop."""
+    """
+    Isolates temporal statistical distribution clipping to strictly historical subsets.
+
+    Args:
+        train_df (pd.DataFrame): Walk-forward fit block (used for boundary inference).
+        test_df (pd.DataFrame): Walk-forward out-of-sample block (strictly transformed).
+        features (list[str]): Candidate target sequences to truncate.
+
+    Returns:
+        tuple[pd.DataFrame, pd.DataFrame]: Extrapolated and normalized data matrices.
+    """
     scaler = WinsorisationScaler(clip_pct=0.01).fit(train_df, features)
     return scaler.transform(train_df, features), scaler.transform(test_df, features)
 
@@ -456,7 +483,19 @@ def sector_neutral_normalize_fold(
     features: list[str],
     sector_col: str = "sector",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fit sector-neutral scaler on train only, transform both. Used in fold loop."""
+    """
+    Derives and applies isolated cross-sectional Z-scores independent of future domains.
+
+    Args:
+        train_df (pd.DataFrame): The model's baseline training environment.
+        test_df (pd.DataFrame): The strict evaluation slice boundary mapping.
+        features (list[str]): The numerical alpha predictors to evaluate.
+        sector_col (str, optional): The categorical mapping boundary.
+
+    Returns:
+        tuple[pd.DataFrame, pd.DataFrame]: Statistically standardized matrices
+            exempt from structural macro drift.
+    """
     scaler = SectorNeutralScaler(sector_col=sector_col).fit(train_df, features)
     return scaler.transform(train_df, features), scaler.inference_transform(test_df, features)
 
@@ -469,11 +508,17 @@ def build_target(
     sector_mean=None,
     vol_95th: float | None = None,
 ) -> pd.DataFrame:
-    """Sector-neutral return target with volatility dampening.
+    """
+    Constructs a volatility-dampened, sector-neutral forward return target 
+    to isolate idiosyncratic alpha.
 
-    This is the single source of truth for target construction.
-    FIX BUG-9: The inline duplicate target computation in run_production_pipeline
-    has been replaced with a call to this function.
+    Args:
+        df (pd.DataFrame): Hydrated dataset mapping raw forward projections.
+        sector_mean (Optional[pd.Series]): Pre-computed sector means to inject.
+        vol_95th (Optional[float]): Static 95th percentile volatility boundary constraint.
+
+    Returns:
+        pd.DataFrame: Appended dataframe encompassing the final 'target' matrix constraint.
     """
     df = df.copy()
 
@@ -532,6 +577,23 @@ def select_orthogonal_features(
     preserve_categoricals: list[str] | None = None,
     parallel_icir: bool = False,
 ) -> list[str]:
+    """
+    Executes Information Coefficient Information Ratio (ICIR) based bootstrapping 
+    to construct strictly orthogonal feature pipelines.
+
+    Args:
+        df (pd.DataFrame): The raw training dataset mapped to structural target matrices.
+        target_col (str): The specific statistical sequence used for monotonic association testing.
+        exclude_cols (list[str]): Look-ahead and categorical data series to explicitly discard.
+        top_n (int, optional): The combinatorial limitation on feature boundaries.
+        corr_threshold (float, optional): Maximum absolute correlation allowed. Defaults to 0.70.
+        preserve_categoricals (list[str] | None, optional): Explicit categories to keep.
+        parallel_icir (bool, optional): Parallel processing switch. Defaults to False.
+
+    Returns:
+        list[str]: The final selected columns maximizing independent signal density 
+            without inducing dimensionality collapse.
+    """
     numeric    = df.select_dtypes(include=[np.number]).columns.tolist()
     candidates = [c for c in numeric if c not in exclude_cols and c != target_col]
     if not candidates:
@@ -604,7 +666,16 @@ def weighted_symmetric_mae(
     y_true: np.ndarray,
     y_pred: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Penalises wrong-sign predictions 2×. Works for LGB/XGB custom objective."""
+    """
+    Calculates an asymmetric penalty for directional errors. 
+
+    Args:
+        y_true (np.ndarray): Empirical target variables mappings.
+        y_pred (np.ndarray): Current predictive node output sequences.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Derived Gradient and Hessian bounds required by GBDTs.
+    """
     residuals = y_true - y_pred
     weights   = np.where(y_true * y_pred < 0, 2.0, 1.0)
     grad      = -weights * np.tanh(residuals)
@@ -617,6 +688,15 @@ def weighted_symmetric_mae(
 # ==============================================================================
 @time_execution
 def calculate_ranks_robust(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Determines exponential weighting assignments across competing structural projections.
+
+    Args:
+        df (pd.DataFrame): Target dataframe encompassing explicit raw models.
+
+    Returns:
+        pd.DataFrame: Augmented ledger injecting smoothed, ranked ensemble structures.
+    """
     pred_cols = [c for c in df.columns if c.startswith("pred_")]
     if not pred_cols:
         df["ensemble_alpha"] = 0.0
@@ -659,15 +739,14 @@ def calculate_ranks_robust(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_ensemble_alpha(predictions: dict) -> pd.DataFrame:
-    """Build ensemble alpha from per-model prediction dicts.
-
-    Used by generate_predictions.py for inference.
+    """
+    Aggregates per-model dictionaries mapping discrete predictions into an ensemble matrix.
 
     Args:
-        predictions: {model_name: DataFrame with ["date", "ticker", "prediction"]}
+        predictions (dict): Mappings resolving execution outputs dynamically.
 
     Returns:
-        DataFrame with ["date", "ticker", "ensemble_alpha", + per-model pred cols]
+        pd.DataFrame: Augmented dataframe encompassing strictly unified ensemble outcomes.
     """
     if not predictions:
         return pd.DataFrame()
@@ -733,6 +812,15 @@ def build_ensemble_alpha(predictions: dict) -> pd.DataFrame:
 # MACRO FEATURES
 # ==============================================================================
 def add_macro_features(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensures structural macro series are hydrated for composite factors.
+
+    Args:
+        data (pd.DataFrame): Historical structural mapping.
+
+    Returns:
+        pd.DataFrame: Final dataset mapping regime boundaries to distinct assets.
+    """
     data = data.sort_values("date")
     data["_dr"] = data.groupby("ticker")["close"].pct_change()
     mkt_ret     = data.groupby("date")["_dr"].mean()
@@ -745,8 +833,6 @@ def add_macro_features(data: pd.DataFrame) -> pd.DataFrame:
         (mkt_avg > mkt_avg.rolling(200, min_periods=100).mean()).astype(int))
     data = data.drop(columns=["_dr"])
     
-    # HOTFIX: Force-inject raw macro data. If the DataManager omits these 
-    # from the master parquet, composite factors will fail.
     from config.settings import config
     alt_dir = config.ALTERNATIVE_DIR
     for macro in ["us_10y", "vix", "oil", "usd", "sp500"]:
@@ -772,10 +858,15 @@ def add_macro_features(data: pd.DataFrame) -> pd.DataFrame:
 # OOS METRICS
 # ==============================================================================
 def compute_oos_metrics(preds_df: pd.DataFrame) -> dict:
-    # FIX BUG-7: Assert that EWM-smoothed ensemble_alpha is NOT passed here.
-    # IC gate must evaluate raw fold predictions, not portfolio-smoothed signal.
-    # EWM smoothing introduces autocorrelation that inflates apparent IC persistence
-    # and causes the gate to accept models that are weaker than they appear.
+    """
+    Evaluates raw predictions prior to EWMA smoothing to ensure authentic IC persistence.
+
+    Args:
+        preds_df (pd.DataFrame): Validated, strictly out-of-sample generation matrices.
+
+    Returns:
+        dict: Standardized analytical sequence mapping the target execution boundaries.
+    """
     assert "ensemble_alpha" not in preds_df.columns, (
         "compute_oos_metrics must receive raw fold predictions (column='prediction'), "
         "NOT EWM-smoothed ensemble alpha. EWM smoothing is a portfolio construction "
@@ -820,13 +911,15 @@ def compute_oos_metrics(preds_df: pd.DataFrame) -> dict:
 # FOLD BOUNDARIES — date tuples only, zero data copies
 # ==============================================================================
 def _compute_fold_boundaries(dates: pd.Series) -> list[tuple]:
-    """Returns list of (train_start, train_end, test_start, test_end) tuples.
+    """
+    Establishes purged validation boundaries utilizing strict trading-day embargo offsets.
 
-    NO data is copied here. Callers slice as needed, one fold at a time.
+    Args:
+        dates (pd.Series): Contiguous historical sequence mapping active bounds.
 
-    Memory comparison:
-      v3 _generate_folds:       20 folds × 482MB = 9.6 GB just in boundaries list
-      v4 _compute_fold_boundaries: 20 tuples of 4 timestamps = negligible
+    Returns:
+        list[tuple]: Discretized blocks mapping absolute boundary coordinates mapping.
+            Zero underlying allocations are mapped via temporal slices.
     """
     n_dates        = len(dates)
     min_train_days = WF_MIN_TRAIN_MONTHS * 21
@@ -836,8 +929,6 @@ def _compute_fold_boundaries(dates: pd.Series) -> list[tuple]:
     train_end_idx  = min_train_days - 1
 
     while train_end_idx < n_dates:
-        # FIX BUG-10: use WF_EMBARGO_TRADING_DAYS (renamed from WF_EMBARGO_DAYS).
-        # 21 trading-date indices ≈ 1 calendar month embargo.
         test_start_idx = train_end_idx + 1 + WF_EMBARGO_TRADING_DAYS
         test_end_idx   = min(test_start_idx + test_days - 1, n_dates - 1)
 
@@ -871,15 +962,21 @@ def _train_single_model(
     meta_cols: list[str],
     selected_features: list[str],
 ) -> tuple[str, pd.DataFrame, dict]:
-    """Walk-forward training for one model.
+    """
+    Executes isolated walk-forward iterations, caching optimal feature structures 
+    and extracting out-of-sample prediction sequences.
 
-    FIX BUG-1: Per-fold winsorisation and sector-neutral normalisation are
-    now applied inside this function using winsorize_fold() and
-    sector_neutral_normalize_fold(). Scalers are fitted on train_df only,
-    then applied to both train_df and test_df. This eliminates the
-    look-ahead bias from fitting scalers on the full dataset.
+    Args:
+        name (str): Nomenclature assignment for target output.
+        model_class: Reference object mapping instantiation protocols.
+        params (dict): Fixed configurations mapping optimal nodes.
+        data (pd.DataFrame): Aggregated mapping variables.
+        fold_boundaries (list[tuple]): Absolute structural boundary allocations.
+        meta_cols (list[str]): Variables strictly excluded from estimation procedures.
+        selected_features (list[str]): The deterministic features extracted from earlier optimization.
 
-    Returns (name, oos_preds_df, metrics_dict).
+    Returns:
+        tuple: Mappings assigning specific artifacts sequentially alongside execution details.
     """
     try:
         p = params.copy()
@@ -899,9 +996,6 @@ def _train_single_model(
             if f in data.columns
         ]
 
-        # FIX BUG-1: Compute numeric feature list once per model (not per fold).
-        # These are the columns that will be winsorised and sector-normalised
-        # per-fold. Categorical columns are excluded from scaling.
         fold_numeric_features = [
             c for c in data.select_dtypes(include=[np.number]).columns
             if c not in exclude and c != "target"
@@ -923,10 +1017,8 @@ def _train_single_model(
                     del train_df, test_df
                     continue
 
-                # FIX BUG-1: Per-fold preprocessing — scaler fitted on train only,
-                # applied to both train and test. Eliminates future-data leakage.
-                # Only scale features that exist in both slices to avoid KeyError
-                # when the feature set changes across time (sparse fundamental data).
+                # Strict point-in-time cross-sectional scaling. Extrapolated solely from
+                # the exact historical regime observed up to the given embargo boundary.
                 fold_feats_present = [
                     c for c in fold_numeric_features
                     if c in train_df.columns and c in test_df.columns
@@ -1018,11 +1110,6 @@ def _train_single_model(
         preds = pd.concat(all_preds, ignore_index=True)
         preds = preds.drop_duplicates(subset=["date", "ticker"], keep="last")
 
-        # FIX BUG-2: Merge sector-neutral "target" (not raw_ret_5d) for IC evaluation.
-        # The model was trained to predict sector-neutral residuals. Grading IC
-        # against raw_ret_5d would deflate IC and create sector-specific bias in
-        # model selection. The "target" column is the sector-neutral return built
-        # by build_target() and is present in data at this point.
         preds = preds.merge(
             data[["date", "ticker", "target"]],
             on=["date", "ticker"],
@@ -1098,6 +1185,20 @@ def generate_optimized_weights(
     prices_df: pd.DataFrame,
     method: str = "mean_variance",
 ) -> pd.DataFrame:
+    """
+    Derives discrete asset allocation vectors mapping optimal execution ratios.
+
+    Utilizes Ledoit-Wolf shrinkage against sparse historical matrices to establish 
+    stable covariance prior to execution.
+
+    Args:
+        predictions (pd.DataFrame): Scaled inference boundary scores.
+        prices_df (pd.DataFrame): Executable cross-sectional boundaries mapping allocations.
+        method (str, optional): Target methodology mapping internal configurations. Defaults to 'mean_variance'.
+
+    Returns:
+        pd.DataFrame: A discrete order ledger resolving specific fractional assignments.
+    """
     from sklearn.covariance import LedoitWolf
     logger.info(f"[OPT] Portfolio Optimization ({method})...")
     allocator      = PortfolioAllocator(
@@ -1209,15 +1310,16 @@ def run_production_pipeline(
     parallel_models: bool = False,
     run_all: bool = False,
 ) -> None:
-    """Run the full production walk-forward alpha research pipeline.
+    """
+    Main execution DAG constructing the entire quantitative lifecycle.
 
-    parallel_models=False (default):
-        Train LGB → XGB → CatBoost serially.
-        Peak RAM ≈ 3-4 GB. Safe on any 8 GB machine.
+    Args:
+        force_rebuild (bool, optional): Overrides valid hashes triggering complete sequence calculation.
+        parallel_models (bool, optional): Allows cross-sectional structural execution simultaneously mapping dependencies.
+        run_all (bool, optional): If True, triggers execution validations.
 
-    parallel_models=True:
-        Train all 3 simultaneously. Peak RAM ≈ 9-12 GB.
-        Use only on 16 GB+ machines.
+    Returns:
+        None
     """
     logger.info(
         f"[BOOT] Cores={CPU_CORES_TO_USE}/{TOTAL_CORES}  "
@@ -1257,21 +1359,15 @@ def run_production_pipeline(
     if "raw_ret_5d" not in data.columns:
         data["next_open"]   = data.groupby("ticker")["open"].shift(-1).replace(0, np.nan)
         data["future_open"] = data.groupby("ticker")["open"].shift(-6)
-        # FIX BUG-3: clip to ±50% — prevents halts/splits from corrupting loss functions.
         data["raw_ret_5d"]  = (
             (data["future_open"] / data["next_open"]) - 1
         ).clip(RETURN_CLIP_MIN, RETURN_CLIP_MAX)
 
-    # FIX BUG-3: clip pnl_return as well — same outlier risk from next-day gap opens.
     data["pnl_return"] = (
         data.groupby("ticker")["open"].shift(-1) / data["open"] - 1
     ).clip(RETURN_CLIP_MIN, RETURN_CLIP_MAX)
 
     # ── 3. TARGET CONSTRUCTION ────────────────────────────────────────────
-    # FIX BUG-9: Replaced inline duplicate target computation with single call
-    # to build_target(). build_target() is the canonical implementation with
-    # sector-neutral subtraction and volatility dampening.
-    # The previous inline block was identical logic but a maintenance liability.
     data = build_target(data)
     data = data.dropna(subset=["target", "pnl_return"])
 
@@ -1287,8 +1383,6 @@ def run_production_pipeline(
     selector = FeatureSelector(meta_cols=meta_cols)
     data     = selector.drop_low_variance(data)
 
-    # FIX: Restrict global feature selection to the initial walk-forward training 
-    # window to prevent look-ahead bias from future regimes.
     wf_train_days  = WF_MIN_TRAIN_MONTHS * 21
     unique_dates   = np.sort(data["date"].unique())
     train_cutoff   = unique_dates[min(wf_train_days, len(unique_dates) - 1)]
@@ -1337,11 +1431,6 @@ def run_production_pipeline(
     gc.collect()
 
     # ── 5. GLOBAL CATEGORICAL FILL — safe to do globally (no leakage) ─────
-    # FIX BUG-1: The global WinsorisationScaler and SectorNeutralScaler calls
-    # have been REMOVED. Scaling now happens per-fold inside _train_single_model().
-    # Only categorical fillna remains here because string imputation has zero
-    # leakage risk. Scaling scalers fitted on full data would leak future
-    # distribution statistics into all training folds.
     cat_features = [
         c for c in data.columns
         if c not in set(meta_cols) | {"index", "level_0"}
@@ -1506,9 +1595,6 @@ def run_production_pipeline(
             )
             p_data = data[data["date"] >= prod_cutoff].copy()
             
-            # Institutional Fix: Constrain the production model to the exact same 
-            # training window length used in the walk-forward evaluation. Fitting on 
-            # 8 years of data creates a distribution mismatch vs the 36-month backtests.
             wf_train_days = WF_MIN_TRAIN_MONTHS * 21
             unique_p_dates = np.sort(p_data["date"].unique())
             if len(unique_p_dates) > wf_train_days:
@@ -1526,10 +1612,7 @@ def run_production_pipeline(
 
             feat_avail = [f for f in selected_features if f in p_data.columns]
 
-            # FIX BUG-6: Fit scalers on p_data (full training window) and save
-            # them alongside model weights. Without saving scalers, inference
-            # (generate_predictions.py) receives raw unscaled features and
-            # produces distribution-mismatched predictions silently.
+            # Persists strictly the bounds inferred from historical domains
             prod_numeric = [
                 f for f in feat_avail
                 if f in p_data.select_dtypes(include=[np.number]).columns
@@ -1551,14 +1634,12 @@ def run_production_pipeline(
 
             save_dir = config.MODELS_DIR / "production"
             save_dir.mkdir(parents=True, exist_ok=True)
-            # FIX BUG-6: save scalers so inference pipeline can reproduce
-            # the exact same preprocessing applied during training.
             joblib.dump(
                 {
                     "model":            prod_model,
                     "feature_names":    feat_avail,
-                    "winsoriser":       prod_winsoriser,       # FIX BUG-6
-                    "sector_scaler":    prod_sector_scaler,    # FIX BUG-6
+                    "winsoriser":       prod_winsoriser,
+                    "sector_scaler":    prod_sector_scaler,
                     "trained_to":       str(data["date"].max().date()),
                     "oos_metrics":      m,
                     "meta": {
@@ -1591,11 +1672,6 @@ def run_production_pipeline(
         if _passes_ensemble_gate(nm)
     }
 
-    # FIX BUG-11: Replaced silent fallback with hard RuntimeError.
-    # Previously, if no models passed the IC gate the code silently used ALL
-    # models — including gated noise — defeating the entire purpose of the gate.
-    # Correct behaviour: fail loudly with actionable diagnostics so the
-    # researcher investigates data quality, features, or target construction.
     if not passing_models:
         model_ic_lines = []
         for n in model_metrics:

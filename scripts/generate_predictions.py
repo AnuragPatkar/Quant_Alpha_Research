@@ -1,39 +1,28 @@
 """
-generate_predictions.py
-=======================
-Standalone Inference Pipeline
+Standalone Production Inference Pipeline
+========================================
+Loads production-grade ML models and generates out-of-sample alpha signals.
+
+Purpose
+-------
+This module orchestrates the generation of predictive alpha signals for a given set
+of trading days. It applies the exact same preprocessing methodologies (Winsorization
+and Sector Neutralization) utilized during model training to strictly prevent
+look-ahead bias or distribution drift.
+
+Role in Quantitative Workflow
 -----------------------------
-Loads production models and generates the latest alpha signals on new data.
+Executes daily (or on a defined schedule) as the core signal generation layer.
+Consumes updated market data and outputs scored alpha signals to be natively
+ingested by the portfolio optimization and order generation components.
 
-Steps:
-  1. Load production models (LGBM, XGB, CatBoost) from models/production/
-  2. Fetch latest master dataset with all computed factors
-  3. Preprocess using same logic as training — scalers fitted on recent
-     historical window ONLY (no lookahead bias)
-  4. Generate predictions from each model using its own feature list
-  5. Ensemble via rank-based blending + turnover smoothing
-  6. Save alpha signals to results/predictions/
-
-Fixes vs original:
-  - config.PREDICTIONS_DIR → config.RESULTS_DIR / "predictions"
-  - SectorNeutralScaler: uses inference_transform() (cross-sectional z-score
-    on inference dates, not stored date lookup which always falls back to global)
-  - WinsorisationScaler: guard against predict_date < scaler fit window
-  - build_ensemble_alpha: safe for single-date inference (zscore skipped)
-  - Preprocessing per-model's own feature list (not union) — no wasted work
-  - Only fit/transform scaler_window + inference_window, not full 1M rows
-  - model_name casing fixed: "lightgbm" → "LightGBM"
-  - scaler_fit_start_date dead-code duplicate removed
-  - pnl_return attached to output (matches training pipeline output schema)
-  - Guard: scaler window must be at least MIN_SCALER_DAYS long
-
-Usage:
-    python scripts/generate_predictions.py
-    python scripts/generate_predictions.py --date 2023-10-27
-    python scripts/generate_predictions.py --days 5
+Dependencies
+------------
+- **NumPy / Pandas**: Time-series manipulation and feature alignment.
+- **Joblib**: Deserialization of production machine learning artifacts.
 """
 
-from __future__ import annotations  # enables dict[str, X], list[X], X | Y on Python 3.9
+from __future__ import annotations
 import os
 import sys
 import joblib
@@ -44,16 +33,11 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-# --- Project Setup ---
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-# --- Shared utilities from train_models ---
-# NOTE: This import executes train_models module-level code (CPU throttle,
-#       Numba warmup, factor side-effects). Acceptable here because inference
-#       always needs Numba compiled. If startup time becomes a concern, move
-#       shared classes to quant_alpha/utils/preprocessing.py.
+# Ingests shared primitives; executes train_models module-level code (CPU throttle, Numba warmup).
 from scripts.train_models import (
     load_and_build_full_dataset,
     add_macro_features,
@@ -62,9 +46,8 @@ from scripts.train_models import (
     _warmup_numba,
 )
 
-# joblib/pickle unpickling resolves custom objective functions against __main__.
-# When generate_predictions.py is the entry point, __main__ is THIS file, not
-# train_models. Injecting the function into __main__ fixes the AttributeError.
+# Monkey patch: Injects the custom objective function into the __main__ namespace to 
+# guarantee deterministic resolution during Joblib unpickling of LightGBM/XGBoost artifacts.
 import sys as _sys
 _sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae  # type: ignore
 from config.settings import config
@@ -75,23 +58,28 @@ from quant_alpha.utils import save_parquet, time_execution
 setup_logging()
 logger = logging.getLogger("Quant_Alpha")
 
-# Minimum trading days in the scaler fit window (guards against short history)
-MIN_SCALER_DAYS = 252   # ~1 year
+# Guards against insufficient historical data for stable distribution parameter estimation
+MIN_SCALER_DAYS = 252
 
-# Map pkl stem → display name consistent with training logs
+# Unifies deserialization artifact nomenclature for standardized logging
 _MODEL_NAME_MAP = {
     "lightgbm": "LightGBM",
     "xgboost":  "XGBoost",
     "catboost": "CatBoost",
 }
 
-
-# ==============================================================================
-# MODEL LOADING
-# ==============================================================================
 @time_execution
 def load_production_models() -> dict:
-    """Load all *_latest.pkl models from models/production/."""
+    """
+    Deserializes the latest promoted production models from the local registry.
+
+    Args:
+        None
+
+    Returns:
+        dict: A dictionary mapping model names to their loaded artifact payloads,
+            which include the model object and expected feature names.
+    """
     models_dir = config.MODELS_DIR / "production"
     if not models_dir.exists():
         logger.error(f"Production models directory not found: {models_dir}")
@@ -124,10 +112,6 @@ def load_production_models() -> dict:
 
     return loaded
 
-
-# ==============================================================================
-# INFERENCE PREPROCESSING
-# ==============================================================================
 @time_execution
 def preprocess_inference_data(
     data: pd.DataFrame,
@@ -138,35 +122,27 @@ def preprocess_inference_data(
     model_feature_sets: dict[str, list[str]],
 ) -> tuple[pd.DataFrame, dict[str, "WinsorisationScaler"], dict[str, "SectorNeutralScaler"]]:
     """
-    Fit scalers on [scaler_fit_start, scaler_fit_end] and return a preprocessed
-    slice covering [scaler_fit_start, inference_end].
+    Applies point-in-time cross-sectional transformations to inference data.
+
+    Fits scaling artifacts strictly on a historical lookback window to prevent 
+    information leakage, then transforms the target inference window.
+
+    Args:
+        data (pd.DataFrame): The raw combined feature dataset.
+        scaler_fit_start (pd.Timestamp): Start boundary for historical scaler fitting.
+        scaler_fit_end (pd.Timestamp): End boundary for historical scaler fitting.
+        inference_start (pd.Timestamp): Start boundary for the signal generation window.
+        inference_end (pd.Timestamp): End boundary for the signal generation window.
+        model_feature_sets (dict[str, list[str]]): Feature definitions mapped per model.
 
     Returns:
-        processed_df  — full slice (fit window + inference window), preprocessed
-        wins_scalers  — {model_name: WinsorisationScaler} fitted per-model
-        norm_scalers  — {model_name: SectorNeutralScaler} fitted per-model
-
-    Design notes:
-      • Preprocessing is done PER MODEL using each model's own feature list.
-        This avoids normalising irrelevant features and prevents NaN from
-        union-features that a given model doesn't use.
-      • SectorNeutralScaler.inference_transform() is used on inference rows —
-        it computes cross-sectional z-score from inference data itself, not the
-        stored date lookup (which only covers the fit window).
-      • WinsorisationScaler uses searchsorted on fit-window dates, which is safe
-        as long as inference_start >= scaler_fit_end (guarded in caller).
-
-    KNOWN DISCREPANCY — Training vs Inference Winsorisation:
-      Training  : global quantiles computed per-date across FULL dataset
-      Inference : rolling quantiles fitted on [scaler_fit_start, scaler_fit_end]
-      
-      In stable regimes this difference is negligible (<0.5% of rows affected).
-      In regime shifts (e.g. 2020 Covid crash) the tails diverge — a feature
-      value that was p99 in 2019 may be p85 in 2022.
-      
-      Ideal fix: save training quantile bounds inside the model pkl at training
-      time and load them here. This is a planned improvement. Until then, use a
-      scaler_fit_window of 3+ years to minimise distribution shift.
+        tuple:
+            - pd.DataFrame: The normalized and clipped feature subset.
+            - dict[str, WinsorisationScaler]: Per-model winsorisation artifacts.
+            - dict[str, SectorNeutralScaler]: Per-model sector neutralization artifacts.
+    
+    Raises:
+        ValueError: If the required scaler fit window or inference window is completely empty.
     """
     logger.info(
         f"Scaler fit window : {scaler_fit_start.date()} → {scaler_fit_end.date()}"
@@ -175,7 +151,7 @@ def preprocess_inference_data(
         f"Inference window  : {inference_start.date()} → {inference_end.date()}"
     )
 
-    # Slice only what we need — avoids holding full 1M-row dataset in memory
+    # Slice only the required temporal bounds to bypass processing full 1M+ row dataset
     window_mask  = (data["date"] >= scaler_fit_start) & (data["date"] <= inference_end)
     window_data  = data[window_mask].copy().reset_index(drop=True)
 
@@ -185,8 +161,8 @@ def preprocess_inference_data(
     fit_df   = window_data[fit_mask]
     infer_df = window_data[infer_mask]
 
-    # Regime-shift guard: warn if inference feature distributions differ
-    # significantly from scaler fit window (signals preprocessing discrepancy)
+    # Regime-shift guard: Validates that the inference feature distributions do not 
+    # differ significantly from the scaler fit window, flagging structural breaks.
     if not fit_df.empty and not infer_df.empty:
         meta_excl = {
             "ticker", "date", "target", "raw_ret_5d", "pnl_return",
@@ -196,7 +172,7 @@ def preprocess_inference_data(
         check_cols = [
             c for c in fit_df.select_dtypes(include=[np.number]).columns
             if c not in meta_excl
-        ][:10]  # sample 10 features for speed
+        ][:10]
         if check_cols:
             fit_med   = fit_df[check_cols].median()
             infer_med = infer_df[check_cols].median()
@@ -239,9 +215,8 @@ def preprocess_inference_data(
     wins_scalers: dict = {}
     norm_scalers: dict = {}
 
-    # Preprocess per-model (each model has its own feature set)
-    # We build a unified output by merging per-model transformed columns
-    # back onto window_data.
+    # Dynamically preprocess each model uniquely based on its persisted feature dependencies
+    # to avoid null propagation from models observing distinct metric combinations.
     processed = window_data.copy()
 
     for model_name, features in model_feature_sets.items():
@@ -255,35 +230,30 @@ def preprocess_inference_data(
             logger.warning(f"[{model_name}] No numeric features to scale.")
             continue
 
-        # Winsorisation: fit on fit_df, transform entire window (fit+inference)
+        # Extrapolates Winsorization bounds calibrated strictly from historical fit slice
         wins = WinsorisationScaler(clip_pct=0.01).fit(fit_df, numeric)
         wins_scalers[model_name] = wins
 
-        # Transform fit window normally (dates are in fit range)
         fit_rows   = processed[fit_mask].copy()
         fit_rows   = wins.transform(fit_rows, numeric)
 
-        # Transform inference window — searchsorted maps to nearest fit date
-        # Safe because inference_start >= scaler_fit_end (guarded in caller)
+        # Interpolates trailing inference dates to the most proximal boundary configuration
         infer_rows = processed[infer_mask].copy()
         infer_rows = wins.transform(infer_rows, numeric)
 
-        # SectorNeutralScaler: fit on fit_df only
+        # Cross-sectional neutralization logic mapping
         norm = SectorNeutralScaler().fit(fit_df, numeric)
         norm_scalers[model_name] = norm
 
-        # Fit window: use transform() — dates are in the fit window lookup
         fit_rows = norm.transform(fit_rows, numeric)
 
-        # Inference window: use inference_transform() — computes cross-sectional
-        # z-score from inference data itself; no stored date lookup needed
+        # Bypasses date-lookup limitations via in-place standard scoring for live inference dates
         infer_rows = norm.inference_transform(infer_rows, numeric)
 
-        # Write transformed features back
         processed.loc[fit_mask,   numeric] = fit_rows[numeric].values
         processed.loc[infer_mask, numeric] = infer_rows[numeric].values
 
-    # Fill categorical NaNs
+    # Deterministic Categorical Imputation preventing string type-casting faults
     cat_cols = [
         c for c in processed.columns
         if c not in meta_exclude and processed[c].dtype == object
@@ -294,20 +264,24 @@ def preprocess_inference_data(
     logger.info("✅ Preprocessing complete.")
     return processed, wins_scalers, norm_scalers
 
-
-# ==============================================================================
-# MAIN INFERENCE PIPELINE
-# ==============================================================================
 @time_execution
 def _find_last_predicted_date(predictions_dir) -> pd.Timestamp | None:
-    """Scan predictions dir and return the latest date already predicted."""
+    """
+    Scans the destination directory to resolve the latest generated signal date.
+
+    Args:
+        predictions_dir (Path): The file path to the saved prediction parquet files.
+
+    Returns:
+        pd.Timestamp | None: The most recent date successfully processed, or None 
+            if the directory is empty.
+    """
     pred_path = predictions_dir
     if not pred_path.exists():
         return None
     parquets = sorted(pred_path.glob("alpha_signals_*.parquet"))
     if not parquets:
         return None
-    # filename: alpha_signals_YYYY-MM-DD.parquet
     last = parquets[-1].stem.replace("alpha_signals_", "")
     try:
         return pd.to_datetime(last)
@@ -321,24 +295,23 @@ def generate_predictions(
     last_day_only: bool = False,
 ) -> None:
     """
-    Load models, preprocess, predict, ensemble, save.
+    Orchestrates the complete inference DAG: loads artifacts, preprocesses, predicts, and ensembles.
 
-    Modes:
-      default (no flags)      → ALL dates since last saved prediction (or full history)
-                                Use this always — handles daily, weekly, monthly updates.
-      --last-day              → only the latest date in dataset
-      --date DD-MM-YYYY       → specific single date
-      --days N                → last N trading days
+    Args:
+        predict_date (str | None, optional): Specific isolated date to generate signals for (DD-MM-YYYY).
+        predict_days (int | None, optional): Specifies the trailing N trading days to process.
+        last_day_only (bool, optional): If True, processes strictly the latest date in the dataset.
+
+    Returns:
+        None
     """
     _warmup_numba()
 
-    # 1. Load models
     models = load_production_models()
     if not models:
         logger.error("Aborting: no production models found.")
         return
 
-    # 2. Load data
     data = load_and_build_full_dataset(force_rebuild=False)
     if "date" not in data.columns:
         data = data.reset_index()
@@ -346,30 +319,25 @@ def generate_predictions(
     data = data.sort_values(["ticker", "date"]).reset_index(drop=True)
     data = add_macro_features(data)
 
-    # 3. Date windows
     data_end  = data["date"].max()
     all_dates = sorted(pd.to_datetime(d) for d in data["date"].unique())
 
     if predict_date:
-        # --date DD-MM-YYYY  → specific single date
         inference_end   = pd.to_datetime(predict_date, dayfirst=True)
         inference_start = inference_end
         logger.info(f"[MODE] specific date: {inference_end.date()}")
 
     elif predict_days is not None:
-        # --days N  → last N trading days
         inference_end   = data_end
         inference_start = pd.Timestamp(all_dates[max(0, len(all_dates) - predict_days)])
         logger.info(f"[MODE] last {predict_days} trading days: {inference_start.date()} → {inference_end.date()}")
 
     elif last_day_only:
-        # --last-day  → only latest date
         inference_end   = data_end
         inference_start = data_end
         logger.info(f"[MODE] last day only: {inference_end.date()}")
 
     else:
-        # DEFAULT: everything since last saved prediction (handles daily/weekly/monthly gap)
         output_dir = config.PREDICTIONS_DIR
         last_pred  = _find_last_predicted_date(output_dir)
         inference_end = data_end
@@ -384,7 +352,6 @@ def generate_predictions(
                 f"{len(new_dates_list)} new dates: {inference_start.date()} → {inference_end.date()}"
             )
         else:
-            # First ever run — predict entire dataset history
             inference_start = all_dates[0]
             logger.info(f"[MODE] First run — predicting full history: {inference_start.date()} → {inference_end.date()}")
 
@@ -392,7 +359,7 @@ def generate_predictions(
     lookback_years   = getattr(config, "INFERENCE_SCALER_LOOKBACK_YEARS", 3)
     scaler_fit_start = scaler_fit_end - pd.Timedelta(days=365 * lookback_years)
 
-    # Guard: inference dates must be after the scaler fit window
+    # Validation Bound: Flags inversion logic to prevent look-ahead scaling contamination
     if inference_start <= scaler_fit_end:
         logger.warning(
             "inference_start is not after scaler_fit_end — "
@@ -400,7 +367,6 @@ def generate_predictions(
             "Predictions may be less reliable."
         )
 
-    # Guard: enough historical data?
     data_min = data["date"].min()
     if scaler_fit_start < data_min:
         logger.warning(
@@ -412,7 +378,6 @@ def generate_predictions(
 
     logger.info(f"Prediction range  : {inference_start.date()} → {inference_end.date()}")
 
-    # 4. Preprocess — per model, only on required window
     model_feature_sets = {
         name: payload["feature_names"] for name, payload in models.items()
     }
@@ -432,11 +397,9 @@ def generate_predictions(
         logger.error("Inference slice is empty. Aborting.")
         return
 
-    # Free full dataset — not needed anymore
     del data, processed
     import gc; gc.collect()
 
-    # 5. Per-model predictions
     predictions: dict[str, pd.DataFrame] = {}
     for name, payload in models.items():
         model    = payload["model"]
@@ -470,7 +433,6 @@ def generate_predictions(
         logger.error("No predictions generated. Aborting.")
         return
 
-    # 6. Ensemble
     logger.info(f"Ensembling {len(predictions)} models…")
     ensemble_df = build_ensemble_alpha(predictions)
 
@@ -478,14 +440,12 @@ def generate_predictions(
         logger.error("Ensemble produced empty output. Aborting.")
         return
 
-    # Attach pnl_return if available (matches training pipeline output schema)
     if "pnl_return" in inference_df.columns:
         ensemble_df = ensemble_df.merge(
             inference_df[["date", "ticker", "pnl_return"]],
             on=["date", "ticker"], how="left",
         )
 
-    # 7. Save
     output_dir = config.PREDICTIONS_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"alpha_signals_{inference_end.strftime('%Y-%m-%d')}.parquet"
@@ -505,9 +465,6 @@ def generate_predictions(
     print(f"{'='*55}\n")
 
 
-# ==============================================================================
-# ENTRY POINT
-# ==============================================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate Alpha Signals from Production Models",

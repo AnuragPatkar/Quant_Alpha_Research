@@ -1,16 +1,21 @@
-# FIX BUG-097: Module docstring was placed AFTER imports — Python treats it as a
-# dead string expression, not a module docstring. Moved to top.
 """
-conftest.py
-===========
-Global pytest configuration and fixtures.
+Global Pytest Configuration and Fixtures
+========================================
+Centralized test suite orchestration and mock data provisioning.
 
-This file is automatically discovered by pytest and provides fixtures, hooks,
-and plugins available to all tests in the project.
+Purpose
+-------
+This module serves as the foundational testing configuration for the Quant Alpha
+platform. It provisions deterministic synthetic datasets, manages C-extension 
+memory states (e.g., Numba, PyArrow), and rigorously enforces test isolation 
+to prevent namespace pollution across integration and unit tests.
 
-Note: tests are intended to live in tests/unit/ and tests/integration/
-subdirectories (matching PROJECT_ROOT = Path(__file__).resolve().parent.parent).
+Role in Quantitative Workflow
+-----------------------------
+Automatically discovered by pytest. Ensures that all localized tests execute 
+within a stable, reproducible environment without requiring redundant setup logic.
 """
+
 import sys
 import os
 import pytest
@@ -18,54 +23,60 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-# 2. Environment Variables (CPU Throttling for Tests)
+# Binds deterministic thread limits for numerical backends to prevent test-suite CPU thrashing
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
 os.environ["MKL_NUM_THREADS"] = "4"
 os.environ["NUMBA_NUM_THREADS"] = "4"
 
-# ---------------------------------------------------------------------------
-# Global state tracking for test pollution prevention
-# ---------------------------------------------------------------------------
+# Global state tracking for strict test isolation and namespace pollution prevention
 _ORIGINAL_SYS_MODULES = None
 _MODULES_BEFORE_INTEGRATION = None
 
 def pytest_sessionstart(session):
     """
-    Called once at the beginning of the entire test session.
-    This is the ideal place to handle global state initialization for
-    C-extension libraries that can cause "duplicate registration" errors
-    when modules are re-imported across different test files.
-    
-    Also captures initial sys.modules state for test pollution prevention.
+    Executes global initialization prior to test suite execution.
+
+    Pre-loads specific C-extension libraries to prevent 'duplicate registration' 
+    faults during parallel test discovery, and captures the baseline module state 
+    to enforce strict isolation.
+
+    Args:
+        session (pytest.Session): The pytest session object.
+
+    Returns:
+        None
     """
     global _ORIGINAL_SYS_MODULES
     
-    # 1. Initialize Numba and PyArrow to prevent duplicate registration errors
     try:
-        # For PyArrow: Prevents `ArrowKeyError: pandas.period already defined`
+        # Pre-allocates PyArrow extension types to prevent ArrowKeyError on pandas.period
         import pandas.core.arrays.arrow.extension_types
     except ImportError:
         pass
     try:
-        # For Numba: Prevents `duplicate registration for <class ...>` errors
+        # Pre-initializes Numba and numpy.polynomial to prevent duplicate registration faults
         import numba
-        # By also importing numpy.polynomial, we encourage Numba to register
-        # its corresponding types once, globally, at the start of the session.
         import numpy.polynomial
     except ImportError:
         pass
     
-    # 2. Capture sys.modules state for test pollution prevention
     if _ORIGINAL_SYS_MODULES is None:
         _ORIGINAL_SYS_MODULES = set(sys.modules.keys())
 
-# 3. Shared Fixtures
 @pytest.fixture(scope="session")
 def synthetic_data():
     """
-    Creates a synthetic panel dataset for testing models.
-    Returns: (df, features, target_col)
+    Generates a deterministic, synthetic panel dataset for model validation.
+
+    Args:
+        None
+
+    Returns:
+        tuple: A 3-element tuple containing:
+            - pd.DataFrame: The generated synthetic OHLCV and feature dataset.
+            - list[str]: The list of feature column names.
+            - str: The target column identifier.
     """
     np.random.seed(42)
     n_tickers = 10
@@ -88,7 +99,6 @@ def synthetic_data():
                 "industry": industry,
                 "target": np.random.normal(0, 0.02)
             }
-            # Add numeric features
             for i in range(n_features):
                 row[f"f_{i:03d}"] = np.random.normal()
             
@@ -96,7 +106,6 @@ def synthetic_data():
             
     df = pd.DataFrame(rows)
     
-    # Set dtypes
     df["sector"] = df["sector"].astype("category")
     df["industry"] = df["industry"].astype("category")
     
@@ -105,10 +114,20 @@ def synthetic_data():
 
 @pytest.fixture(scope="session")
 def sample_covariance_matrix():
-    """Creates a dummy covariance matrix for optimization tests."""
+    """
+    Provisions a synthetic, positive-definite covariance matrix.
+
+    Args:
+        None
+
+    Returns:
+        tuple: A 2-element tuple containing:
+            - pd.DataFrame: The N x N identity covariance matrix scaled by low variance.
+            - list[str]: The ordered list of ticker symbols.
+    """
     tickers = [f"TICK{i:03d}" for i in range(5)]
     cov = pd.DataFrame(
-        np.identity(5) * 0.0004, # Low variance
+        np.identity(5) * 0.0004,
         index=tickers,
         columns=tickers
     )
@@ -116,70 +135,88 @@ def sample_covariance_matrix():
 
 @pytest.fixture(scope="session")
 def sample_expected_returns(sample_covariance_matrix):
-    """Creates dummy expected returns."""
+    """
+    Generates a deterministic expected returns vector aligned with the covariance matrix.
+
+    Args:
+        sample_covariance_matrix (tuple): The covariance fixture output.
+
+    Returns:
+        dict[str, float]: A mapping of ticker symbols to expected annualized returns.
+    """
     _, tickers = sample_covariance_matrix
     return {t: 0.01 * (i + 1) for i, t in enumerate(tickers)}
 
-# Custom Objective for Models (Shared)
 def weighted_symmetric_mae(y_true, y_pred):
+    """
+    Calculates an asymmetric penalty for directional errors during optimization.
+
+    Exposed globally to ensure deterministic resolution during joblib unpickling 
+    in isolated test environments.
+
+    Args:
+        y_true (np.ndarray): Empirical target variables mappings.
+        y_pred (np.ndarray): Current predictive node output sequences.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Derived Gradient and Hessian bounds required by GBDTs.
+    """
     residuals = y_true - y_pred
     weights = np.where(y_true * y_pred < 0, 2.0, 1.0)
     grad = -weights * np.tanh(residuals)
     hess = np.maximum(weights * (1.0 - np.tanh(residuals) ** 2), 1e-3)
     return grad, hess
 
-# Inject into main for pickle compatibility during tests
+# Injects into main namespace to guarantee pickle compatibility during unpickling procedures
 try:
     sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae
 except Exception:
     pass
 
-# ---------------------------------------------------------------------------
-# 4. Test Pollution Prevention (autouse fixture)
-# ---------------------------------------------------------------------------
-# This prevents sys.modules pollution from integration tests (especially test_production.py)
-# from affecting subsequent unit tests.
-
 def pytest_runtest_setup(item):
-    """Hook that captures sys.modules state before running ANY integration test."""
+    """
+    Captures the global module namespace state prior to executing integration tests.
+
+    Args:
+        item (pytest.Item): The current test item being executed.
+
+    Returns:
+        None
+    """
     global _MODULES_BEFORE_INTEGRATION
-    # Capture state before ANY integration test (not just production and deployment)
     if "tests/integration" in str(item.fspath) or "tests\\integration" in str(item.fspath):
         _MODULES_BEFORE_INTEGRATION = set(sys.modules.keys())
 
 def pytest_runtest_teardown(item):
     """
-    Hook that aggressively restores sys.modules after ANY integration test.
-    This ensures unit tests are not polluted by patched/mocked modules.
-    
-    CRITICAL: Removes scripts.* modules because they cache references to MagicMock
-    objects that were loaded while sys.modules was patched.
-    
-    Strategy:
-      1. Remove modules added by the integration test
-      2. Force delete quant_alpha.* and scripts.* modules
-      3. Reset Numba's type registry
-      4. Invalidate all caches
-      5. Garbage collect
+    Aggressively restores the global module namespace after integration tests.
+
+    Forces garbage collection, invalidates import caches, and resets Numba's 
+    type registry to guarantee subsequent unit tests execute in a pristine, 
+    unpolluted state.
+
+    Args:
+        item (pytest.Item): The current test item that finished execution.
+
+    Returns:
+        None
     """
     global _MODULES_BEFORE_INTEGRATION
     
-    # Clean up after ANY integration test, not just specific ones
     if "tests/integration" not in str(item.fspath) and "tests\\integration" not in str(item.fspath):
         return
     
-    # 1. Remove any modules added by this integration test
     if _MODULES_BEFORE_INTEGRATION is not None:
         current_modules = set(sys.modules.keys())
         modules_to_remove = current_modules - _MODULES_BEFORE_INTEGRATION
         
-        for module_name in list(modules_to_remove):  # list() to avoid "dict changed size" error
+        # Coerces to list to avoid 'dictionary changed size during iteration' exceptions
+        for module_name in list(modules_to_remove):
             try:
                 del sys.modules[module_name]
             except (KeyError, RuntimeError):
                 pass
     
-    # 2. Force removal of quant_alpha* and scripts* modules
     modules_to_reload = [name for name in list(sys.modules.keys()) if name.startswith(("quant_alpha", "scripts"))]
     for module_name in modules_to_reload:
         try:
@@ -187,20 +224,16 @@ def pytest_runtest_teardown(item):
         except (KeyError, RuntimeError):
             pass
     
-    # 3. Forcefully clear Numba's type registry to prevent "duplicate registration" errors
     try:
         import numba
         from numba.core import types
-        # Clear Numba's registry of registered types
         if hasattr(types, '_registry'):
             types._registry.clear()
-        # Also try the alternate path where Numba caches JIT functions
         if hasattr(numba, '_internal') and hasattr(numba._internal, 'registry'):
             numba._internal.registry.clear()
     except (ImportError, AttributeError):
         pass
     
-    # 4. Clear importlib caches and metafinder-cached modules
     try:
         from importlib import invalidate_caches
         invalidate_caches()
@@ -210,7 +243,6 @@ def pytest_runtest_teardown(item):
     try:
         import importlib
         if hasattr(importlib, "_bootstrap_external"):
-            # Clear the find_spec cache
             if hasattr(importlib._bootstrap_external, '_get_cached'):
                 try:
                     importlib._bootstrap_external._get_cached.cache_clear()
@@ -219,32 +251,26 @@ def pytest_runtest_teardown(item):
     except (ImportError, AttributeError):
         pass
     
-    # 5. Force garbage collection to remove references to mocked objects
     import gc
     gc.collect()
 
 @pytest.fixture(autouse=True)
 def cleanup_modules_after_test():
     """
-    Autouse fixture that cleans up sys.modules after each test.
-    
-    Prevents test pollution where mocked/patched modules from integration tests
-    (especially test_production.py which uses patch.dict(sys.modules)) persist
-    and corrupt subsequent unit tests with:
-      - KeyError: missing DataFrame columns ('date', 'ticker', 'reason')
-      - UnboundLocalError: '_pickle' (model classes replaced with MagicMock)
-      - Import errors from orphaned stub modules
-    
-    This fixture works alongside the pytest_runtest_teardown hook to provide
-    defense-in-depth: the hook handles test_production.py specifically, and this
-    fixture provides a fallback for any test that leaves sys.modules dirty.
+    Autouse fixture executing defensive namespace cleanup after every test.
+
+    Acts as a fail-safe mechanism against persistent mocked artifacts (e.g., MagicMock)
+    corrupting the sys.modules cache, specifically targeting model class wrappers.
+
+    Args:
+        None
+
+    Returns:
+        Generator: Yields control to the test execution, then performs teardown.
     """
-    yield  # Run the test first
+    yield
     
-    # Post-test cleanup: Clear any mocked model classes that might interfere with imports
-    # This prevents UnboundLocalError: '_pickle' issues in test_models.py
     try:
-        # If any model modules are MagicMock, reload the real ones
         for model_cls_name in ["LightGBMModel", "XGBoostModel", "CatBoostModel"]:
             for module_path in [
                 "quant_alpha.models.lightgbm_model",
@@ -253,14 +279,12 @@ def cleanup_modules_after_test():
             ]:
                 if module_path in sys.modules:
                     mod = sys.modules[module_path]
-                    # Check if the model class was replaced with a MagicMock
                     if hasattr(mod, model_cls_name):
                         attr = getattr(mod, model_cls_name)
-                        # If it's a MagicMock (not a real class), remove the module to force reimport
                         if type(attr).__name__ == "MagicMock":
                             try:
                                 del sys.modules[module_path]
                             except KeyError:
                                 pass
     except Exception:
-        pass  # Silently ignore errors during cleanup
+        pass

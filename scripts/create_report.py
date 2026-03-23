@@ -1,17 +1,18 @@
 """
 Executive Quantitative Research Report Generator
 ================================================
-Aggregates insights from the alpha research pipeline into a management-level summary.
+Aggregates insights from the alpha research pipeline into a management-level summary
+to enforce quantitative observability.
 
 Purpose
 -------
-This script serves as the final reporting layer of the quantitative research platform.
-It performs a holistic audit of the system state, assessing:
-1.  **Data Integrity**: Freshness and validity of market data (Prices, Fundamentals, Macro).
-2.  **Factor Efficacy**: Statistical strength ($IC$, $t$-stat) of the alpha factor library.
+This script acts as the final reporting layer of the quantitative research platform.
+It generates an immutable, holistic audit of the system state, evaluating:
+1.  **Data Integrity**: Ingestion latency and completeness (Prices, Fundamentals, Macro).
+2.  **Factor Efficacy**: Statistical strength (Information Coefficient, t-stat) of the alpha library.
 3.  **Model Robustness**: Out-of-sample performance of ML models (Annualized ICIR, Tiering).
-4.  **Strategy Performance**: Historical backtest metrics (Sharpe, Sortino, MaxDD) vs Benchmark.
-5.  **Portfolio Positioning**: Current target weights, exposure analysis, and concentration risk (HHI).
+4.  **Strategy Performance**: Walk-forward backtest metrics (Sharpe, Sortino, MaxDD) vs benchmark.
+5.  **Portfolio Positioning**: Current target allocations, leverage bounds, and concentration risk.
 
 Usage:
 -----
@@ -27,18 +28,12 @@ Intended for daily execution post-pipeline or ad-hoc review.
 
 Importance
 ----------
--   **Operational Risk Mitigation**: Identifies stale data or signal decay ($T > 5$ days)
+-   **Operational Risk Mitigation**: Proactively identifies stale data or signal decay
     before trades are generated.
 -   **Performance Attribution**: Decomposes returns into Alpha and Beta components,
-    providing transparency on strategy drivers.
--   **Model Governance**: Enforces visibility on "PROD" vs "ENSEMBLE" model tiers based
-    on rigorous statistical gates ($t > 2.5$).
-
-Tools & Frameworks
-------------------
--   **Pandas/NumPy**: Aggregation and statistical computation.
--   **Joblib**: Deserialization of trained model artifacts.
--   **YFinance**: Benchmark data retrieval for relative performance analysis.
+    ensuring transparent attribution.
+-   **Model Governance**: Formalizes visibility on production versus ensemble tiers
+    by exposing the statistical gates required for promotion.
 """
 
 import sys
@@ -62,17 +57,26 @@ setup_logging()
 
 logger = logging.getLogger("Quant_Alpha")
 
-# Benchmark Cache: Stores S&P 500 returns to avoid redundant API calls
+# In-memory cache for benchmark indexing to bypass redundant network calls
 _SPY_CACHE: dict = {}
 
-# ==============================================================================
-# CUSTOM OBJECTIVE (Required for unpickling models trained with custom obj)
-# ==============================================================================
 def weighted_symmetric_mae(y_true, y_pred):
     """
-    Custom objective function for gradient boosting (Pickle compatibility).
+    Computes a custom asymmetric loss gradient and hessian.
+
+    Calculates an objective that strictly penalizes directional sign errors
+    over absolute magnitude. Exposed globally to ensure deterministic 
+    resolution during Joblib unpickling of LightGBM/XGBoost artifacts.
+
     .. math:: L(y, \\hat{y}) = -w \\cdot \\tanh(y - \\hat{y})
-    Defined globally to allow `joblib` to resolve the function reference during loading.
+
+    Args:
+        y_true (np.ndarray): The ground truth target values.
+        y_pred (np.ndarray): The model's predicted values.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: A tuple containing the first-order 
+            derivative (gradient) and second-order derivative (hessian).
     """
     residuals = y_true - y_pred
     weights   = np.where(y_true * y_pred < 0, 2.0, 1.0)
@@ -80,27 +84,61 @@ def weighted_symmetric_mae(y_true, y_pred):
     hess      = np.maximum(weights * (1.0 - np.tanh(residuals) ** 2), 1e-3)
     return grad, hess
 
-# Namespace Injection: Ensures deserialization works even if function was pickled from __main__
+# Namespace injection to guarantee custom objective deserialization integrity
 import sys as _sys
 _sys.modules["__main__"].weighted_symmetric_mae = weighted_symmetric_mae  # type: ignore
 
-# ==============================================================================
-# HELPER FUNCTIONS
-# ==============================================================================
 def _format_currency(x):
+    """
+    Formats a numeric value into a USD currency string.
+
+    Args:
+        x (float): The numeric value to format.
+
+    Returns:
+        str: Formatted currency string, or "-" if the input is NaN.
+    """
     if pd.isna(x): return "-"
     return f"${x:,.0f}"
 
 def _format_pct(x, prec=2):
+    """
+    Formats a numeric value as a percentage string with a specified precision.
+
+    Args:
+        x (float): The numeric value to format (e.g., 0.05 for 5%).
+        prec (int, optional): The number of decimal places. Defaults to 2.
+
+    Returns:
+        str: Formatted percentage string with explicit sign, or "-" if the input is NaN.
+    """
     if pd.isna(x): return "-"
     return f"{x:+.{prec}%}"
 
 def _format_float(x, prec=2):
+    """
+    Formats a numeric value as a float string with a specified precision.
+
+    Args:
+        x (float): The numeric value to format.
+        prec (int, optional): The number of decimal places. Defaults to 2.
+
+    Returns:
+        str: Formatted float string, or "-" if the input is NaN.
+    """
     if pd.isna(x): return "-"
     return f"{x:.{prec}f}"
 
 def _trading_days_old(signal_date) -> int | None:
-    """Calculates business day lag ($T_{now} - T_{signal}$) excluding weekends."""
+    """
+    Calculates the temporal business day lag between generation and execution.
+
+    Args:
+        signal_date (str | datetime): The timestamp to evaluate.
+
+    Returns:
+        int | None: The number of trading days elapsed, or None if parsing fails.
+    """
     try:
         sig = pd.Timestamp(signal_date)
         today = pd.Timestamp(datetime.now().date())
@@ -112,8 +150,14 @@ def _trading_days_old(signal_date) -> int | None:
 def _calc_cagr(series: pd.Series) -> float:
     """
     Computes Compound Annual Growth Rate (CAGR).
+    
     .. math:: CAGR = (1 + R_{total})^{\\frac{365}{days}} - 1
-    Uses calendar days for annualization to align with standard financial reporting.
+    
+    Args:
+        series (pd.Series): The daily equity curve or portfolio value time series.
+
+    Returns:
+        float: The annualized CAGR. Returns 0.0 for structurally invalid lengths.
     """
     if len(series) < 2: return 0.0
     total_ret = (series.iloc[-1] / series.iloc[0]) - 1
@@ -124,7 +168,14 @@ def _calc_cagr(series: pd.Series) -> float:
 def _calc_max_dd(series: pd.Series) -> float:
     """
     Calculates Maximum Drawdown.
+    
     .. math:: MaxDD = \\min_t \\left( \\frac{NAV_t}{HWM_t} - 1 \\right)
+    
+    Args:
+        series (pd.Series): The cumulative portfolio value or equity curve.
+
+    Returns:
+        float: The maximum peak-to-trough contraction percentage.
     """
     if len(series) < 1: return 0.0
     peak = series.cummax()
@@ -132,42 +183,65 @@ def _calc_max_dd(series: pd.Series) -> float:
 
 def _calc_sharpe(series: pd.Series) -> float:
     """
-    Calculates Annualized Sharpe Ratio (assuming zero risk-free for simplicity here).
+    Calculates the Annualized Sharpe Ratio.
+    
     .. math:: SR = \\frac{\\mu_{ret}}{\\sigma_{ret}} \\sqrt{252}
+
+    Args:
+        series (pd.Series): The daily equity curve or portfolio value time series.
+
+    Returns:
+        float: The annualized Sharpe ratio. Returns 0.0 if there is insufficient
+            data or zero volatility.
     """
     if len(series) < 2: return 0.0
     rets = series.pct_change().dropna()
-    if rets.std() < 1e-9: return 0.0  # FIX BUG-090: float equality fails for near-zero std
+    # Stability guard: Prevents DivisionByZero exceptions during flat market regimes
+    if rets.std() < 1e-9: return 0.0
     return (rets.mean() / rets.std()) * np.sqrt(252)
 
 def _calc_sortino(series: pd.Series, rf_annual: float = 0.035) -> float:
     """
-    Calculates Annualized Sortino Ratio.
+    Calculates the Annualized Sortino Ratio.
+
+    Unlike the Sharpe Ratio, this metric penalizes only downside volatility 
+    relative to a Minimum Acceptable Return (MAR).
+
     .. math:: Sortino = \\frac{E[R_p - R_f]}{\\sigma_{down}} \\sqrt{252}
+
+    Args:
+        series (pd.Series): The daily equity curve or portfolio value time series.
+        rf_annual (float, optional): The annualized risk-free rate. Defaults to 0.035.
+
+    Returns:
+        float: The annualized Sortino ratio. Returns 0.0 if there is insufficient
+            data or zero downside variance.
     """
     if len(series) < 2: return 0.0
     rets  = series.pct_change().dropna()
     rf_d  = rf_annual / 252
     excess = rets - rf_d
     
-    # Target Downside Deviation (Root Mean Square of negative excess returns)
+    # Asymmetric Risk Profile: Isolates the Root Mean Square of negative deviations
     downside_sq = np.minimum(0, excess) ** 2
     tdd = np.sqrt(downside_sq.mean())
-    if tdd < 1e-9: return 0.0  # FIX BUG-090: float equality fails for near-zero tdd
+    
+    # Stability guard: Prevents DivisionByZero exceptions during micro-variance regimes
+    if tdd < 1e-9: return 0.0
     return (excess.mean() / tdd) * np.sqrt(252)
 
 def _get_top_drawdowns(series: pd.Series, n: int = 3) -> list:
     """
-    Identifies distinct drawdown periods and returns the top N worst.
+    Identifies distinct historical drawdown periods and isolates the most severe.
 
-    FIXED H2: Original used `elif val == 0` (exact float equality) to detect
-    recovery. Floating-point arithmetic means the equity curve virtually never
-    returns to EXACTLY the previous peak after a drawdown — so val == 0.0 never
-    fires, in_dd stays True forever, and the entire history becomes one single
-    merged drawdown. The report then shows the same period repeated 3 times.
+    Args:
+        series (pd.Series): The cumulative portfolio value or equity curve.
+        n (int, optional): The maximum number of distinct drawdown periods to return. 
+            Defaults to 3.
 
-    Fix: recovery triggers when dd_curve >= -0.001 (within 0.1% of peak).
-    This matches Bloomberg/FactSet convention for "recovered" drawdown periods.
+    Returns:
+        list: A sequence of dictionaries detailing the depth, start date, 
+            valley date, recovery date, and duration of the worst drawdowns.
     """
     if len(series) < 2:
         return []
@@ -180,7 +254,10 @@ def _get_top_drawdowns(series: pd.Series, n: int = 3) -> list:
     start_d   = None
     min_val   = 0.0
     valley_d  = None
-    RECOVERY_THRESHOLD = -0.001   # Epsilon for recovery detection
+    
+    # Epsilon applied to recovery detection to prevent infinite drawdown states 
+    # caused by floating-point precision mismatches at historical high-water marks.
+    RECOVERY_THRESHOLD = -0.001
 
     for date, val in dd_curve.items():
         if val < RECOVERY_THRESHOLD:
@@ -213,11 +290,21 @@ def _get_top_drawdowns(series: pd.Series, n: int = 3) -> list:
             "days":     (series.index[-1] - start_d).days,
         })
 
-    drawdowns.sort(key=lambda x: x["depth"])   # most negative first
+    # Ascending sort evaluates the most negative (severe) magnitudes first
+    drawdowns.sort(key=lambda x: x["depth"])
     return drawdowns[:n]
 
 def _fetch_spy(start: str, end: str) -> pd.Series | None:
-    """Fetch S&P 500 daily returns. Cached per session."""
+    """
+    Ingests contiguous S&P 500 daily returns for relative performance benchmarking.
+
+    Args:
+        start (str): Boundary inception date mapping.
+        end (str): Boundary termination date mapping.
+
+    Returns:
+        pd.Series | None: Alignable daily percentage returns, or None upon API timeout.
+    """
     key = f"{start}_{end}"
     if key in _SPY_CACHE:
         return _SPY_CACHE[key]
@@ -227,7 +314,8 @@ def _fetch_spy(start: str, end: str) -> pd.Series | None:
                           progress=False, auto_adjust=True)
         if spy.empty:
             return None
-        # Handle yfinance MultiIndex (v0.2+)
+            
+        # Resolves dynamic indexing constraints inherited from modern upstream APIs
         if isinstance(spy.columns, pd.MultiIndex):
             close = spy.xs("Close", level=0, axis=1).iloc[:, 0]
         else:
@@ -238,10 +326,6 @@ def _fetch_spy(start: str, end: str) -> pd.Series | None:
     except Exception:
         return None
 
-
-# ==============================================================================
-# REPORT GENERATOR
-# ==============================================================================
 class QuantitativeManagerReport:
     def __init__(self):
         self.report_date = datetime.now()
@@ -250,21 +334,21 @@ class QuantitativeManagerReport:
     def add_section(self, title: str, content: str):
         self.sections.append((title, content))
 
-    # --------------------------------------------------------------------------
-    # SECTION 1 — SYSTEM HEALTH
-    # --------------------------------------------------------------------------
     def check_data_health(self):
         """
-        Audits the Data Warehouse for staleness and integrity.
+        Audits the Data Warehouse for staleness and structural integrity.
         
-        Methodology:
-        - **Prices**: Samples 5 random tickers to estimate the median last-updated date.
-        - **Fundamentals**: Checks filesystem modification times ($mtime$) of SEC filings.
-        - **Inference**: Verifies that signal generation has run within the last 24h.
+        Evaluates the freshness of OHLCV prices, fundamental statements, and
+        the active generation latency of the production alpha signals.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         lines = []
 
-        # ── Prices ──────────────────────────────────────────────────────────
         price_files = sorted(config.PRICES_DIR.glob("*.csv"))
         if not price_files:
             lines.append("❌ Price Data: No files found.")
@@ -274,7 +358,6 @@ class QuantitativeManagerReport:
             for pf in sample_files:
                 try:
                     tmp = pd.read_csv(pf, nrows=5)
-                    # Defensive: check if date is a column or the index
                     if "date" in tmp.columns:
                         full = pd.read_csv(pf, usecols=["date"],
                                            parse_dates=["date"])
@@ -298,7 +381,6 @@ class QuantitativeManagerReport:
                     f"({lag} trading day(s) old)"
                 )
 
-        # ── Fundamentals ────────────────────────────────────────────────────
         fund_dirs = [d for d in config.FUNDAMENTALS_DIR.glob("*") if d.is_dir()]
         if not fund_dirs:
             lines.append("❌ Fundamentals: No data found.")
@@ -322,24 +404,19 @@ class QuantitativeManagerReport:
             else:
                 lines.append(f"ℹ️  Fundamentals: {len(fund_dirs)} dirs found (no CSV/parquet files inside).")
 
-        # ── Macro / Alt ──────────────────────────────────────────────────────
         macro_files = list(config.ALTERNATIVE_DIR.glob("*.csv"))
         lines.append(f"ℹ️  Macro/Alt Data: {len(macro_files)} indicators available.")
 
-        # ── Daily Inference Freshness (results/predictions) ──────────────────
-        # Check the latest inference output file
         pred_dir = config.RESULTS_DIR / "predictions"
         pred_files = sorted(pred_dir.glob("alpha_signals_*.parquet"))
         
         if pred_files:
             latest_file = pred_files[-1]
-            # Filename format: alpha_signals_YYYY-MM-DD.parquet
             try:
                 date_str = latest_file.stem.replace("alpha_signals_", "")
                 last_signal = datetime.strptime(date_str, "%Y-%m-%d").date()
                 signal_lag = _trading_days_old(last_signal)
                 
-                # Status logic: 0-1 days=OK, >1=Stale (market moved), >5=Critical
                 if signal_lag <= 1:
                     s_status = "✅"
                 elif signal_lag <= 5:
@@ -358,15 +435,18 @@ class QuantitativeManagerReport:
 
         self.add_section("1. System Health & Data Integrity", "\n".join(lines))
 
-    # --------------------------------------------------------------------------
-    # SECTION 2 — FACTOR QUALITY
-    # --------------------------------------------------------------------------
     def analyze_factors(self):
         """
-        Summarizes Alpha Factor efficacy.
+        Summarizes Alpha Factor efficacy and statistical significance.
         
-        Sorting Logic:
-        Primary sort by Mean IC (Signal Strength), secondary by t-stat (Significance).
+        Aggregates factor performance and applies heuristic sorting. The primary
+        ranking relies on Mean IC (Signal Strength) and subsequently the t-statistic.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         report_path = config.RESULTS_DIR / "validation" / "factor_validation_report.csv"
         if not report_path.exists():
@@ -378,7 +458,6 @@ class QuantitativeManagerReport:
 
         df = pd.read_csv(report_path)
 
-        # Summary
         total    = len(df)
         passing  = df[df["status"].str.startswith("PASS")].shape[0]
         warnings = df[df["status"].str.startswith("WARN")].shape[0]
@@ -390,7 +469,6 @@ class QuantitativeManagerReport:
         ]
 
         if "ic_mean" in df.columns:
-            # Robust Ranking: Prioritize signal magnitude, then stability
             ic_std_col = "ic_std" if "ic_std" in df.columns else None
             if ic_std_col and "n_dates" in df.columns:
                 df["_tstat"] = (
@@ -399,7 +477,7 @@ class QuantitativeManagerReport:
                 ).fillna(0)
                 sort_col = "ic_mean"
             elif "icir" in df.columns:
-                df["_tstat"] = df["icir"]   # fallback: use whatever icir is
+                df["_tstat"] = df["icir"]
                 sort_col = "ic_mean"
             else:
                 df["_tstat"] = 0.0
@@ -421,17 +499,18 @@ class QuantitativeManagerReport:
 
         self.add_section("2. Factor Quality Assurance", "\n".join(lines))
 
-    # --------------------------------------------------------------------------
-    # SECTION 3 — MODEL QUALITY
-    # --------------------------------------------------------------------------
     def analyze_models(self):
         """
-        Evaluates Out-of-Sample (OOS) Model Performance.
+        Evaluates Out-of-Sample (OOS) Machine Learning Model Performance.
         
-        Metrics:
-        - **AnnICIR**: Annualized Information Ratio ($ICIR_{daily} \\times \\sqrt{252}$).
-        - **t-stat**: Significance of the IC mean ($> 2.0$ implies $p < 0.05$).
-        - **Tier**: Governance classification (PROD / ENSEMBLE / GATED).
+        Extracts persistent metrics embedded within the pickled model artifacts 
+        and assesses their tiering classification (PROD / ENSEMBLE / GATED).
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         model_dir   = config.MODELS_DIR / "production"
         model_files = list(model_dir.glob("*_latest.pkl"))
@@ -474,7 +553,7 @@ class QuantitativeManagerReport:
                 tstat     = ic / (std / (n_d ** 0.5)) if n_d > 0 else 0.0
                 ann_icir  = (ic / std) * (252 ** 0.5) if std > 0 else 0.0
 
-                # Governance: Mirror gate thresholds from train_models.py
+                # Bind mathematical governance parameters mirroring the configuration file
                 PROD_IC     = getattr(config, "PROD_IC_THRESHOLD",  0.010)
                 PROD_TSTAT  = getattr(config, "PROD_IC_TSTAT",       2.5)
                 ENS_IC      = getattr(config, "MIN_OOS_IC_THRESHOLD", 0.005)
@@ -498,15 +577,18 @@ class QuantitativeManagerReport:
 
         self.add_section("3. Model Robustness", "\n".join(lines))
 
-    # --------------------------------------------------------------------------
-    # SECTION 4 — BACKTEST PERFORMANCE
-    # --------------------------------------------------------------------------
     def analyze_backtests(self):
         """
-        Compares Strategy Performance vs. S&P 500 Benchmark.
+        Compares Strategy Performance against the S&P 500 Benchmark.
         
-        Aggregates key risk/return metrics and provides annual breakdown tables
-        to assess regime sensitivity.
+        Aggregates risk and return metrics, computing excess returns and regime 
+        sensitivity via annual performance breakdowns.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         results_dir  = config.RESULTS_DIR
         backtest_dirs = sorted(results_dir.glob("backtest_*"))
@@ -548,7 +630,6 @@ class QuantitativeManagerReport:
                 s_date  = eq.index[0].strftime("%Y-%m-%d")
                 e_date  = eq.index[-1].strftime("%Y-%m-%d")
 
-                # Benchmark Relative Analysis
                 spy_ret = _fetch_spy(s_date, e_date)
                 if spy_ret is not None:
                     strat_ret = eq.pct_change().dropna()
@@ -573,7 +654,6 @@ class QuantitativeManagerReport:
                     f"{_format_currency(end_val):>12} |"
                 )
 
-                # ── Drawdown Detail ─────────────────────────────────────────
                 top_dds = _get_top_drawdowns(eq, n=3)
                 if top_dds:
                     dd_details.append(
@@ -599,7 +679,6 @@ class QuantitativeManagerReport:
                             f"{rec_str:<10} | {dd['days']:>5} |"
                         )
 
-                # ── Year-by-Year ────────────────────────────────────────────
                 rets = eq.pct_change().dropna()
                 rets.index = pd.to_datetime(rets.index)
                 spy_daily = spy_ret if spy_ret is not None else None
@@ -647,17 +726,19 @@ class QuantitativeManagerReport:
 
         self.add_section("4. Strategy Performance (Backtest)", "\n".join(lines))
 
-    # --------------------------------------------------------------------------
-    # SECTION 5 — CURRENT POSITIONING
-    # --------------------------------------------------------------------------
     def analyze_latest_orders(self):
         """
-        Audits current target portfolio construction.
+        Audits the current target portfolio construction logic.
         
-        Checks:
-        - **Signal Latency**: Ensures orders are derived from recent inference.
-        - **Concentration**: HHI Index to detect lack of diversification.
-        - **Exposure**: Gross/Net leverage ratios.
+        Verifies that orders are derived from timely inferences and assesses 
+        concentration risk using the Herfindahl-Hirschman Index (HHI) alongside 
+        gross/net exposure levels.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         order_path = config.RESULTS_DIR / "orders" / "orders_latest.csv"
 
@@ -671,7 +752,6 @@ class QuantitativeManagerReport:
         df = pd.read_csv(order_path)
         lines = []
 
-        # Latency Guard: Prevent trading on stale signals
         signal_date = None
         if "signal_date" in df.columns:
             signal_date = pd.to_datetime(df["signal_date"].iloc[0]).date()
@@ -697,7 +777,6 @@ class QuantitativeManagerReport:
                         f"✅ Signal Date: {signal_date} ({lag} trading day(s) old)"
                     )
 
-        # Position summary
         longs  = df[df["side"] == "LONG"]  if "side" in df.columns else df
         shorts = df[df["side"] == "SHORT"] if "side" in df.columns else pd.DataFrame()
 
@@ -708,10 +787,10 @@ class QuantitativeManagerReport:
         gross_exp = long_val + abs(short_val)
         net_exp   = long_val - abs(short_val)
 
-        # Herfindahl-Hirschman Index (Concentration)
+        # Evaluate HHI concentration bounds to identify outsized allocations
         if "weight" in df.columns and df["weight"].abs().sum() > 0:
             w   = df["weight"].abs()
-            w_norm = w / w.sum() # Normalize to sum to 1.0 for valid HHI bounds
+            w_norm = w / w.sum() 
             hhi = (w_norm ** 2).sum()
             hhi_str = f"{hhi:.4f}"
             hhi_label = "Concentrated ⚠️" if hhi > 0.10 else "Diversified ✅"
@@ -730,7 +809,6 @@ class QuantitativeManagerReport:
         
         lines.append(f"HHI Concentration: {hhi_str}  {hhi_label}")
 
-        # Top 5 positions
         if "weight" in df.columns:
             lines.append("\nTop 5 Positions:")
             top5 = df.sort_values("weight", ascending=False).head(5)
@@ -749,10 +827,17 @@ class QuantitativeManagerReport:
 
         self.add_section("5. Current Positioning", "\n".join(lines))
 
-    # --------------------------------------------------------------------------
-    # PRINT / SAVE
-    # --------------------------------------------------------------------------
     def print_report(self, output_file: str | None = None):
+        """
+        Renders the aggregated quantitative report to standard output or disk.
+
+        Args:
+            output_file (str | None, optional): Destination file path for the plain 
+                text report. If None, the report is only printed to the console.
+
+        Returns:
+            None
+        """
         output = [
             "=" * 70,
             "  QUANTITATIVE RESEARCH EXECUTIVE SUMMARY",
@@ -778,10 +863,6 @@ class QuantitativeManagerReport:
                 f.write(final_text)
             logger.info(f"Report saved → {path}")
 
-
-# ==============================================================================
-# MAIN
-# ==============================================================================
 def main():
     parser = argparse.ArgumentParser(
         description="Generate Executive Quantitative Report",
@@ -816,7 +897,6 @@ Examples:
     report.analyze_latest_orders()
 
     report.print_report(args.output_file)
-
 
 if __name__ == "__main__":
     main()

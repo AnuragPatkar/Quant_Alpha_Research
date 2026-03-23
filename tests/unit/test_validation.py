@@ -1,8 +1,26 @@
 """
-UNIT TEST: Factor Validation Logic
-==================================
-Tests the FactorValidator class logic in scripts/validate_factors.py.
-Verifies IC calculation, t-stats, and autocorrelation without script imports.
+Factor Validation Logic and Statistical Efficacy Tests
+======================================================
+Unit testing suite for the platform's core statistical factor evaluation engines.
+
+Purpose
+-------
+This module replicates and verifies the mathematical logic embedded within the 
+`FactorValidator` without relying on dynamic script imports. It rigorously tests 
+Information Coefficient (IC) generation, t-statistic boundaries, autocorrelation 
+decay, and sector-neutral residualization.
+
+Role in Quantitative Workflow
+-----------------------------
+Guarantees that the fundamental statistical scoring metrics defining alpha 
+quality are operating deterministically and mathematically soundly before any 
+features are passed to the machine learning ensemble.
+
+Dependencies
+------------
+- **Pytest**: Test execution framework.
+- **Pandas/NumPy**: Synthetic feature generation and mathematical bounds testing.
+- **SciPy (spearmanr)**: Foundational nonparametric rank correlation engine.
 """
 
 import sys
@@ -16,54 +34,67 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# ---------------------------------------------------------------------------
-# FactorValidator Logic (Replicated from scripts/validate_factors.py)
-# ---------------------------------------------------------------------------
-
 class FactorValidatorLogic:
     """
-    Replicates core logic from FactorValidator without importing the script.
-    This allows testing the statistical methods without scipy reload issues.
+    Standalone validation engine replicating production `FactorValidator` logic.
+    
+    Provides isolated evaluation of statistical methods without encountering 
+    circular imports or dynamic namespace reloading constraints present in 
+    integration boundaries.
     """
     
     def __init__(self, df, target_col="raw_ret_5d"):
+        """
+        Initializes the validation state matrix and evaluates structural prerequisites.
+
+        Args:
+            df (pd.DataFrame): Aggregated master dataset containing feature histories.
+            target_col (str, optional): The independent variable targeted for prediction. Defaults to "raw_ret_5d".
+        """
         self.df = df
         self.target_col = target_col
         
-        # Identify factors (numeric columns excluding metadata)
+        # Identifies feature subsets bypassing explicit metadata constraints
         exclude = {"date", "ticker", "sector", target_col}
         self.factors = [col for col in df.columns 
                        if df[col].dtype in [np.float64, np.float32, int] 
                        and col not in exclude]
     
-    # Replace the compute_ic_stats method in FactorValidatorLogic class:
-
     def compute_ic_stats(self):
-        """Compute Information Coefficient (IC) statistics."""
+        """
+        Computes Information Coefficient (IC) and t-statistic boundaries.
+
+        Evaluates nonparametric rank correlation ($\rho_s$) across features and 
+        applies strict error handling for perfectly correlated or zero-variance 
+        target regimes.
+
+        Args:
+            None
+
+        Returns:
+            pd.DataFrame: A matrix of calculated statistics including IC mean, 
+                t-stat, and p-value.
+        """
         if self.df.empty or self.target_col not in self.df.columns:
             return pd.DataFrame()
         
         stats = []
         for factor in self.factors:
-            # Clean data: drop NaN and Inf
             clean = self.df[[factor, self.target_col]].replace([np.inf, -np.inf], np.nan).dropna()
             
             if len(clean) < 2:
                 continue
             
-            # Spearman rank correlation (IC)
             ic, p_val = spearmanr(clean[factor], clean[self.target_col])
             
-            # t-statistic: t = ic * sqrt(n-2) / sqrt(1 - ic^2)
             n = len(clean)
             
-            # Handle near-perfect correlation (ic very close to ±1)
             ic_squared = ic ** 2
             numerator = abs(ic) * np.sqrt(n - 2)
             
-            if ic_squared >= 0.9999:  # Very close to ±1
-                # For near-perfect correlation, use large t-stat
-                t_stat = numerator / np.sqrt(1e-4)  # Avoid division by zero
+            # Stabilizes t-statistic calculation avoiding DivisionByZero bounds during perfect correlations
+            if ic_squared >= 0.9999:  
+                t_stat = numerator / np.sqrt(1e-4)  
             else:
                 denominator = np.sqrt(1 - ic_squared + 1e-10)
                 t_stat = numerator / denominator
@@ -78,7 +109,18 @@ class FactorValidatorLogic:
         return pd.DataFrame(stats).set_index("factor") if stats else pd.DataFrame()
     
     def compute_autocorrelation(self):
-        """Compute AR(1) autocorrelation for each factor."""
+        """
+        Quantifies AR(1) signal stability parameters universally across execution arrays.
+
+        Calculates the one-period lagged correlation matrix to explicitly identify 
+        structural turnover boundaries and signal degradation speed.
+
+        Args:
+            None
+
+        Returns:
+            pd.DataFrame: A matrix of calculated day-over-day turnover estimations.
+        """
         ac_list = []
         
         for factor in self.factors:
@@ -88,7 +130,6 @@ class FactorValidatorLogic:
                 ac_list.append({"factor": factor, "autocorr": np.nan})
                 continue
             
-            # AR(1): correlation between x[t] and x[t-1]
             x_t = clean.values[1:]
             x_t_minus_1 = clean.values[:-1]
             
@@ -98,7 +139,15 @@ class FactorValidatorLogic:
         return pd.DataFrame(ac_list).set_index("factor")
     
     def check_coverage(self):
-        """Check data quality: NaN, Inf, and coverage percentage."""
+        """
+        Computes vectorized sparsity arrays evaluating null boundaries globally.
+
+        Args:
+            None
+
+        Returns:
+            pd.DataFrame: Metric distributions capturing structural feature voids.
+        """
         coverage_list = []
         
         for factor in self.factors:
@@ -123,8 +172,17 @@ class FactorValidatorLogic:
     
     def compute_ic_decay(self, factors):
         """
-        Compute IC at different lags to measure signal decay.
-        Returns IC at lag 1, lag 5, etc.
+        Computes Information Coefficient measurements across specific target lags.
+
+        Identifies the half-life and alpha turnover boundaries for candidate
+        signals evaluated dynamically against structural T+1 and T+5 constraints.
+
+        Args:
+            factors (list[str]): Extracted target array identifiers.
+
+        Returns:
+            pd.DataFrame: Temporally scaled coefficient observations mapped 
+                across specified delays.
         """
         decay_list = []
         
@@ -138,11 +196,9 @@ class FactorValidatorLogic:
                 decay_list.append({"factor": factor, "ic_lag1": np.nan, "ic_lag5": np.nan})
                 continue
             
-            # Lag-1 IC
             ic_lag1, _ = spearmanr(clean_df[factor].iloc[:-1].values, 
                                    clean_df[self.target_col].iloc[1:].values)
             
-            # Lag-5 IC
             ic_lag5, _ = spearmanr(clean_df[factor].iloc[:-5].values, 
                                    clean_df[self.target_col].iloc[5:].values) if len(clean_df) >= 6 else (np.nan, np.nan)
             
@@ -156,11 +212,19 @@ class FactorValidatorLogic:
     
     def compute_sector_neutral_ic(self):
         """
-        Compute sector-neutral IC using residualization.
-        Remove sector beta from factor before computing IC.
+        Derives isolated cross-sectional Alpha by applying sector-level residualization.
+
+        Forces an orthogonal constraint projecting feature vectors entirely outside 
+        the sector correlation subspace via OLS execution, allowing calculation 
+        of a true sector-neutral Information Coefficient.
+
+        Args:
+            None
+
+        Returns:
+            pd.DataFrame: A matrix mapping purely idiosyncratic alpha properties.
         """
         if "sector" not in self.df.columns:
-            # No sector data, return regular IC
             return self.compute_ic_stats()
         
         stats = []
@@ -171,14 +235,11 @@ class FactorValidatorLogic:
             if len(clean) < 3:
                 continue
             
-            # Get sector dummies
             sector_dummies = pd.get_dummies(clean["sector"], drop_first=True)
             
-            # Regress factor on sectors to get residuals
             X = sector_dummies.values
             y = clean[factor].values
             
-            # Simple OLS: residuals = y - X @ (X.T @ X)^-1 @ X.T @ y
             try:
                 XtX_inv = np.linalg.pinv(X.T @ X)
                 beta = XtX_inv @ X.T @ y
@@ -186,7 +247,6 @@ class FactorValidatorLogic:
             except:
                 factor_residuals = y
             
-            # IC on residualized factor
             ic_resid, _ = spearmanr(factor_residuals, clean[self.target_col].values)
             
             stats.append({
@@ -196,18 +256,26 @@ class FactorValidatorLogic:
         
         return pd.DataFrame(stats).set_index("factor") if stats else pd.DataFrame()
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
 class TestFactorValidator:
+    """
+    Verification suite for isolated mathematical execution bounds.
+    """
     
     @pytest.fixture
     def dummy_data(self):
-        """Create synthetic data with a known good factor."""
+        """
+        Creates a discrete synthetic dataset containing deterministic alpha vectors.
+
+        Args:
+            None
+
+        Returns:
+            pd.DataFrame: A mapped sequence isolating strongly correlated logic patterns
+                against structural noise.
+        """
         dates = pd.date_range("2023-01-01", periods=50)
         
-        # Ticker A: Positive signal, Positive return
+        # Asserts structural continuous trend behavior bounded positively
         df_a = pd.DataFrame({
             "date": dates,
             "ticker": "A",
@@ -216,7 +284,7 @@ class TestFactorValidator:
             "raw_ret_5d": 0.05
         })
         
-        # Ticker B: Negative signal, Negative return (Perfect Rank Correlation)
+        # Asserts strictly mirrored execution bounds ensuring uniform symmetric distributions
         df_b = pd.DataFrame({
             "date": dates,
             "ticker": "B",
@@ -228,7 +296,15 @@ class TestFactorValidator:
         return pd.concat([df_a, df_b]).sort_values("date").reset_index(drop=True)
 
     def test_identify_factors(self, dummy_data):
-        """Should ignore metadata columns and pick numeric factors."""
+        """
+        Asserts metadata bypassing during target variable classification lists.
+
+        Args:
+            dummy_data (pd.DataFrame): The synthetic structural mapping.
+
+        Returns:
+            None
+        """
         validator = FactorValidatorLogic(dummy_data)
         
         assert "good_factor" in validator.factors
@@ -238,7 +314,15 @@ class TestFactorValidator:
         assert "raw_ret_5d" not in validator.factors
 
     def test_ic_calculation(self, dummy_data):
-        """Verify IC calculation for a perfect factor."""
+        """
+        Evaluates deterministic boundaries accurately predicting near-perfect signals.
+
+        Args:
+            dummy_data (pd.DataFrame): The synthetic structural mapping.
+
+        Returns:
+            None
+        """
         validator = FactorValidatorLogic(dummy_data, target_col="raw_ret_5d")
         stats = validator.compute_ic_stats()
         
@@ -250,8 +334,15 @@ class TestFactorValidator:
         assert abs(noise["ic_mean"]) < 0.3
 
     def test_autocorrelation(self, dummy_data):
-        """Verify AR(1) calculation."""
-        # Create a factor with high autocorrelation
+        """
+        Verifies localized persistence and signal velocity degradation measurements.
+
+        Args:
+            dummy_data (pd.DataFrame): The synthetic structural mapping.
+
+        Returns:
+            None
+        """
         dummy_data["trend"] = np.linspace(0, 10, len(dummy_data))
         validator = FactorValidatorLogic(dummy_data)
         ac = validator.compute_autocorrelation()
@@ -260,7 +351,15 @@ class TestFactorValidator:
         assert abs(ac.loc["noise_factor", "autocorr"]) < 0.5
 
     def test_check_coverage(self, dummy_data):
-        """Verify coverage statistics calculation."""
+        """
+        Asserts mathematical bounds handling when parsing absolute systemic structural defects.
+
+        Args:
+            dummy_data (pd.DataFrame): The synthetic structural mapping.
+
+        Returns:
+            None
+        """
         df = dummy_data.copy()
         df.loc[0, "good_factor"] = np.nan
         df.loc[1, "good_factor"] = np.inf
@@ -274,7 +373,15 @@ class TestFactorValidator:
         assert coverage.loc["good_factor", "coverage_pct"] < 1.0
 
     def test_ic_decay(self, dummy_data):
-        """Verify IC decay calculation."""
+        """
+        Assures temporal execution structures effectively map delayed rank observations.
+
+        Args:
+            dummy_data (pd.DataFrame): The synthetic structural mapping.
+
+        Returns:
+            None
+        """
         validator = FactorValidatorLogic(dummy_data, target_col="raw_ret_5d")
         decay = validator.compute_ic_decay(["good_factor", "noise_factor"])
         
@@ -285,24 +392,29 @@ class TestFactorValidator:
 
     def test_sector_neutral_ic_simpsons_paradox(self):
         """
-        Institutional Check: Verify Sector-Neutral IC logic.
-        Simpson's Paradox scenario:
-          - Global correlation is Positive
-          - Intra-sector correlation is Negative
-        
-        SN-IC should decouple the alpha from the sector bet.
+        Institutional Verification: Asserts robust execution resolving Simpson's Paradox.
+
+        Evaluates a mathematical regime wherein the universal distribution exhibits 
+        positive correlation, yet the discrete sub-domain matrices explicitly 
+        demonstrate negative behavior. The sector-neutral execution logic must 
+        successfully detach the macro-sector bias and exclusively return the isolated 
+        negative alpha coefficient.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         dates = pd.date_range("2023-01-01", periods=10)
         data = []
         
         for d in dates:
-            # Sector S1: High Factor, Higher Return (Global +)
-            # Within S1: Higher Factor (2.0) -> Lower Return (0.04) vs (1.0 -> 0.05)
+            # Sub-Domain A: Aggregated Global Positivity encapsulating a localized Negative Drift
             data.append({"date": d, "ticker": "A1", "sector": "S1", "f": 1.0, "t": 0.05})
             data.append({"date": d, "ticker": "A2", "sector": "S1", "f": 2.0, "t": 0.04})
             
-            # Sector S2: Low Factor, Lower Return (Global +)
-            # Within S2: Higher Factor (-1.0) -> Lower Return (-0.05) vs (-2.0 -> -0.04)
+            # Sub-Domain B: Equivalent continuous trend replication offset structurally
             data.append({"date": d, "ticker": "B1", "sector": "S2", "f": -2.0, "t": -0.04})
             data.append({"date": d, "ticker": "B2", "sector": "S2", "f": -1.0, "t": -0.05})
         
@@ -310,12 +422,12 @@ class TestFactorValidator:
         
         validator = FactorValidatorLogic(df, target_col="t")
         
-        # Raw IC (should be positive due to sector bet)
+        # Asserts un-neutralized baseline evaluates strictly positively reflecting aggregate macro drift
         raw_stats = validator.compute_ic_stats()
         raw_ic = raw_stats.loc["f", "ic_mean"]
         assert raw_ic > 0.5, f"Raw IC should be positive (Sector Bet), got {raw_ic}"
         
-        # Sector-neutral IC (should be negative, alpha is negative intra-sector)
+        # Asserts fully neutralized matrices accurately extract the idiosyncratic localized divergence
         sn_stats = validator.compute_sector_neutral_ic()
         if not sn_stats.empty:
             sn_ic = sn_stats.loc["f", "sn_icir"]

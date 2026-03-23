@@ -18,8 +18,8 @@ influence capital allocation. Key responsibilities include:
 4.  **Staleness Monitoring**: Ensuring the live signal cache
     (`ensemble_predictions.parquet`) remains within the valid look-forward window.
 
-Usage
------
+Role in Quantitative Workflow
+-----------------------------
 Executed via the CLI or triggered by the CI/CD pipeline.
 
 .. code-block:: bash
@@ -58,7 +58,6 @@ import numpy as np
 from datetime import datetime
 from pathlib import Path
 
-# --- Project Setup ---
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
@@ -102,10 +101,7 @@ try:
 except Exception:
     pass   # Defensive: joblib.load() try/except block handles failure gracefully
 
-
-# ==============================================================================
-# GATE THRESHOLDS — read from config (set by train_models.py)
-# ==============================================================================
+# Static bindings for algorithmic promotion thresholds
 _PROD_IC_THRESHOLD  = getattr(config, "PROD_IC_THRESHOLD",    0.010)
 _PROD_IC_TSTAT      = getattr(config, "PROD_IC_TSTAT",         2.5)
 _ENS_IC_THRESHOLD   = getattr(config, "MIN_OOS_IC_THRESHOLD",  0.005)
@@ -119,6 +115,14 @@ def _gate_tier(ic: float, ic_std: float, n_dates: int) -> str:
     Statistical Significance ($t$-test):
     .. math::
         t = \\frac{\\mu_{IC}}{\\sigma_{IC} / \sqrt{N}}
+
+    Args:
+        ic (float): The mean out-of-sample Information Coefficient.
+        ic_std (float): The standard deviation of the daily Information Coefficient.
+        n_dates (int): The number of unique trading days in the out-of-sample period.
+
+    Returns:
+        str: The deployment tier classification ('✅ PROD', '🟡 ENSEMBLE', or '❌ GATED').
     """
     tstat = ic / (ic_std / (n_dates ** 0.5)) if n_dates > 0 and ic_std > 0 else 0.0
     if ic >= _PROD_IC_THRESHOLD and tstat >= _PROD_IC_TSTAT:
@@ -131,9 +135,15 @@ def _gate_tier(ic: float, ic_std: float, n_dates: int) -> str:
 def _prediction_cache_age() -> tuple[str | None, int | None]:
     """
     Audits the temporal freshness of the active signal cache (`ensemble_predictions.parquet`).
+    
     Crucial for preventing Look-Ahead Bias by ensuring signals are actionable.
 
-    Returns: (last_signal_date_str, trading_days_latency_count)
+    Args:
+        None
+
+    Returns:
+        tuple[str | None, int | None]: A tuple containing the last signal date as a string 
+            and the number of trading days elapsed. Returns (None, None) upon missing cache.
     """
     cache_path = config.CACHE_DIR / "ensemble_predictions.parquet"
     if not cache_path.exists():
@@ -153,11 +163,16 @@ def _build_dummy_df(features: list, n_rows: int = 50, seed: int = 42) -> pd.Data
     """
     Generates a synthetic DataFrame for Fuzz Testing the inference engine.
 
-    Methodology:
-    - **Categorical Features**: Populated with "Unknown" to test pipeline resilience to missing categories.
-    - **Numerical Features**: Populated with Gaussian noise ($N(0,1)$) to verify computation stability.
-    
     Used to detect schema mismatches or serialization corruption before production load.
+
+    Args:
+        features (list): The list of feature column names expected by the model.
+        n_rows (int, optional): The number of synthetic rows to generate. Defaults to 50.
+        seed (int, optional): Random seed for reproducibility. Defaults to 42.
+
+    Returns:
+        pd.DataFrame: A synthetic dataset populated with Gaussian noise for numericals 
+            and "Unknown" for categoricals to test pipeline resilience.
     """
     KNOWN_CATS = {
         "sector", "industry", "ticker", "exchange",
@@ -177,17 +192,11 @@ def _build_dummy_df(features: list, n_rows: int = 50, seed: int = 42) -> pd.Data
 
     return pd.DataFrame(data)
 
-
-# ==============================================================================
-# DEPLOYMENT MANAGER
-# ==============================================================================
 class DeploymentManager:
     def __init__(self):
         self.prod_dir    = config.MODELS_DIR / "production"
         self.archive_dir = config.MODELS_DIR / "archive"
-    # --------------------------------------------------------------------------
-    # HEALTH CHECK
-    # --------------------------------------------------------------------------
+        
     def verify_deployment(self) -> bool:
         """
         Executes a comprehensive Health Check (Smoke Test) on production artifacts.
@@ -201,6 +210,9 @@ class DeploymentManager:
         4.  **Variance Constraint**: Asserts prediction variance $\\sigma^2_{pred} > \\epsilon$
             to detect model collapse (constant output) or gradient explosion.
 
+        Args:
+            None
+
         Returns:
             bool: True if all systems are nominal, False otherwise.
         """
@@ -209,7 +221,6 @@ class DeploymentManager:
             logger.error("[CHECK] ❌ No models found in production directory.")
             return False
 
-        # 1. Latency Audit
         sig_date, sig_age = _prediction_cache_age()
         if sig_date is None:
             logger.warning(
@@ -237,7 +248,6 @@ class DeploymentManager:
         for model_path in sorted(models):
             name = model_path.stem.replace("_latest", "").capitalize()
             try:
-                # 2. Artifact Integrity Check
                 try:
                     payload = joblib.load(model_path)
                 except AttributeError as exc:
@@ -258,7 +268,7 @@ class DeploymentManager:
                 trained_to = payload.get("trained_to", "Unknown")
                 metrics    = payload.get("oos_metrics", {})
 
-                # QA Statistics: Extract OOS performance metrics
+                # Extract OOS metrics to ensure mathematical continuity during promotion
                 ic      = metrics.get("ic_mean",  0.0)
                 ic_std  = metrics.get("ic_std",   1e-8)
                 n_dates = metrics.get("n_dates",  1)
@@ -266,7 +276,7 @@ class DeploymentManager:
                 ann_icir = (ic / ic_std) * (252 ** 0.5) if ic_std > 0 else 0.0
                 tier     = _gate_tier(ic, ic_std, n_dates)
 
-                # 3. Inference Stability & Variance Check
+                # Evaluate inference stability to prevent deployment of collapsed models
                 smoke_ok  = True
                 smoke_msg = "No features stored — inference test skipped."
                 if features:
@@ -275,7 +285,6 @@ class DeploymentManager:
                         preds = model.predict(dummy)
                         preds = np.asarray(preds, dtype=float)
 
-                        # Variance Constraint: Detect trivial/collapsed models
                         pred_std = float(np.std(preds))
                         if pred_std < 1e-6:
                             smoke_ok  = False
@@ -313,18 +322,17 @@ class DeploymentManager:
         )
         return all_ok
 
-    # --------------------------------------------------------------------------
-    # ARCHIVE
-    # --------------------------------------------------------------------------
     def archive_current_models(self) -> Path | None:
         """
         Creates an immutable snapshot of current production artifacts.
 
-        Governance:
         Generates a `manifest.json` to provide a regulatory audit trail, recording:
         - Model performance metrics ($IC$, $t$-stat).
         - Feature usage and training cutoff dates.
         - Signal cache latency at the time of archival.
+
+        Args:
+            None
 
         Returns:
             Path: The directory of the created archive, or None if empty.
@@ -348,7 +356,7 @@ class DeploymentManager:
             "models":         [],
         }
 
-        sig_date, sig_age = _prediction_cache_age()  # Log signal age at time of archival
+        sig_date, sig_age = _prediction_cache_age()
         manifest["signal_cache"] = {
             "last_date":        sig_date,
             "trading_days_old": sig_age,
@@ -359,7 +367,7 @@ class DeploymentManager:
             try:
                 shutil.copy2(model_path, snapshot_dir)
 
-                # Metadata Extraction: Enrich manifest with performance stats
+                # Persist statistical telemetry to the manifest for compliance auditing
                 payload = joblib.load(snapshot_dir / model_path.name)
                 metrics = payload.get("oos_metrics", {})
                 features = payload.get("feature_names", [])
@@ -382,7 +390,6 @@ class DeploymentManager:
                 })
                 logger.info(f"   Archived: {model_path.name}")
             except AttributeError:
-                # Custom objective pickle issue — still copy the file, just no metrics
                 entry["status"] = "copied_no_metrics (custom objective unpickle failed)"
                 logger.warning(f"   Archived {model_path.name} (could not read metrics).")
             except Exception as exc:
@@ -391,7 +398,6 @@ class DeploymentManager:
 
             manifest["models"].append(entry)
 
-        # Write manifest
         manifest_path = snapshot_dir / "manifest.json"
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2, default=str)
@@ -399,20 +405,21 @@ class DeploymentManager:
         logger.info("[ARCHIVE] Archive complete.")
         return snapshot_dir
 
-    # --------------------------------------------------------------------------
-    # PRUNE
-    # --------------------------------------------------------------------------
     def prune_archives(self, keep_last: int = 5, dry_run: bool = False) -> None:
         """
         Enforces the Archive Retention Policy to mitigate storage exhaustion.
 
-        Strategy:
-        - Retains the `keep_last` most recent archives.
-        - Sorting relies on filesystem modification time (`st_mtime`) rather than
-          naming conventions, ensuring robustness against non-standard directory names.
-        - Provides capacity alerts if total archive size exceeds 5GB.
+        Relies on filesystem modification time (st_mtime) to identify and purge 
+        legacy model snapshots, providing capacity alerts if storage remains constrained.
+
+        Args:
+            keep_last (int, optional): The number of recent archives to retain. Defaults to 5.
+            dry_run (bool, optional): If True, simulates the pruning process without deleting 
+                any files. Defaults to False.
+
+        Returns:
+            None
         """
-        # Sorting: modification time ($mtime$) provides reliable chronological ordering
         archives = sorted(
             [d for d in self.archive_dir.iterdir() if d.is_dir()],
             key=lambda d: d.stat().st_mtime
@@ -469,18 +476,25 @@ class DeploymentManager:
 
         logger.info(f"[PRUNE] {action} {freed_mb:.0f} MB. Remaining: {remaining_mb:.0f} MB")
 
-        # Capacity Alert: Pre-emptive warning for filesystem constraints
         if remaining_mb > 5_000:
             logger.warning(
                 f"[PRUNE] ⚠️  Archive folder is {remaining_mb/1000:.1f} GB. "
                 "Consider reducing --keep or moving archives to cold storage."
             )
 
-
-# ==============================================================================
-# MAIN
-# ==============================================================================
 def main():
+    """
+    Primary execution routine for the deployment manager.
+
+    Parses command-line arguments to orchestrate health checks, artifact archival, 
+    and filesystem pruning.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser(
         description="Production Model Deployment Manager",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -518,10 +532,6 @@ Examples:
     manager = DeploymentManager()
 
     if args.all:
-        # Lifecycle Sequence:
-        # 1. Check (Read-Only) - Verify state before state mutation.
-        # 2. Archive (Write)   - Safe persistence.
-        # 3. Prune (Delete)    - Cleanup only after successful archive.
         logger.info("[ALL] Step 1/3 — Health Check")
         healthy = manager.verify_deployment()
         if not healthy:

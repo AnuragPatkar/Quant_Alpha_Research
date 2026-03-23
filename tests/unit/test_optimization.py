@@ -1,34 +1,26 @@
-"""
-UNIT TEST: Portfolio Optimization — Full Suite
-===============================================
-Covers ALL six optimization methods exposed by PortfolioAllocator:
-  1. Mean-Variance        (MeanVarianceOptimizer)
-  2. Risk Parity          (RiskParityOptimizer)
-  3. Kelly Criterion      (KellyCriterion)
-  4. Black-Litterman      (BlackLittermanModel)
-  5. PortfolioConstraints (constraint enforcement layer)
-  6. PortfolioAllocator   (facade / routing / fallback logic)
+r"""
+Portfolio Optimization Validation Suite
+=======================================
+Validates the mathematical convergence and allocation boundaries of portfolio optimizers.
 
-Design principles
-─────────────────
-• Every test is self-contained and uses only pytest fixtures.
-• Mathematical assertions carry a derivation comment so the expected value
-  can be verified by hand without running the code.
-• Tolerances match solver numerical precision: abs=1e-4 for portfolio-level
-  checks, rtol=0.15 for MRC equality.
-• Fallback behaviour (Equal Weight) is tested explicitly.
-• All edge cases that crash real systems are covered: singular covariance,
-  NaN inputs, single asset, empty input, missing market caps, rf=0.
+Purpose
+-------
+This module provides exhaustive unit tests for the platform's portfolio construction
+algorithms, including Mean-Variance, Risk Parity, Kelly Criterion, and Black-Litterman.
+It enforces strict checks on simplex constraints, long-only boundaries, and covariance
+scaling to ensure solvers output numerically stable, fully-invested allocations.
 
-Bug catalogue carried forward
-──────────────────────────────
-  BUG-04    : Long-only tolerance tightened to -1e-8.
-  BUG-MV-01 : ECOS fallback chain (ECOS→SCS→CLARABEL).
-  BUG-MV-02/03: dynamic_max_w override removed.
-  BUG-RP-01 : Spinu log-barrier replaces SLSQP squared-deviation.
-  BUG-T-01  : explicit max_weight=1.0 + 5-pp margin assertion.
-  BUG-T-02  : port_sharpe lower-bound 0.70 (solver-agnostic).
-  BUG-T-03  : MRC rtol relaxed to 0.15.
+Role in Quantitative Workflow
+-----------------------------
+Acts as the final safeguard before target weights are converted into discrete orders.
+Ensures that optimization algorithms gracefully handle edge cases (e.g., singular
+covariance matrices, missing capitalizations) without triggering execution halts.
+
+Dependencies
+------------
+- **Pytest**: Orchestration of isolated test cases and data fixtures.
+- **NumPy/Pandas**: Synthesis of localized covariance and return matrices.
+- **Unittest.Mock**: API degradation simulation.
 """
 
 import pytest
@@ -48,41 +40,47 @@ from quant_alpha.optimization.risk_parity import RiskParityOptimizer
 from quant_alpha.optimization.kelly_criterion import KellyCriterion
 from quant_alpha.optimization.black_litterman import BlackLittermanModel
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Shared fixtures
-# ══════════════════════════════════════════════════════════════════════════════
-
 @pytest.fixture(scope="module")
 def market_data():
-    """
-    Synthetic 3-asset universe used across all method tests.
+    r"""
+    Provisions a localized 3-asset market environment to test capital allocation bounds.
 
-    Asset │  E[r]  │  Vol      │  Notes
-    ──────┼────────┼───────────┼─────────────────────────────────
-      A   │  0.15  │  0.200    │  High-return, low-vol  (alpha)
-      B   │  0.02  │  0.300    │  Low-return,  high-vol (junk)
-      C   │  0.08  │  ~0.245   │  Moderate return & vol (market)
+    Assets:
+    - **A**: High-return, low-volatility (Alpha generator). Block-diagonal covariance.
+    - **B**: Low-return, high-volatility (Junk asset).
+    - **C**: Moderate return and volatility (Market baseline).
 
-    Covariance: A is block-diagonal (zero covariance with B and C).
-    B and C share off-diagonal covariance 0.04.
+    Args:
+        None
+
+    Returns:
+        tuple: A 2-element tuple containing:
+            - pd.Series: The expected annualized returns ($\mu$).
+            - pd.DataFrame: The $3 \times 3$ Covariance matrix ($\Sigma$).
     """
     tickers = ["A", "B", "C"]
     mu = pd.Series([0.15, 0.02, 0.08], index=tickers)
     cov_data = [
-        [0.04, 0.00, 0.00],   # A: sqrt(0.04) = 0.200
-        [0.00, 0.09, 0.04],   # B: sqrt(0.09) = 0.300
-        [0.00, 0.04, 0.06],   # C: sqrt(0.06) ~= 0.245
+        [0.04, 0.00, 0.00],   
+        [0.00, 0.09, 0.04],   
+        [0.00, 0.04, 0.06],   
     ]
     cov = pd.DataFrame(cov_data, index=tickers, columns=tickers)
     return mu, cov
 
-
 @pytest.fixture(scope="module")
 def large_market_data():
     """
-    10-asset universe for scalability tests.
-    S0 is the worst (E[r]=0.01), S9 is the best (E[r]=0.19).
+    Generates a 10-asset universe to evaluate matrix scaling and numerical stability.
+
+    Constructs linearly increasing expected returns bound to a positive semi-definite 
+    covariance matrix derived via $A^T A$.
+
+    Args:
+        None
+
+    Returns:
+        tuple: A 2-element tuple containing the expected returns and covariance matrix.
     """
     np.random.seed(0)
     n = 10
@@ -93,50 +91,82 @@ def large_market_data():
     cov = pd.DataFrame(cov_raw, index=tickers, columns=tickers)
     return mu, cov
 
-
 def _w(weights_dict, index):
-    """Convert {ticker: weight} dict to pd.Series aligned to index."""
+    """
+    Transforms a dictionary of allocations into a strictly aligned pandas Series.
+
+    Args:
+        weights_dict (dict): Optimization output mapping tickers to float weights.
+        index (pd.Index): The target index for structural alignment.
+
+    Returns:
+        pd.Series: A dimensionally verified series, filling missing allocations with 0.0.
+    """
     return pd.Series(weights_dict).reindex(index).fillna(0.0)
 
-
 def _assert_valid_portfolio(weights: pd.Series, *, tol: float = 1e-4):
-    """Assert fully-invested and long-only — reused in every method test."""
+    """
+    Asserts foundational simplex boundaries governing long-only portfolios.
+
+    Args:
+        weights (pd.Series): The generated allocation weights.
+        tol (float, optional): The absolute floating-point tolerance for unity summation. 
+            Defaults to 1e-4.
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If weights do not sum to 1.0 or if negative allocations breach epsilon.
+    """
     assert weights.sum() == pytest.approx(1.0, abs=tol), (
         f"Weights sum to {weights.sum():.6f}, expected 1.0"
     )
-    assert (weights >= -1e-8).all(), (  # BUG-04: tightened from -1e-6
+    # Enforces strictly negative limits down to -1e-8 to allow for negligible solver artifacts
+    assert (weights >= -1e-8).all(), (  
         f"Long-only violated: {weights[weights < -1e-8].to_dict()}"
     )
-
 
 def _compute_port_vol(
     allocator: PortfolioAllocator,
     mu: pd.Series,
     cov: pd.DataFrame,
 ) -> float:
-    """Return portfolio volatility for a given allocator + market data."""
+    """
+    Calculates expected portfolio volatility for a specific allocator configuration.
+
+    Args:
+        allocator (PortfolioAllocator): The instantiated configuration orchestrator.
+        mu (pd.Series): Expected return matrix.
+        cov (pd.DataFrame): Asset covariance matrix.
+
+    Returns:
+        float: The expected annualized standard deviation of the constructed portfolio.
+    """
     weights = _w(
         allocator.allocate(mu.to_dict(), cov, constraints={"max_weight": 1.0}),
         mu.index,
     )
     return float(np.sqrt(weights.dot(cov).dot(weights)))
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 1. Mean-Variance Optimization
-# ══════════════════════════════════════════════════════════════════════════════
-
 class TestMeanVariance:
-    """Tests for MeanVarianceOptimizer and the 'mean_variance' allocator route."""
+    """
+    Validation suite for standard Markowitz Quadratic Programming formulations.
+    """
 
     def test_dominant_asset_gets_max_weight(self, market_data):
         """
-        Asset A: E[r]=0.15, vol=0.20  →  Sharpe = 0.75  (dominates B and C).
-        With risk_aversion=5 and max_weight=1.0 (uncapped), w_A must exceed
-        w_C by at least 5 percentage points.
+        Validates that alpha-dominant assets naturally capture execution limits.
 
-        BUG-T-01: pass max_weight=1.0 explicitly so _resolve_max_weight cannot
-        impose an artificial 1/n cap that forces equal weights.
+        Asserts that an asset exhibiting a superior structural Sharpe Ratio mathematically 
+        dominates the optimized weight vector. Explicitly overriding `max_weight=1.0` 
+        prevents artificial cardinality caps from forcing equal distribution.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         weights = _w(
@@ -148,13 +178,22 @@ class TestMeanVariance:
 
         _assert_valid_portfolio(weights)
         assert weights["A"] > weights["B"], "A should dominate junk asset B"
-        assert weights["A"] > weights["C"] + 0.05, (  # BUG-T-01: 5-pp margin
+        # Enforces a minimum 5-percentage-point margin to definitively prove optimization hierarchy
+        assert weights["A"] > weights["C"] + 0.05, (  
             f"A ({weights['A']:.4f}) did not dominate C ({weights['C']:.4f}) by ≥5pp"
         )
         assert weights["B"] < 0.10, "Junk asset B should have near-zero weight"
 
     def test_max_weight_constraint_respected(self, market_data):
-        """max_weight=0.40: every asset must be ≤ 0.40 after optimization."""
+        """
+        Validates the strict enforcement of absolute concentration ceilings.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
+        """
         mu, cov = market_data
         weights = _w(
             PortfolioAllocator(method="mean_variance").allocate(
@@ -168,14 +207,19 @@ class TestMeanVariance:
         )
 
     def test_max_sharpe_portfolio_exceeds_lower_bound(self, market_data):
-        """
-        solve_max_sharpe must find Sharpe ≥ 0.70.
+        r"""
+        Evaluates the solver's ability to approximate the global Sharpe optimum via SOCP.
 
-        Derivation: Asset A alone → Sharpe = 0.15 / sqrt(0.04) = 0.75.
-        A correct solver concentrates on A; 0.70 is a robust solver-agnostic bound.
+        Mathematical derivation confirms Asset A produces an isolated Sharpe of 0.75. 
+        The optimizer must successfully linearize the objective space via the 
+        Charnes-Cooper transformation to cross the 0.70 boundary regardless of the 
+        underlying cone solver executing (e.g., ECOS vs SCS).
 
-        BUG-T-02: ≥ 0.70 instead of ≥ asset_a_sharpe to be solver-agnostic.
-        BUG-MV-01: solver chain ECOS → SCS → CLARABEL ensures at least one works.
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         weights = _w(
@@ -187,7 +231,8 @@ class TestMeanVariance:
         _assert_valid_portfolio(weights)
 
         port_vol = np.sqrt(weights.dot(cov).dot(weights))
-        assert port_vol > 1e-10, f"Degenerate portfolio vol ({port_vol:.2e})"  # BUG-02
+        # Precludes zero-variance division errors
+        assert port_vol > 1e-10, f"Degenerate portfolio vol ({port_vol:.2e})"  
 
         port_sharpe = weights.dot(mu) / port_vol
         assert port_sharpe >= 0.70, (
@@ -195,9 +240,15 @@ class TestMeanVariance:
         )
 
     def test_higher_risk_aversion_lowers_portfolio_volatility(self, market_data):
-        """
-        risk_aversion=0.1 (risk-seeking) vs 10.0 (conservative).
-        Higher lambda must produce strictly lower portfolio volatility.
+        r"""
+        Verifies that increasing the structural risk aversion penalty ($\lambda$) 
+        mathematically reduces geometric portfolio variance.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         vol_low  = _compute_port_vol(PortfolioAllocator("mean_variance", risk_aversion=0.1),  mu, cov)
@@ -207,7 +258,15 @@ class TestMeanVariance:
         )
 
     def test_singular_covariance_does_not_crash(self):
-        """Perfectly correlated assets (Det=0) — must not raise, BUG-05."""
+        """
+        Validates pipeline resilience when facing degenerate or perfectly correlated state matrices.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         tickers = ["X", "Y"]
         mu  = pd.Series([0.10, 0.10], index=tickers)
         cov = pd.DataFrame([[0.04, 0.04], [0.04, 0.04]], index=tickers, columns=tickers)
@@ -223,9 +282,17 @@ class TestMeanVariance:
         assert not weights.isna().any()
 
     def test_nan_in_expected_returns_handled_gracefully(self, market_data):
-        """NaN in expected_returns → valid portfolio or clean ValueError. BUG-06/09."""
+        """
+        Ensures missing structural inputs trigger elegant fallbacks rather than runtime faults.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
+        """
         mu, cov = market_data
-        mu = mu.copy()   # BUG-09: don't mutate the fixture
+        mu = mu.copy()   
         mu["B"] = np.nan
         try:
             weights = _w(
@@ -237,7 +304,15 @@ class TestMeanVariance:
             pytest.fail(f"Unexpected {type(e).__name__} on NaN input: {e}")
 
     def test_single_asset_gets_full_allocation(self):
-        """1×1 covariance — sole asset must receive weight 1.0. BUG-10."""
+        """
+        Asserts discrete boundaries automatically map unified allocations to lone survivors.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         mu  = pd.Series([0.10], index=["SOLO"])
         cov = pd.DataFrame([[0.04]], index=["SOLO"], columns=["SOLO"])
         try:
@@ -250,51 +325,76 @@ class TestMeanVariance:
         assert weights["SOLO"] == pytest.approx(1.0, abs=1e-4)
 
     def test_empty_input_returns_empty_dict(self):
-        """Zero assets → empty dict, no exception. BUG-10."""
+        """
+        Validates completely hollow execution regimes collapse securely to empty dictionaries.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         result = PortfolioAllocator("mean_variance").allocate({}, pd.DataFrame())
         assert result == {}
 
     def test_output_is_dict_with_valid_keys(self, market_data):
-        """Output type must be dict; keys ⊆ input tickers. BUG-07."""
+        """
+        Asserts strict type checking and dictionary dimensional compliance.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
+        """
         mu, cov = market_data
         result = PortfolioAllocator("mean_variance").allocate(mu.to_dict(), cov)
         assert isinstance(result, dict)
         assert set(result.keys()).issubset(set(mu.index))
 
     def test_max_weight_floor_logic(self, market_data):
-        """
-        If max_weight < 1/N, optimizer should floor it to 1/N to ensure feasibility.
+        r"""
+        Evaluates automated constraint relaxation to guarantee mathematical feasibility.
+
+        If a user specifies a target ceiling that is mathematically impossible 
+        to achieve while maintaining a $100\%$ fully-invested portfolio ($w_{max} < 1/N$), 
+        the solver must override the input to the infeasibility floor to prevent crashes.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         n = len(mu)
-        # Request impossible max_weight (e.g. 0.1 for 3 assets -> need 0.33)
         allocator = PortfolioAllocator("mean_variance")
         weights = _w(
             allocator.allocate(mu.to_dict(), cov, constraints={"max_weight": 0.1}),
             mu.index
         )
         _assert_valid_portfolio(weights)
-        # Weights should be approx 1/3 each, definitely > 0.1
         assert (weights > 0.1).any()
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 2. Risk Parity
-# ══════════════════════════════════════════════════════════════════════════════
-
 class TestRiskParity:
-    """
-    Tests for RiskParityOptimizer and the 'risk_parity' allocator route.
-
-    Core invariant:
-      MRC_i = w_i * (Sigma @ w)_i / port_vol  ≈  1/N  for all i
+    r"""
+    Validation suite for Equal Risk Contribution algorithms based on Spinu's Log-Barrier formulation.
     """
 
     def test_weight_ordering_matches_inverse_vol(self, market_data):
         """
-        Lower-vol assets receive higher weights.
-        Vols: A=0.20, C≈0.245, B=0.30 → expected order w_A > w_C > w_B.
-        BUG-RP-01: Spinu guarantees w_A > 0 even for block-diagonal Sigma.
+        Validates fundamental risk-contribution proportionality.
+
+        Ensures that strictly lower-volatility assets are mathematically assigned 
+        higher nominal weights to balance Marginal Risk Contributions (MRC). The 
+        Spinu formulation explicitly prevents block-diagonal matrices from trapping 
+        solvers at $0.0$ bounds.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         weights = _w(
@@ -310,9 +410,17 @@ class TestRiskParity:
         )
 
     def test_equal_risk_contributions(self, market_data):
-        """
-        MRC_A ≈ MRC_B ≈ MRC_C (within rtol=0.15).
-        BUG-T-03: tolerance relaxed from rtol=0.10 to 0.15 for cross-platform stability.
+        r"""
+        Evaluates cross-sectional equality of Marginal Risk Contributions.
+
+        Ensures that $MRC_i = \frac{\partial \sigma_p}{\partial w_i}$ remains 
+        consistent across all executing constraints within acceptable tolerances.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         weights = _w(
@@ -320,7 +428,7 @@ class TestRiskParity:
             mu.index,
         )
         port_vol = np.sqrt(weights.dot(cov).dot(weights))
-        assert port_vol > 1e-10, "Degenerate portfolio vol"  # BUG-03
+        assert port_vol > 1e-10, "Degenerate portfolio vol"  
 
         mrc = weights * (cov.dot(weights)) / port_vol
         assert np.allclose(mrc, mrc.mean(), rtol=0.15), (
@@ -329,9 +437,13 @@ class TestRiskParity:
 
     def test_block_diagonal_asset_has_nonzero_weight(self, market_data):
         """
-        Regression test for BUG-RP-01.
-        Asset A is block-diagonal (Sigma[A,B]=Sigma[A,C]=0).
-        The Spinu log-barrier must keep w_A > 0 — SLSQP could not.
+        Verifies non-zero boundaries on completely uncorrelated assets.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         weights = _w(
@@ -345,8 +457,13 @@ class TestRiskParity:
 
     def test_custom_risk_budgets(self, market_data):
         """
-        target_risk={'A':0.6,'B':0.2,'C':0.2}: A's budget is 3× B or C's.
-        After optimization, w_A must exceed both w_B and w_C.
+        Verifies that explicit budget configurations manipulate underlying weight distributions.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         optimizer = RiskParityOptimizer(target_risk={"A": 0.6, "B": 0.2, "C": 0.2})
@@ -357,7 +474,15 @@ class TestRiskParity:
         assert weights["A"] > weights["C"], "Higher budget for A must yield higher weight than C"
 
     def test_large_universe_all_assets_get_positive_weight(self, large_market_data):
-        """10-asset universe: every asset must have w > 0 (Spinu log-barrier property)."""
+        """
+        Validates the strict positive adherence of the Spinu logarithmic barrier.
+
+        Args:
+            large_market_data (tuple): Synthesized scaled test matrix.
+
+        Returns:
+            None
+        """
         mu, cov = large_market_data
         weights = _w(
             PortfolioAllocator("risk_parity").allocate(mu.to_dict(), cov),
@@ -368,12 +493,19 @@ class TestRiskParity:
 
     def test_fallback_on_solver_failure(self, market_data):
         """
-        If Spinu optimization fails, should fall back to Inverse Volatility.
-        We simulate failure by mocking scipy.optimize.minimize.
+        Validates graceful algorithmic degradation upon SciPy convergence failure.
+
+        If the L-BFGS-B gradient solver halts, the system must deterministically 
+        fall back to a stable Inverse Volatility heuristic rather than crashing the pipeline.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         
-        # Mock result object that indicates failure
         mock_res = type('MockResult', (), {'success': False, 'message': 'Mock failure'})()
         
         with patch("quant_alpha.optimization.risk_parity.minimize", return_value=mock_res):
@@ -383,16 +515,19 @@ class TestRiskParity:
             )
         
         _assert_valid_portfolio(weights)
-        # Inverse vol logic: Vol A=0.2, B=0.3. InvVol A=5, B=3.33. A > B.
         assert weights["A"] > weights["B"]
 
     def test_optimize_subset_of_tickers(self, market_data):
         """
-        If requested tickers (keys of mu) are a subset of covariance matrix, 
-        should optimize only those tickers.
+        Ensures matrix filtering correctly isolates specific ticker boundaries.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
-        # Request only A and B
         mu_subset = mu[["A", "B"]]
         
         weights = _w(
@@ -405,38 +540,37 @@ class TestRiskParity:
         assert weights.sum() == pytest.approx(1.0)
 
     def test_optimize_empty_tickers(self, market_data):
-        """Empty tickers list should return empty dict."""
+        """
+        Verifies empty matrix dimensions bypass evaluation loops dynamically.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
+        """
         _, cov = market_data
         optimizer = RiskParityOptimizer()
         result = optimizer.optimize(cov, [])
         assert result == {}
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 3. Kelly Criterion
-# ══════════════════════════════════════════════════════════════════════════════
-
 class TestKellyCriterion:
-    """
-    Tests for KellyCriterion and the 'kelly' allocator route.
-
-    Full Kelly maximises log-expected-wealth:
-        f* = Sigma^{-1} (mu - rf)      (unconstrained solution)
-
-    After long-only clipping and normalization, higher-excess-return / lower-
-    variance assets get larger fractions.
-
-    Fractional Kelly (fraction < 1.0) scales down to reduce variance at the
-    cost of a lower long-run growth rate.
+    r"""
+    Validation suite for Geometric Growth Maximization via the Kelly Criterion constraints.
     """
 
     def test_higher_return_asset_dominates(self, market_data):
         """
-        Kelly fractions (before clipping) proportional to excess return / variance:
-          A: (0.15 - 0.04) / 0.04  =  2.75   ← largest
-          C: (0.08 - 0.04) / 0.06  ≈  0.67
-          B: (0.02 - 0.04) / 0.09  = -0.22   → clipped to 0
+        Asserts proportional dominance for vectors with high excess return/variance ratios.
 
-        After long-only normalization: w_A >> w_C, w_B ≈ 0.
+        Assets failing to bridge the risk-free rate hurdle should be completely 
+        omitted post-normalization.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         weights = _w(
@@ -455,8 +589,13 @@ class TestKellyCriterion:
 
     def test_full_kelly_more_concentrated_than_half_kelly(self, market_data):
         """
-        fraction=0.5 linearly scales Kelly weights → less concentrated portfolio.
-        max(w_full) ≥ max(w_half).
+        Verifies risk reduction mechanics using Fractional Kelly scaling logic.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         w_full = _w(
@@ -478,7 +617,15 @@ class TestKellyCriterion:
         )
 
     def test_zero_risk_free_rate_produces_valid_portfolio(self, market_data):
-        """rf=0.0: all excess returns are positive → valid long-only portfolio."""
+        """
+        Validates execution bounding for perfectly elastic zero-yield benchmark configurations.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
+        """
         mu, cov = market_data
         weights = _w(
             PortfolioAllocator("kelly").allocate(
@@ -491,13 +638,18 @@ class TestKellyCriterion:
 
     def test_all_negative_excess_returns_triggers_fallback(self, market_data):
         """
-        rf=0.99: all excess returns are negative.
-        CVXPY QP sets all weights to zero (w=0 is optimal long-only when every
-        excess return is negative). KellyCriterion must detect the zero-sum
-        result and return equal-weight fallback, not an empty dict.
+        Evaluates the equal-weight fallback mechanism during hostile execution conditions.
 
-        BUG-KC-01: calculate_portfolio now guards total_invested < 1e-6 and
-        calls _equal_weight_fallback() explicitly in that case.
+        When all generated expected returns are mathematically inferior to the prevailing 
+        risk-free benchmark, the optimal mathematical solution is completely cash-based. 
+        Since the engine enforces 1.0 gross exposure, this must explicitly trigger 
+        a maximum entropy equal-weight distribution.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         result = KellyCriterion(fraction=0.5).calculate_portfolio(
@@ -511,7 +663,15 @@ class TestKellyCriterion:
         assert (weights > 0).all(), "All assets must appear in the equal-weight fallback"
 
     def test_output_is_dict(self, market_data):
-        """Output format contract."""
+        """
+        Asserts strict type checking for the returned portfolio schema.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
+        """
         mu, cov = market_data
         result = PortfolioAllocator("kelly").allocate(
             mu.to_dict(), cov, risk_free_rate=0.04
@@ -519,44 +679,55 @@ class TestKellyCriterion:
         assert isinstance(result, dict)
 
     def test_heuristic_solver_fallback(self, market_data):
-        """Test the closed-form heuristic (use_solver=False)."""
+        """
+        Tests the explicit matrix inversion pathway bypassing quadratic programming parameters.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
+        """
         mu, cov = market_data
-        # Use a fraction to ensure scaling logic is tested
         allocator = PortfolioAllocator("kelly", fraction=0.5, use_solver=False)
         weights = _w(
             allocator.allocate(mu.to_dict(), cov, risk_free_rate=0.04),
             mu.index
         )
         _assert_valid_portfolio(weights)
-        # Heuristic should still favor high excess return assets
         assert weights["A"] > weights["C"]
         assert weights["B"] < 0.05
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 4. Black-Litterman
-# ══════════════════════════════════════════════════════════════════════════════
-
 class TestBlackLitterman:
-    """
-    Tests for BlackLittermanModel and the 'black_litterman' allocator route.
-
-    The BL model Bayesian-blends a market-cap-weighted prior with analyst views:
-        mu_BL = [(tau*Sigma)^{-1} + P^T Omega^{-1} P]^{-1}
-                [(tau*Sigma)^{-1} pi + P^T Omega^{-1} Q]
-
-    confidence_level ≈ 1  →  trust views (mu).
-    confidence_level ≈ 0  →  trust prior (market-cap equilibrium returns).
+    r"""
+    Validation suite for the Bayesian Black-Litterman inference and blending logic.
     """
 
     @pytest.fixture
     def bl_inputs(self, market_data):
+        """
+        Injects structured market capitalizations to formulate prior distribution bounds.
+
+        Args:
+            market_data (tuple): Foundational execution matrices.
+
+        Returns:
+            tuple: Expanded execution parameters mapping market_caps.
+        """
         mu, cov = market_data
-        # Market caps: A is largest, B is smallest
         market_caps = {"A": 500e9, "B": 50e9, "C": 250e9}
         return mu, cov, market_caps
 
     def test_valid_portfolio_with_all_inputs(self, bl_inputs):
-        """Standard inputs → fully-invested long-only portfolio."""
+        """
+        Validates successful execution loop generating standard prior geometries.
+
+        Args:
+            bl_inputs (tuple): Specific fixture mapping.
+
+        Returns:
+            None
+        """
         mu, cov, market_caps = bl_inputs
         weights = _w(
             PortfolioAllocator("black_litterman").allocate(
@@ -568,8 +739,13 @@ class TestBlackLitterman:
 
     def test_high_confidence_tilts_toward_high_return_asset(self, bl_inputs):
         """
-        confidence_level=0.99 ≈ full trust in views.
-        A has highest E[r]=0.15 → must get largest weight.
+        Ensures heavy weighting of explicit model-derived views overshadows market prior distributions.
+
+        Args:
+            bl_inputs (tuple): Specific fixture mapping.
+
+        Returns:
+            None
         """
         mu, cov, market_caps = bl_inputs
         weights = _w(
@@ -587,9 +763,13 @@ class TestBlackLitterman:
 
     def test_low_confidence_stays_near_market_cap_prior(self, bl_inputs):
         """
-        confidence_level=0.01 ≈ full trust in prior.
-        Prior weights ≈ mkt caps: A=500B/(800B)=62.5%, B=6.25%, C=31.25%.
-        A must remain the largest allocation.
+        Verifies near-zero uncertainty convergence anchors strictly toward standard market weighting.
+
+        Args:
+            bl_inputs (tuple): Specific fixture mapping.
+
+        Returns:
+            None
         """
         mu, cov, market_caps = bl_inputs
         weights = _w(
@@ -607,8 +787,13 @@ class TestBlackLitterman:
 
     def test_missing_market_caps_returns_valid_fallback(self, market_data):
         """
-        market_caps omitted → allocator logs a warning and returns a valid
-        fallback portfolio (must not crash or return empty dict).
+        Ensures fallback protocols bypass runtime exceptions when structural vectors are missing.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         try:
@@ -622,22 +807,16 @@ class TestBlackLitterman:
 
     def test_tau_sensitivity_produces_different_portfolios(self, bl_inputs):
         """
-        tau controls how much the prior (market-cap equilibrium) is trusted vs
-        the ML views. Using an extreme range (0.001 vs 50.0) makes the effect
-        clearly visible in portfolio weights.
+        Verifies mathematical sensitivity tracking relative to $\tau$ hyperparameter alterations.
 
-        Derivation:
-          tau=0.001 → (tau*Sigma)^{-1} is huge → prior dominates →
-            posterior_er ≈ Pi (~[0.063, 0.045, 0.053])  → even weights ~[0.63, 0.06, 0.31]
-          tau=50.0  → (tau*Sigma)^{-1} is tiny → views dominate →
-            posterior_er ≈ Q (~[0.15, 0.02, 0.08])     → concentrated ~[0.69, 0.00, 0.31]
+        Confirms that modifying the uncertainty scalar significantly impacts the posterior distribution 
+        and final allocation vector, proving that the blending logic is active.
 
-        BUG-BL-01: pass max_weight=1.0 to MVO so the cap does not mask the signal.
-        BUG-BL-02: use PRIOR covariance (not Sigma_post) for MVO risk model.
-          At large tau, Sigma_post = Sigma + M^{-1} is highly inflated, making MVO
-          ultra-conservative and compressing ALL weights regardless of tau.
-          Standard BL (He & Litterman 1999) uses posterior returns + prior covariance.
-          With this fix max_diff = ~0.065, clearly exceeding atol=0.05.
+        Args:
+            bl_inputs (tuple): Specific fixture mapping.
+
+        Returns:
+            None
         """
         mu, cov, market_caps = bl_inputs
         w_tight = _w(
@@ -660,7 +839,15 @@ class TestBlackLitterman:
         )
 
     def test_all_tau_values_produce_valid_portfolios(self, bl_inputs):
-        """tau ∈ {0.01, 0.05, 0.50, 0.99} — all must return valid portfolios."""
+        """
+        Asserts complete stability across the entire spectrum of permissible scalar weights.
+
+        Args:
+            bl_inputs (tuple): Specific fixture mapping.
+
+        Returns:
+            None
+        """
         mu, cov, market_caps = bl_inputs
         for tau in [0.01, 0.05, 0.50, 0.99]:
             weights = _w(
@@ -672,7 +859,15 @@ class TestBlackLitterman:
             _assert_valid_portfolio(weights)
 
     def test_output_is_dict_with_valid_keys(self, bl_inputs):
-        """Output format: dict with keys ⊆ input tickers."""
+        """
+        Evaluates deterministic map boundaries matching standard interface constraints.
+
+        Args:
+            bl_inputs (tuple): Specific fixture mapping.
+
+        Returns:
+            None
+        """
         mu, cov, market_caps = bl_inputs
         result = PortfolioAllocator("black_litterman").allocate(
             mu.to_dict(), cov, market_caps=market_caps
@@ -682,11 +877,16 @@ class TestBlackLitterman:
 
     def test_linalg_error_fallback(self, bl_inputs):
         """
-        If matrix inversion fails (LinAlgError), should fall back to prior (implied returns).
+        Tests fallback behavior during structurally impossible matrix inversions.
+
+        Args:
+            bl_inputs (tuple): Specific fixture mapping.
+
+        Returns:
+            None
         """
         mu, cov, market_caps = bl_inputs
         
-        # Mock np.linalg.inv (or pinv) to raise LinAlgError
         with patch("numpy.linalg.inv", side_effect=np.linalg.LinAlgError("Singular matrix")):
             weights = _w(
                 PortfolioAllocator("black_litterman").allocate(
@@ -694,37 +894,39 @@ class TestBlackLitterman:
                 ),
                 mu.index,
             )
-        # Should still produce a valid portfolio (likely close to market cap weights)
         _assert_valid_portfolio(weights)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 5. PortfolioConstraints
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestPortfolioConstraints:
     """
-    Tests for the PortfolioConstraints post-processing layer.
-
-    PortfolioConstraints filters raw optimizer weights:
-      • max_weight cap   — no asset exceeds the ceiling
-      • min_weight floor — sub-floor assets are zeroed and re-normalized
-      • sector_limits    — aggregate sector weight ≤ cap
-      • After every operation, weights must still sum to 1.0.
+    Validation suite verifying algorithmic enforcement of post-optimization heuristics.
     """
 
     @pytest.fixture
     def raw_weights(self):
         """
-        Intentionally constraint-violating weights:
-          A: 60% (over any reasonable max_weight=0.40)
-          B: 25%
-          C: 14.5%
-          D: 0.5% (below any reasonable min_weight=0.01)
+        Provisions intentionally malformed output distributions to verify constraint clamping logic.
+
+        Args:
+            None
+
+        Returns:
+            pd.Series: Synthetic constraint-violating array.
         """
         return pd.Series({"A": 0.60, "B": 0.25, "C": 0.145, "D": 0.005})
 
     def test_max_weight_cap_enforced(self, raw_weights):
-        """max_weight=0.40: every asset ≤ 0.40 after constraint application."""
+        """
+        Evaluates maximum allocation constraints against non-compliant arrays.
+
+        Iterative Proportional Fitting is expected to correctly bleed excess 
+        concentration to minor allocations symmetrically.
+
+        Args:
+            raw_weights (pd.Series): The invalid weight distributions.
+
+        Returns:
+            None
+        """
         from quant_alpha.optimization.constraints import PortfolioConstraints
 
         constrained = _w(
@@ -737,7 +939,15 @@ class TestPortfolioConstraints:
         )
 
     def test_min_weight_floor_removes_tiny_positions(self, raw_weights):
-        """min_weight=0.01: D (0.5%) must be zeroed and remainder re-normalised."""
+        """
+        Tests dynamic cardinality reduction thresholds.
+
+        Args:
+            raw_weights (pd.Series): The invalid weight distributions.
+
+        Returns:
+            None
+        """
         from quant_alpha.optimization.constraints import PortfolioConstraints
 
         constrained = _w(
@@ -751,8 +961,13 @@ class TestPortfolioConstraints:
 
     def test_sector_limit_enforced(self, raw_weights):
         """
-        sector_limits={'Tech': 0.50} with A,B in Tech (raw total = 85%).
-        Combined Tech weight must be ≤ 0.50 after constraint.
+        Assures aggregate bucket limits effectively truncate grouped assets to explicit ceilings.
+
+        Args:
+            raw_weights (pd.Series): The invalid weight distributions.
+
+        Returns:
+            None
         """
         from quant_alpha.optimization.constraints import PortfolioConstraints
 
@@ -770,7 +985,15 @@ class TestPortfolioConstraints:
         assert constrained.sum() == pytest.approx(1.0, abs=1e-4)
 
     def test_already_valid_portfolio_is_unchanged(self):
-        """Applying loose constraints (max=1.0, min=0.0) must be a no-op."""
+        """
+        Confirms idempotent bypass for already valid distributions reducing unnecessary compute overhead.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         from quant_alpha.optimization.constraints import PortfolioConstraints
 
         equal_w = {"A": 0.33, "B": 0.33, "C": 0.34}
@@ -779,12 +1002,18 @@ class TestPortfolioConstraints:
             assert constrained.get(ticker, 0.0) == pytest.approx(w, abs=1e-4)
 
     def test_unmapped_sector_handling(self, raw_weights):
-        """Tickers missing from sector_map should be handled gracefully (e.g. __other__)."""
+        """
+        Tests resilient resolution for universe constituents omitting valid metadata keys.
+
+        Args:
+            raw_weights (pd.Series): The invalid weight distributions.
+
+        Returns:
+            None
+        """
         from quant_alpha.optimization.constraints import PortfolioConstraints
 
-        # A and B are Tech, C is unmapped
         sector_map = {"A": "Tech", "B": "Tech"} 
-        # Limit Tech to 0.5. A+B=0.85 initially.
         constrained = _w(
             PortfolioConstraints(
                 sector_limits={"Tech": 0.50}, sector_map=sector_map
@@ -794,40 +1023,37 @@ class TestPortfolioConstraints:
         assert constrained["A"] + constrained["B"] <= 0.50 + 1e-6
         assert constrained["C"] > 0.145  # C should receive some redistributed weight
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 6. PortfolioAllocator — Facade, Routing & Fallback
-# ══════════════════════════════════════════════════════════════════════════════
-
 class TestPortfolioAllocatorFacade:
     """
-    Tests for PortfolioAllocator as the high-level routing facade.
-
-    Verifies:
-      • Unknown method raises ValueError at construction time.
-      • Equal-weight fallback fires (and is valid) when optimizer raises.
-      • All four methods route to the correct optimizer.
-      • kwargs are correctly threaded through to optimizer constructors.
+    Verification block strictly modeling the structural integration facade patterns.
     """
 
     def test_unknown_method_raises_value_error(self):
-        """Constructing with an unsupported method must raise ValueError immediately."""
+        """
+        Asserts instantiation immediately aborts upon explicit logic misconfigurations.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         with pytest.raises(ValueError, match="Unknown optimization method"):
             PortfolioAllocator(method="deep_learning_magic")
 
     def test_equal_weight_fallback_on_mismatched_covariance(self, market_data):
         """
-        Covariance matrix has no ticker in common with expected_returns.
-        MeanVarianceOptimizer._prepare_data raises ValueError internally and
-        returns {} (not via exception). The allocator's except-block does not
-        fire; the empty dict propagates up.
+        Confirms systemic failover behavior against disjoint or entirely missing data bounds.
 
-        Correct behaviour: allocator detects empty result and substitutes
-        equal weight. This test verifies that contract.
+        When covariance evaluation matrices lack unified intersection against 
+        the target expected return vectors, defensive allocation protocols must
+        strictly enforce completely flat positional structures rather than halting explicitly.
 
-        Note: if your allocator.allocate() does not yet guard against empty
-        optimizer results, this test documents the expected behaviour and will
-        fail until allocator.py adds an empty-result guard (see allocator.py
-        for the corresponding fix).
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, _ = market_data
         bad_cov = pd.DataFrame([[0.04]], index=["Z"], columns=["Z"])
@@ -835,8 +1061,6 @@ class TestPortfolioAllocatorFacade:
         result = PortfolioAllocator("mean_variance").allocate(mu.to_dict(), bad_cov)
         weights = _w(result, mu.index)
 
-        # Allocator must return a fully-invested portfolio (equal weight fallback)
-        # when the optimizer returns an empty dict due to zero ticker intersection.
         assert weights.sum() == pytest.approx(1.0, abs=1e-4), (
             "Allocator must fall back to equal weight when optimizer returns empty dict. "
             "Fix: in allocator.py, after calling optimizer, check if result is empty "
@@ -854,8 +1078,15 @@ class TestPortfolioAllocatorFacade:
     )
     def test_all_methods_return_valid_portfolio(self, method, extra_kwargs, market_data):
         """
-        Smoke test: every supported method must return a fully-invested
-        long-only portfolio on the standard 3-asset universe.
+        Runs global sanity checks mapping universal compliance to discrete solver boundaries.
+
+        Args:
+            method (str): Parametrized identifier determining routing path.
+            extra_kwargs (dict): Parametrized inputs governing distinct execution loops.
+            market_data (tuple): Standard localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         weights = _w(
@@ -866,9 +1097,13 @@ class TestPortfolioAllocatorFacade:
 
     def test_risk_aversion_kwarg_affects_output(self, market_data):
         """
-        risk_aversion is threaded through to MeanVarianceOptimizer.
-        ra=0.01 (risk-seeking) vs ra=100 (conservative) must produce different
-        portfolios — identical output would indicate the kwarg is ignored.
+        Verifies correct topological injection of secondary hyperparameters through the Facade.
+
+        Args:
+            market_data (tuple): Standard localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         w_agg = _w(
@@ -889,13 +1124,13 @@ class TestPortfolioAllocatorFacade:
 
     def test_tau_kwarg_affects_black_litterman_output(self, market_data):
         """
-        tau is threaded through to BlackLittermanModel.
-        tau=0.001 (prior dominates) vs tau=50.0 (views dominate) must produce
-        portfolios differing by >5pp.
+        Confirms uncertainty tuning inputs accurately percolate to the statistical prior module.
 
-        BUG-BL-02: MVO must use prior Sigma (not Sigma_post) so that the
-        inflated posterior covariance at large tau does not suppress the signal.
-        Same derivation as test_tau_sensitivity_produces_different_portfolios.
+        Args:
+            market_data (tuple): Standard localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         market_caps = {"A": 500e9, "B": 50e9, "C": 250e9}
@@ -918,22 +1153,24 @@ class TestPortfolioAllocatorFacade:
             f"Got max_diff={max_diff:.4f}, expected >0.05."
         )
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 7. Cross-Method Comparative Tests
-# ══════════════════════════════════════════════════════════════════════════════
-
 class TestCrossMethodProperties:
     """
-    Relative guarantees that must hold across all methods simultaneously.
-    These catch regressions where one method silently breaks relative guarantees.
+    Verification suite enforcing theoretical constraints directly comparing distinct optimization approaches.
     """
 
     def test_risk_parity_more_balanced_than_mean_variance(self, market_data):
         """
-        Risk parity diversifies by risk contribution — it should produce a
-        more balanced portfolio than MV on a universe with a dominant asset.
-        max(w_RP) < max(w_MV).
+        Verifies statistical diversification theorems inherent to ERC construction vectors.
+
+        Risk parity diversifies by equalizing risk contribution, meaning it mathematically 
+        must produce a more structurally balanced portfolio array than pure MVO on a 
+        universe with one distinctly dominant asset.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         w_mv = _w(
@@ -952,9 +1189,16 @@ class TestCrossMethodProperties:
 
     def test_kelly_more_aggressive_than_risk_parity(self, market_data):
         """
-        Kelly maximises log-wealth and concentrates on high-Sharpe assets.
-        Risk parity equalises risk contributions.
-        Kelly's max weight should be ≥ RP's max weight.
+        Assures relative concentration profiles between distinct solver bounds.
+
+        Kelly's objective explicitly maximizes geometric drift, meaning it must inherently 
+        generate a more concentrated vector array than the flat ERC implementation.
+
+        Args:
+            market_data (tuple): Injected localized environment matrices.
+
+        Returns:
+            None
         """
         mu, cov = market_data
         w_kelly = _w(
@@ -971,7 +1215,15 @@ class TestCrossMethodProperties:
         )
 
     def test_all_methods_handle_large_universe(self, large_market_data):
-        """10-asset universe: all methods must return valid portfolios without crashing."""
+        """
+        Evaluates scale and speed limits across solver configurations iteratively.
+
+        Args:
+            large_market_data (tuple): Synthesized scaled test matrix.
+
+        Returns:
+            None
+        """
         mu, cov = large_market_data
         market_caps = {t: float(i + 1) * 50e9 for i, t in enumerate(mu.index)}
 

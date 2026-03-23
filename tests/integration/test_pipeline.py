@@ -1,12 +1,24 @@
 """
-INTEGRATION TEST: Pipeline Orchestration
+Pipeline Orchestration Integration Tests
 ========================================
-Tests the run_pipeline.py script to ensure it correctly orchestrates
-the sequence of sub-scripts based on command-line arguments.
+Validates the execution flow and dependency resolution of the central pipeline orchestrator.
 
-This test mocks the actual execution of sub-scripts (subprocess.run)
-to avoid running the full multi-hour pipeline, focusing on the
-control logic and argument passing.
+Purpose
+-------
+This module verifies that the `run_pipeline.py` entry point correctly parses
+execution arguments and spawns the appropriate subprocesses in the exact
+topological order required by the Directed Acyclic Graph (DAG). 
+
+Role in Quantitative Workflow
+-----------------------------
+Ensures that the daily production or research workflows do not suffer from
+execution state corruption (e.g., training a model before data is fetched)
+by testing the control flow logic using aggressive subprocess mocking.
+
+Dependencies
+------------
+- **Pytest**: Test execution framework.
+- **Unittest.Mock**: Subprocess isolation to bypass multi-hour pipeline runs.
 """
 
 import sys
@@ -16,9 +28,6 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch, call
 
-# ---------------------------------------------------------------------------
-# Project root resolution
-# ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 
@@ -27,34 +36,28 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.append(str(SCRIPTS_DIR))
 
-# ---------------------------------------------------------------------------
-# Import guard — catches ImportError AND transitive ModuleNotFoundError /
-# syntax errors that surface as ImportError.
-# ---------------------------------------------------------------------------
+# Graceful fallback mechanisms for dynamic module resolution across nested execution boundaries
 try:
-    # Try importing as a module from scripts package (preferred)
     import scripts.run_pipeline as run_pipeline
 except (ImportError, ModuleNotFoundError):
     try:
-        # Fallback: try importing directly (since SCRIPTS_DIR is in sys.path)
         import run_pipeline
     except (ImportError, ModuleNotFoundError) as exc:
         warnings.warn(f"Could not import run_pipeline: {exc}")
         run_pipeline = None
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _extract_script_name(mock_call) -> str:
     """
-    Safely extract the script filename from a subprocess.run mock call.
+    Safely extracts the script filename from a mocked subprocess.run call.
 
-    subprocess.run is expected to be called as:
-        subprocess.run([sys.executable, "/path/to/script.py", ...], ...)
+    Args:
+        mock_call (tuple): The captured call arguments from a MagicMock.
 
-    Raises AssertionError with context on unexpected call shapes so failures
-    are readable rather than crashing with IndexError / AttributeError.
+    Returns:
+        str: The filename of the executed script.
+
+    Raises:
+        AssertionError: If the command list is malformed or lacks a script path.
     """
     positional_args, _ = mock_call
     cmd = positional_args[0]
@@ -69,8 +72,17 @@ def _extract_script_name(mock_call) -> str:
 
 def _get_script_cmd(calls, script_name: str) -> list:
     """
-    Return the full command list for the first call matching *script_name*.
-    Raises AssertionError with a descriptive message if the script was never called.
+    Isolates the full command list for the first execution matching the target script.
+
+    Args:
+        calls (list): The list of captured mock calls.
+        script_name (str): The filename of the target script.
+
+    Returns:
+        list: The ordered list of arguments passed to subprocess.run.
+
+    Raises:
+        AssertionError: If the target script was never executed.
     """
     for c in calls:
         positional_args, _ = c
@@ -82,31 +94,35 @@ def _get_script_cmd(calls, script_name: str) -> list:
         f"{script_name!r} was not called. Scripts that ran: {executed}"
     )
 
-
-# ---------------------------------------------------------------------------
-# Test suite
-# ---------------------------------------------------------------------------
-
 @pytest.mark.skipif(run_pipeline is None, reason="run_pipeline.py could not be imported")
 class TestPipelineOrchestrator:
 
     @pytest.fixture
     def mock_subprocess(self):
-        """Mock subprocess.run to prevent actual script execution."""
-        with patch("subprocess.run") as mock:
-            mock.return_value.returncode = 0  # simulate success by default
-            yield mock
+        """
+        Provisions a mocked subprocess boundary to prevent actual script execution.
 
-    # ------------------------------------------------------------------
-    # Smoke test: entry point is importable and prints help
-    # ------------------------------------------------------------------
+        Yields:
+            MagicMock: The patched subprocess.run object configured to return success.
+        """
+        with patch("subprocess.run") as mock:
+            mock.return_value.returncode = 0 
+            yield mock
 
     @pytest.mark.skipif(
         not (SCRIPTS_DIR / "run_pipeline.py").exists(),
         reason="run_pipeline.py not found on disk — skipping filesystem smoke test",
     )
     def test_pipeline_help_command(self):
-        """Verify the script is executable and prints help text."""
+        """
+        Verifies the orchestrator script is executable and exposes CLI documentation.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         cmd = [sys.executable, str(SCRIPTS_DIR / "run_pipeline.py"), "--help"]
         result = subprocess.run(cmd, capture_output=True, text=True)
         assert result.returncode == 0, (
@@ -116,21 +132,18 @@ class TestPipelineOrchestrator:
             f"Expected 'Pipeline' in --help output, got:\n{result.stdout}"
         )
 
-    # ------------------------------------------------------------------
-    # Default execution flow
-    # ------------------------------------------------------------------
-
     def test_default_execution_flow(self, mock_subprocess):
         """
-        Verify default flags:
-          update_data      → YES  (maps to update_data.py)
-          validate         → NO   (maps to validate_factors.py)
-          train            → NO   (maps to train_models.py)
-          deploy           → NO   (maps to deploy_model.py)
-          inference        → YES  (maps to generate_predictions.py)
-          backtest         → NO   (maps to run_backtest.py)
-          optimize         → YES  (maps to optimize_portfolio.py)
-          report           → YES  (maps to create_report.py)
+        Validates the default execution state machine when no explicit flags are provided.
+
+        Ensures the pipeline correctly defaults to data fetching, inference, optimization,
+        and reporting, while explicitly suppressing training and deployment stages.
+
+        Args:
+            mock_subprocess (MagicMock): The isolated subprocess fixture.
+
+        Returns:
+            None
         """
         with patch.object(sys, "argv", ["run_pipeline.py"]):
             run_pipeline.run()
@@ -138,13 +151,13 @@ class TestPipelineOrchestrator:
         calls = mock_subprocess.call_args_list
         executed_scripts = [_extract_script_name(c) for c in calls]
 
-        # --- scripts that MUST run ---
+        # Assert inclusion of mandatory structural pipeline components
         assert "update_data.py" in executed_scripts
         assert "generate_predictions.py" in executed_scripts
         assert "optimize_portfolio.py" in executed_scripts
         assert "create_report.py" in executed_scripts
 
-        # --- scripts that must NOT run by default ---
+        # Assert exclusion of computationally intensive ML lifecycle components by default
         assert "validate_factors.py" not in executed_scripts
         assert "train_models.py" not in executed_scripts
         assert "deploy_model.py" not in executed_scripts
@@ -152,9 +165,16 @@ class TestPipelineOrchestrator:
 
     def test_default_execution_order(self, mock_subprocess):
         """
-        Data must be fetched before predictions are generated;
-        predictions must exist before portfolio is optimised;
-        the report must be the final step.
+        Asserts the strict topological execution order of the default DAG.
+
+        Guarantees data is fetched prior to inference, inference completes before 
+        optimization, and reporting executes as the final summary stage.
+
+        Args:
+            mock_subprocess (MagicMock): The isolated subprocess fixture.
+
+        Returns:
+            None
         """
         with patch.object(sys, "argv", ["run_pipeline.py"]):
             run_pipeline.run()
@@ -176,12 +196,16 @@ class TestPipelineOrchestrator:
             "optimize_portfolio.py must run before create_report.py"
         )
 
-    # ------------------------------------------------------------------
-    # Full-rebuild flags
-    # ------------------------------------------------------------------
-
     def test_full_rebuild_flags(self, mock_subprocess):
-        """Verify --full-rebuild triggers training, validation, deployment, and backtest."""
+        """
+        Verifies that the full rebuild override correctly triggers all heavy ML components.
+
+        Args:
+            mock_subprocess (MagicMock): The isolated subprocess fixture.
+
+        Returns:
+            None
+        """
         with patch.object(
             sys, "argv",
             ["run_pipeline.py", "--full-rebuild", "--validate", "--deploy", "--backtest"],
@@ -196,14 +220,22 @@ class TestPipelineOrchestrator:
         assert "deploy_model.py" in executed_scripts
         assert "run_backtest.py" in executed_scripts
 
-        # --force-rebuild must be forwarded to train_models.py
+        # Guarantee strict propagation of rebuild state constraints to the modeling engine
         train_cmd = _get_script_cmd(calls, "train_models.py")
         assert "--force-rebuild" in train_cmd, (
             f"Expected '--force-rebuild' in train_models.py call, got: {train_cmd}"
         )
 
     def test_full_rebuild_execution_order(self, mock_subprocess):
-        """Training must precede deployment; validation must precede training."""
+        """
+        Asserts the topological integrity of the full rebuild DAG sequence.
+
+        Args:
+            mock_subprocess (MagicMock): The isolated subprocess fixture.
+
+        Returns:
+            None
+        """
         with patch.object(
             sys, "argv",
             ["run_pipeline.py", "--full-rebuild", "--validate", "--deploy"],
@@ -224,12 +256,16 @@ class TestPipelineOrchestrator:
             "train_models.py must run before deploy_model.py"
         )
 
-    # ------------------------------------------------------------------
-    # --skip-data flag
-    # ------------------------------------------------------------------
-
     def test_skip_data_flag_suppresses_update(self, mock_subprocess):
-        """--skip-data must prevent update_data.py from running."""
+        """
+        Validates the suppression logic for the data ingestion phase.
+
+        Args:
+            mock_subprocess (MagicMock): The isolated subprocess fixture.
+
+        Returns:
+            None
+        """
         with patch.object(sys, "argv", ["run_pipeline.py", "--skip-data"]):
             run_pipeline.run()
 
@@ -239,16 +275,20 @@ class TestPipelineOrchestrator:
         assert "update_data.py" not in executed_scripts, (
             "--skip-data was passed but update_data.py still ran"
         )
-        # Downstream steps should still run
+        # Verify downstream DAG resolution continues unhindered
         assert "generate_predictions.py" in executed_scripts
         assert "optimize_portfolio.py" in executed_scripts
 
-    # ------------------------------------------------------------------
-    # Optimization argument forwarding
-    # ------------------------------------------------------------------
-
     def test_optimization_arguments(self, mock_subprocess):
-        """Verify capital, opt-method, and target-vol are forwarded correctly."""
+        """
+        Verifies the accurate propagation of hyperparameter constraints to the optimization layer.
+
+        Args:
+            mock_subprocess (MagicMock): The isolated subprocess fixture.
+
+        Returns:
+            None
+        """
         with patch.object(
             sys, "argv",
             [
@@ -265,7 +305,7 @@ class TestPipelineOrchestrator:
         opt_cmd = _get_script_cmd(calls, "optimize_portfolio.py")
 
         assert "--capital" in opt_cmd, f"Missing --capital in: {opt_cmd}"
-        # argparse may serialise as int or float; accept either
+        # Tolerate type-casting variance from upstream argument resolution
         capital_idx = opt_cmd.index("--capital") + 1
         assert opt_cmd[capital_idx] in ("500000", "500000.0"), (
             f"Unexpected capital value: {opt_cmd[capital_idx]!r}"
@@ -284,7 +324,15 @@ class TestPipelineOrchestrator:
         )
 
     def test_optimization_arguments_skip_data_respected(self, mock_subprocess):
-        """When --skip-data is combined with optimization flags, data step is skipped."""
+        """
+        Asserts that parallel invocation of optimization constraints and skip flags resolve correctly.
+
+        Args:
+            mock_subprocess (MagicMock): The isolated subprocess fixture.
+
+        Returns:
+            None
+        """
         with patch.object(
             sys, "argv",
             ["run_pipeline.py", "--skip-data", "--capital", "500000",
@@ -296,18 +344,21 @@ class TestPipelineOrchestrator:
         executed_scripts = [_extract_script_name(c) for c in calls]
         assert "update_data.py" not in executed_scripts
 
-    # ------------------------------------------------------------------
-    # Subprocess failure propagation
-    # ------------------------------------------------------------------
-
     def test_pipeline_aborts_on_subprocess_failure(self, mock_subprocess):
         """
-        If a sub-script returns a non-zero exit code, the pipeline should
-        abort rather than silently continue to downstream steps.
+        Validates the strict Fail-Fast mechanism of the orchestrator.
+
+        Ensures that if any sub-script emits a non-zero exit code, the pipeline 
+        immediately halts to prevent downstream propagation of corrupted states.
+
+        Args:
+            mock_subprocess (MagicMock): The isolated subprocess fixture.
+
+        Returns:
+            None
         """
-        # FIX: run_pipeline uses subprocess.run(..., check=True).
-        # A mock return_value with returncode=1 does NOT trigger the check=True exception logic.
-        # We must explicitly raise CalledProcessError via side_effect to simulate failure.
+        # Injects an explicit CalledProcessError to mathematically trigger the `check=True` 
+        # exception handler, accurately simulating a structural failure in the DAG.
         mock_subprocess.side_effect = subprocess.CalledProcessError(
             returncode=1, cmd=["mock_script.py"]
         )

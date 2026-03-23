@@ -1,7 +1,7 @@
 r"""
-Backtest Engine & Attribution Validation
-========================================
-Rigorous testing suite for the event-driven backtesting engine and performance attribution system.
+Historical Simulation and Performance Attribution Validation
+============================================================
+Validates the event-driven backtesting engine and structural performance attribution layers.
 
 Purpose
 -------
@@ -11,11 +11,11 @@ that the simulation correctly handles order execution, cost modelling (commissio
 and accounting principles (FIFO/Average Cost) without introducing look-ahead bias or
 floating-point accounting errors.
 
-Usage
------
-.. code-block:: bash
-
-    pytest tests/unit/test_backtest.py
+Role in Quantitative Workflow
+-----------------------------
+Serves as a fundamental algorithmic safeguard, guaranteeing that simulated strategy 
+results perfectly mirror mathematical expectations before committing strategies 
+to live capital deployment.
 
 Importance
 ----------
@@ -30,9 +30,9 @@ Importance
 
 Tools & Frameworks
 ------------------
-- **Pytest**: Test runner and fixture management.
-- **Pandas/NumPy**: Market data simulation and vector arithmetic validation.
-- **Unittest.Mock**: Isolation of external dependencies.
+- **Pytest**: Testing framework and fixture management.
+- **Pandas/NumPy**: In-memory synthesis of deterministic market environments.
+- **Unittest.Mock**: External dependency isolation.
 """
 
 import pytest
@@ -45,9 +45,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-# ---------------------------------------------------------------------------
-# Module Availability Check (Graceful Skip)
-# ---------------------------------------------------------------------------
+# Graceful degradation mapping to safely bypass integration boundaries if core execution engines are missing
 _BACKTEST_IMPORT_ERROR     = None
 _ATTRIBUTION_IMPORT_ERROR  = None
 
@@ -64,14 +62,22 @@ except ImportError as e:
     _ATTRIBUTION_IMPORT_ERROR = str(e)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _get_equity_value(equity_curve: pd.DataFrame, col_candidates=("total_value", "equity", "portfolio_value")) -> pd.Series:
     """
     Robustly extracts the Net Asset Value (NAV) series from the equity curve.
-    Handles schema variations across different engine implementations.
+    
+    Dynamically handles schema variations across different execution engine implementations.
+
+    Args:
+        equity_curve (pd.DataFrame): The sequential portfolio valuation ledger.
+        col_candidates (tuple, optional): Target column namespaces expected to contain NAV. 
+            Defaults to ("total_value", "equity", "portfolio_value").
+
+    Returns:
+        pd.Series: The isolated chronological Net Asset Value series.
+
+    Raises:
+        AssertionError: If none of the candidate columns are located in the schema.
     """
     for col in col_candidates:
         if col in equity_curve.columns:
@@ -83,16 +89,14 @@ def _get_equity_value(equity_curve: pd.DataFrame, col_candidates=("total_value",
     )
 
 
-# ===========================================================================
-# BACKTEST ENGINE TESTS
-# ===========================================================================
-
 @pytest.mark.skipif(
     BacktestEngine is None,
     reason=f"BacktestEngine not importable: {_BACKTEST_IMPORT_ERROR}"
 )
 class TestBacktestEngine:
-    """Unit tests for the BacktestEngine."""
+    """
+    Execution validation suite for the historical simulation engine.
+    """
 
     @pytest.fixture
     def synthetic_market(self):
@@ -105,6 +109,14 @@ class TestBacktestEngine:
           execution timestamps, preventing look-ahead bias.
           
         Period: 20 business days (sufficient for warmup and trade generation).
+
+        Args:
+            None
+
+        Returns:
+            tuple: A 2-element tuple containing:
+                - pd.DataFrame: Idealized target prediction matrix.
+                - pd.DataFrame: Corresponding synthetic OHLCV pricing matrix.
         """
         dates = pd.date_range("2023-01-02", periods=20, freq="B")
         rng   = np.random.default_rng(seed=42)
@@ -113,7 +125,7 @@ class TestBacktestEngine:
         preds_rows  = []
 
         for i, d in enumerate(dates):
-            # Construct strong uptrend to validate signal capture
+            # Injects a strict deterministic uptrend to guarantee verifiable signal capture boundaries
             up_close   = 100.0 + i * 2.0
             up_open    = 100.0 + (i - 1) * 2.0 if i > 0 else up_close
             volume     = 1_000_000 + int(rng.integers(-50_000, 50_000))
@@ -143,6 +155,12 @@ class TestBacktestEngine:
         """
         Verifies that critical financial parameters (Capital, Commission, Slippage)
         are correctly persisted in the engine state.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         engine = BacktestEngine(
             initial_capital=50_000,
@@ -152,7 +170,7 @@ class TestBacktestEngine:
         )
         assert engine.initial_capital == 50_000,  "initial_capital not stored correctly"
 
-        # Verify secondary cost parameters if exposed
+        # Assert optional secondary cost friction parameters are securely mapped if exposed by the engine
         if hasattr(engine, "slippage"):
             assert engine.slippage == 0.0005, "slippage not stored correctly"
         if hasattr(engine, "spread"):
@@ -165,6 +183,12 @@ class TestBacktestEngine:
         Constraints:
         1. **Profitability**: $NAV_{final} > NAV_{initial}$
         2. **Monotonicity**: $NAV_t \ge NAV_{t-1}, \forall t$ (No drawdown possible).
+
+        Args:
+            synthetic_market (tuple): The deterministic prediction and pricing matrices.
+
+        Returns:
+            None
         """
         preds, prices = synthetic_market
 
@@ -175,12 +199,12 @@ class TestBacktestEngine:
             spread=0.0,
             rebalance_freq="daily",
             use_market_impact=False,
-            execution_price="close",  # Eliminate intraday timing risk for this specific test
+            execution_price="close", 
         )
 
         results = engine.run(preds, prices, top_n=2)
 
-        # Validate output schema
+        # Asserts structural compliance of the simulation engine's output mapping
         assert "equity_curve" in results, (
             "engine.run() result missing 'equity_curve' key. "
             f"Keys returned: {list(results.keys())}"
@@ -193,9 +217,9 @@ class TestBacktestEngine:
             "Check execution direction (long=buy, short=sell) and price used."
         )
 
-        # Verify monotonicity (Zero-Loss Constraint)
+        # Strictly verifies monotonicity (Zero-Loss Constraint) bounding floating-point approximations
         daily_change = equity_series.diff().dropna()
-        losing_days  = (daily_change < -1e-8).sum()   # Tolerance for floating-point noise
+        losing_days  = (daily_change < -1e-8).sum() 
         assert losing_days == 0, (
             f"Equity decreased on {losing_days} days despite perfect signals "
             f"and zero costs. Losing-day changes: "
@@ -203,7 +227,6 @@ class TestBacktestEngine:
             "Check position rebalancing and P&L accrual logic."
         )
 
-        # Confirm active trading occurred
         assert "trades" in results and not results["trades"].empty, (
             "No trades generated by BacktestEngine. "
             "Check signal threshold and top_n parameter."
@@ -215,10 +238,16 @@ class TestBacktestEngine:
         
         The engine should return a neutral equity curve (Cash only) without
         raising unhandled exceptions.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         engine = BacktestEngine(initial_capital=100_000, commission=0.001)
 
-        # Construct properly typed but empty DataFrames to pass schema validation
+        # Constructs structurally compliant but vacant DataFrames to validate edge-case routing
         empty_preds  = pd.DataFrame(columns=["date", "ticker", "prediction"]).astype({"prediction": float})
         empty_prices = pd.DataFrame(columns=["date", "ticker", "open", "close", "volume"]).astype(
             {"open": float, "close": float, "volume": float})
@@ -241,6 +270,12 @@ class TestBacktestEngine:
         r"""
         Verifies that orders exceeding available cash are correctly scaled or capped.
         Constraint: $OrderValue \le AvailableCash$.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         dates = pd.date_range("2023-01-01", periods=2, freq="B")
         prices = pd.DataFrame([
@@ -250,7 +285,7 @@ class TestBacktestEngine:
             {"date": dates[0], "ticker": "A", "prediction": 1.0}
         ])
         
-        # Attempt to allocate more than 100% implicitly via small capital
+        # Intentionally forces execution to exceed nominal account values to verify structural scale-down logic
         engine = BacktestEngine(initial_capital=1000)
         res = engine.run(preds, prices, top_n=1)
         
@@ -264,6 +299,12 @@ class TestBacktestEngine:
         r"""
         Verifies that enabling market impact modeling correctly penalizes performance.
         Hypothesis: $NAV_{impact} \le NAV_{no\_impact}$.
+
+        Args:
+            synthetic_market (tuple): The deterministic prediction and pricing matrices.
+
+        Returns:
+            None
         """
         preds, prices = synthetic_market
         engine_no_impact = BacktestEngine(initial_capital=100000, use_market_impact=False)
@@ -280,7 +321,14 @@ class TestBacktestEngine:
     def test_average_cost_accounting(self):
         """
         Verifies Average Cost Basis lot matching logic in trade logging.
+
         Ensures correct cost basis attribution when selling a portion of a position.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         dates = pd.date_range("2023-01-01", periods=3, freq="B")
         prices = pd.DataFrame([
@@ -301,26 +349,20 @@ class TestBacktestEngine:
         res = engine.run(preds, prices, is_weights=True)
         trades = res["trades"]
         
-        # Third trade is the sell
+        # Asserts the closing boundary event calculates cost basis dynamically
         assert len(trades) >= 3
         sell_trade = trades.iloc[-1]
         
-        # 1st trade: Buy 10 @ 100 -> avg cost = 100
-        # 2nd trade: Buy 10 @ 110 -> avg cost = (10*100 + 10*110)/20 = 105
-        # 3rd trade: Sell 15 @ 120 -> PnL = 15 * (120 - 105) = 225
-        
         assert sell_trade["pnl"] == pytest.approx(225.0, abs=1.0)
-
-# ===========================================================================
-# ATTRIBUTION TESTS
-# ===========================================================================
 
 @pytest.mark.skipif(
     SimpleAttribution is None,
     reason=f"SimpleAttribution not importable: {_ATTRIBUTION_IMPORT_ERROR}"
 )
 class TestAttribution:
-    """Unit tests for SimpleAttribution logic."""
+    """
+    Statistical validation suite for the portfolio performance attribution layer.
+    """
 
     def test_pnl_aggregation(self):
         r"""
@@ -330,13 +372,16 @@ class TestAttribution:
         - **Total PnL**: $\sum PnL_i$
         - **Profit Factor**: $\frac{\sum GrossProfit}{|\sum GrossLoss|}$
         - **Hit Ratio**: $\frac{N_{winners}}{N_{total}}$
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         trades = pd.DataFrame([
-            # Win (long)
             {"ticker": "A", "side": "long",  "entry_price": 100, "exit_price": 110, "pnl":  10.0},
-            # Loss (long)
             {"ticker": "B", "side": "long",  "entry_price": 100, "exit_price":  90, "pnl": -10.0},
-            # Win (short)
             {"ticker": "C", "side": "short", "entry_price": 100, "exit_price":  90, "pnl":  10.0},
         ])
         trades["date"] = pd.Timestamp("2023-01-01")
@@ -344,7 +389,6 @@ class TestAttribution:
         trades["commission"] = 0.0
         trades["return"] = trades["pnl"] / (trades["entry_price"] * trades["size"])
         trades["net_pnl"] = trades["pnl"]
-        # Use "Closed" (Capital C) to test case-insensitivity
         trades["status"] = "Closed"
         trades["entry_time"] = trades["date"]
         trades["exit_time"] = trades["date"] + pd.Timedelta(hours=4)
@@ -353,7 +397,7 @@ class TestAttribution:
         attr  = SimpleAttribution()
         stats = attr.analyze_pnl_drivers(trades)
 
-        # Use .get() to be robust against missing keys in sparse returns
+        # Validates fundamental P&L distribution logic and boundaries
         assert stats.get("n_trades", 0)     == 3,                       "n_trades wrong"
         assert stats.get("hit_ratio", 0.0)      == pytest.approx(0.6667, abs=1e-4),   "hit_ratio wrong"
         assert stats.get("long_pnl_contribution", 0.0)   == pytest.approx(0.0),    "long_pnl_contribution wrong"
@@ -372,6 +416,12 @@ class TestAttribution:
         Expected:
         - `hit_ratio` should be 0.0 or NaN (not raise Error).
         - `total_pnl` should be 0.0.
+
+        Args:
+            None
+
+        Returns:
+            None
         """
         empty_trades = pd.DataFrame(
             columns=["date", "ticker", "side", "size", "entry_price", "exit_price", "pnl", "commission", "return", "net_pnl", "status", "entry_time", "exit_time"]
@@ -393,14 +443,21 @@ class TestAttribution:
 
         assert stats.get("n_trades", -1)   == 0,               "n_trades should be 0"
 
-        # Hit ratio must be 0 or NaN — not undefined/crash
         hr = stats.get("hit_ratio", 0)
         assert hr == pytest.approx(0.0) or (
             isinstance(hr, float) and np.isnan(hr)
         ), f"hit_ratio for 0 trades should be 0 or NaN, got {hr}"
 
     def test_all_winning_trades(self):
-        """Verifies boundary condition: $HitRatio = 1.0$ when all trades are profitable."""
+        """
+        Verifies boundary condition: $HitRatio = 1.0$ when all trades are profitable.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         trades = pd.DataFrame([
             {"ticker": t, "side": "long", "entry_price": 100, "exit_price": 110, "pnl": 10.0}
             for t in ["A", "B", "C"]
@@ -410,7 +467,6 @@ class TestAttribution:
         trades["commission"] = 0.0
         trades["return"] = trades["pnl"] / (trades["entry_price"] * trades["size"])
         trades["net_pnl"] = trades["pnl"]
-        # Use "Closed" (Capital C) to test case-insensitivity
         trades["status"] = "Closed"
         trades["entry_time"] = trades["date"]
         trades["exit_time"] = trades["date"] + pd.Timedelta(hours=4)
@@ -421,7 +477,15 @@ class TestAttribution:
         assert stats.get("short_pnl_contribution", 0.0) == pytest.approx(0.0)
 
     def test_all_losing_trades(self):
-        """Verifies boundary condition: $HitRatio = 0.0$ when all trades are unprofitable."""
+        """
+        Verifies boundary condition: $HitRatio = 0.0$ when all trades are unprofitable.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         trades = pd.DataFrame([
             {"ticker": t, "side": "long", "entry_price": 100, "exit_price": 90, "pnl": -10.0}
             for t in ["A", "B", "C"]
@@ -431,7 +495,6 @@ class TestAttribution:
         trades["commission"] = 0.0
         trades["return"] = trades["pnl"] / (trades["entry_price"] * trades["size"])
         trades["net_pnl"] = trades["pnl"]
-        # Use "Closed" (Capital C) to test case-insensitivity
         trades["status"] = "Closed"
         trades["entry_time"] = trades["date"]
         trades["exit_time"] = trades["date"] + pd.Timedelta(hours=4)

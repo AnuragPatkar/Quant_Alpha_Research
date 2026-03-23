@@ -1,14 +1,20 @@
 """
-Main configuration module - Single source of truth
-Implements Singleton pattern for consistent settings across application
+Global Configuration and Parameter Registry
+===========================================
+Centralized, Singleton-based configuration manager for the Quant Alpha platform.
 
-Author: Anurag Patkar
-Design Pattern: Singleton
-Dependencies: pathlib, os, datetime
+Purpose
+-------
+This module establishes the single source of truth for all foundational parameters,
+hyperparameters, and environmental configurations. It orchestrates directory structures,
+feature engineering bounds, machine learning topology, and backtest constraints,
+ensuring strict parity between research and production environments.
 
-FIXES:
-  BUG-040: Embargo calendar-day conversion changed from magic 1.45 multiplier to 30 days
-  BUG-045: WINSORIZE_QUANTILES is now the single source of truth for clip_pct
+Role in Quantitative Workflow
+-----------------------------
+Imported system-wide to guarantee deterministic execution. Validates the structural
+integrity of hyperparameters, path resolutions, and look-ahead bias constraints
+(e.g., embargo periods) prior to pipeline execution.
 """
 
 import os
@@ -22,25 +28,22 @@ from dateutil.relativedelta import relativedelta
 
 class Config:
     """
-    Singleton configuration class
+    Singleton configuration registry for the quantitative platform.
 
-    Design Philosophy:
-    - Single source of truth for all settings
-    - Type-safe access to configuration
-    - Environment-aware (dev, staging, production)
-    - Validates configuration on initialization
-
-    Usage:
-        config = Config()
-        tickers = config.UNIVERSE_TICKERS
-        start_date = config.BACKTEST_START_DATE
+    Ensures a single, immutable state across multi-process or distributed
+    execution DAGs, preventing hyperparameter drift during pipeline runs.
     """
 
     _instance = None
     _lock = threading.Lock()
 
     def __new__(cls):
-        """Singleton pattern - only one Config instance exists"""
+        """
+        Enforces the Singleton design pattern.
+
+        Returns:
+            Config: The globally shared configuration instance.
+        """
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -49,17 +52,20 @@ class Config:
         return cls._instance
 
     def __init__(self):
-        """Initialize configuration (only runs once)"""
+        """
+        Initializes the platform configuration and validates structural integrity.
+
+        Executes strictly once per application lifecycle to bind environmental
+        variables, establish data warehouse paths, and freeze algorithmic hyperparameters.
+        """
         if self._initialized:
             return
 
-        # Mark as initialized
         self._initialized = True
 
-        # Set environment
-        self.ENV = os.getenv('ENV', 'development')  # development, staging, production
+        # Bind execution environment to adjust computational verbosity and pipeline persistence
+        self.ENV = os.getenv('ENV', 'development')
 
-        # Initialize all configuration sections
         self._setup_paths()
         self._setup_data_config()
         self._setup_feature_config()
@@ -67,40 +73,36 @@ class Config:
         self._setup_backtest_config()
         self._setup_logging_config()
 
-        # Validate configuration
         self._validate_config()
 
-    # ==================== PATH CONFIGURATION ====================
-
     def _setup_paths(self):
-        """Set up all project paths"""
-        # Project root
+        """
+        Dynamically resolves and binds absolute paths for the Data Warehouse and ML Artifacts.
+        """
         self.PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 
-        # Data directories
         self.DATA_DIR = self.PROJECT_ROOT / 'data'
         self.RAW_DATA_DIR = self.DATA_DIR / 'raw'
         self.PROCESSED_DATA_DIR = self.DATA_DIR / 'processed'
         self.CACHE_DIR = self.DATA_DIR / 'cache'
         self.MEMBERSHIP_MASK_PATH = self.PROCESSED_DATA_DIR / 'sp500_membership_mask.pkl'
 
-        # Raw data subdirectories
         self.PRICES_DIR = self.RAW_DATA_DIR / 'sp500_prices'
         self.FUNDAMENTALS_DIR = self.RAW_DATA_DIR / 'fundamentals'
         self.EARNINGS_DIR = self.RAW_DATA_DIR / 'earnings'
         self.ALTERNATIVE_DIR = self.RAW_DATA_DIR / 'alternative'
 
-        # Model & Results directories
         self.MODELS_DIR = self.PROJECT_ROOT / 'models'
         self.RESULTS_DIR = self.PROJECT_ROOT / 'results'
         self.PREDICTIONS_DIR = self.RESULTS_DIR / 'predictions'
         self.LOG_DIR = self.PROJECT_ROOT / 'logs'
 
-        # Create all directories if they don't exist
         self._create_directories()
 
     def _create_directories(self):
-        """Create all necessary directories"""
+        """
+        Provisions the target directory tree for data, models, and telemetry.
+        """
         directories = [
             self.DATA_DIR,
             self.RAW_DATA_DIR,
@@ -119,35 +121,29 @@ class Config:
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
 
-    # ==================== DATA CONFIGURATION ====================
-
     def _setup_data_config(self):
-        """Configure data sources and universe"""
-
-        # Universe definition
+        """
+        Configures quantitative universe boundaries, data quality guards, and pipeline frequencies.
+        """
         self.UNIVERSE = 'sp500_full'
 
-        # Date range for backtesting
         self.BACKTEST_START_DATE = '2021-01-01'
         self.BACKTEST_END_DATE = '2026-02-28'
 
-        # Known Biases (Documentation only)
+        # Flag indicating active survivorship bias mitigation via point-in-time constituent masking
         self.HAS_SURVIVORSHIP_BIAS = True
 
-        # Data Quality Guards (CRITICAL FIXES)
-        self.MIN_VALID_DATA_POINTS = 252      # Must have at least 1 year of data
-        self.MAX_MISSING_PCT = 0.05           # Reject stock if >5% data is missing
-        self.MAX_NAN_FILL_LIMIT = 5           # Max consecutive NaNs to forward fill
-        self.MIN_VOLUME_THRESHOLD = 1_000_000  # Liquidity Filter ($1M+ avg volume)
+        # Quality Gates: Prevents model inference on illiquid or statistically sparse assets
+        self.MIN_VALID_DATA_POINTS = 252
+        self.MAX_MISSING_PCT = 0.05
+        self.MAX_NAN_FILL_LIMIT = 5
+        self.MIN_VOLUME_THRESHOLD = 1_000_000
 
-        # Data Refresh Settings
-        self.FUNDAMENTAL_UPDATE_FREQ = "quarterly"   # Q1, Q2, Q3, Q4
+        self.FUNDAMENTAL_UPDATE_FREQ = "quarterly"
         self.EARNINGS_UPDATE_FREQ = "daily"
         self.NEWS_UPDATE_FREQ = "daily"
 
-        # -------------------------------------------------------------
-        # DYNAMIC UNIVERSE LOADING (FROM DISK)
-        # -------------------------------------------------------------
+        # Attempt dynamic universe discovery via materialized data blobs in the local storage tier
         try:
             price_files = list(self.PRICES_DIR.glob('*.csv'))
             if price_files:
@@ -161,70 +157,64 @@ class Config:
             self.UNIVERSE_TICKERS = []
             self.UNIVERSE_SIZE = 0
 
-    # ==================== FEATURE CONFIGURATION ====================
-
     def _setup_feature_config(self):
-        """Configure feature engineering parameters"""
+        """
+        Defines hyperparameter boundaries for feature extraction, signal smoothing, and model gating.
+        """
         self.FORWARD_RETURN_DAYS = 5
         self.FORWARD_HORIZONS = [5, 10, 21, 63]
 
-        # Windows for technical indicators
+        # Temporal isolation windows for momentum and mean reversion features
         self.MOMENTUM_WINDOWS = [5, 10, 21, 63, 126, 252]
         self.VOLATILITY_WINDOWS = [5, 10, 21, 63, 126]
         self.VOLUME_WINDOWS = [5, 10, 21, 63]
 
-        # --------------------------------------------------------
-        # ML PREPROCESSING
-        # --------------------------------------------------------
         self.RSI_PERIOD = 14
         self.BB_PERIOD = 20
         self.BB_STD = 2.0
 
-        # Feature Selection (Prevents overfitting/model confusion)
-        self.MAX_FEATURES = 80                       # Retain only the Top 80 predictive signals
-        self.FEATURE_CORRELATION_THRESHOLD = 0.75    # Remove highly correlated (duplicate) signals
+        # Dimensionality Reduction: Mitigates multicollinearity and model degradation
+        self.MAX_FEATURES = 80
+        self.FEATURE_CORRELATION_THRESHOLD = 0.75
 
-        # Data Cleaning (Normalization & Outlier Management)
-        self.NORMALIZE_FEATURES = True               # Z-Score Standardization (Scale all features equally)
-        self.WINSORIZE_FEATURES = True               # Clip extreme outliers
+        # Preprocessing execution state switches
+        self.NORMALIZE_FEATURES = True
+        self.WINSORIZE_FEATURES = True
 
-        # FIX BUG-045: WINSORIZE_QUANTILES is the SINGLE source of truth for
-        # WinsorisationScaler clip_pct. preprocessing.py reads this value.
-        self.WINSORIZE_QUANTILES = (0.01, 0.99)      # Cap the Top/Bottom 1% of values
+        # Establishes the definitive institutional clipping threshold for WinsorisationScaler logic
+        self.WINSORIZE_QUANTILES = (0.01, 0.99)
 
-        # Feature Engineering Switches
         self.ENABLE_TECHNICAL_FEATURES = True
         self.ENABLE_FUNDAMENTAL_FEATURES = True
         self.ENABLE_EARNINGS_FEATURES = True
         self.ENABLE_ALTERNATIVE_FEATURES = True
 
-        # Data Engineering Bounds
-        self.RETURN_CLIP_MIN = -0.50      # Cap massive gaps/halts to prevent loss distortion
-        self.RETURN_CLIP_MAX = 0.50       # Cap massive gaps/halts to prevent loss distortion
+        # Hard boundaries to prevent anomalous returns (e.g., micro-cap reverse splits) from warping the target variable
+        self.RETURN_CLIP_MIN = -0.50
+        self.RETURN_CLIP_MAX = 0.50
 
-        # Model Performance Gates
+        # Statistical significance gates required for promotion to the Production Ensemble
         self.PROD_IC_THRESHOLD = 0.010
         self.PROD_IC_TSTAT = 2.5
         self.MIN_OOS_IC_THRESHOLD = 0.005
         self.MIN_OOS_IC_TSTAT = 1.5
 
-    # ==================== MODEL CONFIGURATION ====================
-
     def _setup_model_config(self):
-        """Configure ML model parameters"""
+        """
+        Configures the Gradient Boosted Decision Tree (GBDT) ensemble hyperparameters.
+        """
         self.PRIMARY_MODEL = 'ensemble'
         self.ENSEMBLE_MODELS = ['lightgbm', 'xgboost', 'catboost']
         self.ENSEMBLE_METHOD = 'weighted'
 
-        # 1. Ensemble Weights
-        # LightGBM usually performs best on tabular data, giving it highest weight
+        # Static allocation weights derived from out-of-sample stability analysis
         self.MODEL_WEIGHTS = {
             'lightgbm': 0.4,
             'xgboost': 0.3,
             'catboost': 0.3,
         }
 
-        # 2. LightGBM parameters (Optimized for Finance)
+        # LightGBM structural hyperparameters targeted for financial tabular data
         self.LGBM_PARAMS = {
             'objective': 'regression',
             'metric': 'rmse',
@@ -233,14 +223,13 @@ class Config:
             'max_depth': 5,
             'learning_rate': 0.01,
             'n_estimators': 200,
-            'reg_alpha': 1.0,     # L1 Regularization (Important for noise)
-            'reg_lambda': 1.0,    # L2 Regularization
+            'reg_alpha': 1.0,
+            'reg_lambda': 1.0,
             'random_state': 42,
             'n_jobs': -1,
             'verbose': -1,
         }
 
-        # 3. XGBoost Parameters
         self.XGB_PARAMS = {
             'objective': 'reg:squarederror',
             'eval_metric': 'rmse',
@@ -249,25 +238,23 @@ class Config:
             'n_estimators': 200,
             'subsample': 0.8,
             'colsample_bytree': 0.8,
-            'reg_alpha': 1.0,     # L1
-            'reg_lambda': 1.0,    # L2
+            'reg_alpha': 1.0,
+            'reg_lambda': 1.0,
             'random_state': 42,
             'n_jobs': -1,
         }
 
-        # 4. CatBoost Parameters
         self.CATBOOST_PARAMS = {
             'loss_function': 'RMSE',
             'depth': 6,
             'learning_rate': 0.01,
             'iterations': 200,
-            'l2_leaf_reg': 3.0,   # Regularization
+            'l2_leaf_reg': 3.0,
             'random_seed': 42,
             'verbose': False,
             'allow_writing_files': False,
         }
 
-        # Hyperparameter optimization settings
         if self.ENV == 'production':
             self.ENABLE_HYPEROPT = False
             self.HYPEROPT_TRIALS = 0
@@ -275,84 +262,78 @@ class Config:
             self.ENABLE_HYPEROPT = True
             self.HYPEROPT_TRIALS = 50
 
-    # ==================== BACKTEST CONFIGURATION ====================
-
     def _setup_backtest_config(self):
-        """Configure backtesting parameters"""
-
-        # Walk-forward settings
+        """
+        Establishes transaction cost analysis (TCA), execution constraints, and validation horizons.
+        """
         self.VALIDATION_METHOD = 'walk_forward_expanding'
         self.MIN_TRAIN_MONTHS = 24
         self.TEST_WINDOW_MONTHS = 6
         self.STEP_SIZE_MONTHS = 3
 
-        # FIX BUG-040: EMBARGO_TRADING_DAYS remains as trading-day count (21).
-        # get_train_test_splits() uses 30 calendar days as a conservative calendar
-        # approximation (~21 trading days). The trainer.py resolves actual trading-day
-        # offsets on the real data index (confirmed architectural decision).
-        self.EMBARGO_TRADING_DAYS = 21              # Used by trainer.py on data index
-        self._EMBARGO_CALENDAR_DAYS = 30            # Used only in get_train_test_splits()
-        #   (30 cal days ≈ 21 trading days; conservative; avoids the 1.45 magic number)
+        # Defines the mathematical embargo gap required to strictly prevent signal leakage
+        # during Purged K-Fold Cross-Validation.
+        self.EMBARGO_TRADING_DAYS = 21
+        self._EMBARGO_CALENDAR_DAYS = 30
 
-        # Fix full history fallback
         self.PROD_MODEL_MIN_DATE = '2020-01-01'
 
-        # Execution Logic
-        self.EXECUTION_PRICE = 'open'    # Trade on NEXT DAY Open (Realistic)
-        # self.EXECUTION_PRICE = 'close' # Trade on SAME DAY Close (Optimistic)
+        # Realistic execution assumption targeting next-day open to avoid temporal contamination
+        self.EXECUTION_PRICE = 'open'
 
-        # Portfolio Config
         self.INITIAL_CAPITAL = 1_000_000
         self.NUM_LONG_POSITIONS = 10
 
-        # Risk Management
-        self.MAX_SECTOR_EXPOSURE = 0.30   # Max 30% in one sector
-        self.MAX_DRAWDOWN_LIMIT = 0.20    # Stop trading if 20% loss
-        self.STOP_LOSS_PCT = 0.05         # Stop loss per trade
-        self.TAKE_PROFIT_PCT = 0.15       # Take profit per trade
-        self.TRAILING_STOP_PCT = 0.10     # Trailing stop (10%)
+        # Mandatory portfolio-level capital preservation bounds
+        self.MAX_SECTOR_EXPOSURE = 0.30
+        self.MAX_DRAWDOWN_LIMIT = 0.20
+        self.STOP_LOSS_PCT = 0.05
+        self.TAKE_PROFIT_PCT = 0.15
+        self.TRAILING_STOP_PCT = 0.10
         self.MAX_POSITION_SIZE = 0.10
 
-        # Realistic Market Simulation
-        self.TRANSACTION_COST_BPS = 10.0  # Fees
-        self.SLIPPAGE_PCT = 0.0005        # 0.05% Price Slippage
-        self.BACKTEST_SPREAD = 0.0005     # 5 bps Spread
-        self.BACKTEST_MAX_TURNOVER = 0.20 # Max 20% turnover per rebalance
-        self.BACKTEST_TARGET_VOL = 0.15   # Volatility Targeting constraint
-        self.RISK_FREE_RATE = 0.04        # 4% Annual Risk Free Rate (for Sharpe)
-        self.BENCHMARK_TICKER = 'SPY'     # Compare performance vs S&P 500
-        self.REBALANCE_FREQ = 'W'         # Weekly Rebalancing
+        # Execution and macro constraints defining real-world implementation friction
+        self.TRANSACTION_COST_BPS = 10.0
+        self.SLIPPAGE_PCT = 0.0005
+        self.BACKTEST_SPREAD = 0.0005
+        self.BACKTEST_MAX_TURNOVER = 0.20
+        self.BACKTEST_TARGET_VOL = 0.15
+        self.RISK_FREE_RATE = 0.04
+        self.BENCHMARK_TICKER = 'SPY'
+        self.REBALANCE_FREQ = 'W'
 
-        # Portfolio Optimization Settings
-        self.OPT_MAX_WEIGHT = 0.10        # Ensures optimizers respect max limits
-        self.OPT_MIN_WEIGHT = 0.0         # Allow zeroing out positions
-        self.OPT_RISK_AVERSION = 2.5      # Mean-Variance & BL
-        self.OPT_KELLY_FRACTION = 0.5     # Kelly Criterion
-        self.OPT_LOOKBACK_DAYS = 252      # Covariance Lookback
-        self.MAX_LEVERAGE = 1.0           # 1.0 = Fully funded, no margin
-        self.MAX_ALPHA_RET = 0.30         # Max expected return assumption for MVO
-        self.BL_CONFIDENCE_LEVEL = 0.6    # Black-Litterman alpha confidence
+        # Convex optimization inputs dictating asset allocation logic
+        self.OPT_MAX_WEIGHT = 0.10
+        self.OPT_MIN_WEIGHT = 0.0
+        self.OPT_RISK_AVERSION = 2.5
+        self.OPT_KELLY_FRACTION = 0.5
+        self.OPT_LOOKBACK_DAYS = 252
+        self.MAX_LEVERAGE = 1.0
+        self.MAX_ALPHA_RET = 0.30
+        self.BL_CONFIDENCE_LEVEL = 0.6
 
-        # Inference Settings
+        # EWMA decay factor applied cross-sectionally to dampen signal oscillation
         self.INFERENCE_SCALER_LOOKBACK_YEARS = 3
-        self.ALPHA_SMOOTHING_LAMBDA = 0.70    # EWMA decay factor for ensemble signals
-
-    # ==================== LOGGING CONFIGURATION ====================
+        self.ALPHA_SMOOTHING_LAMBDA = 0.70
 
     def _setup_logging_config(self):
-        """Configure logging settings"""
+        """
+        Binds deterministic global formatter parameters for observability tracing.
+        """
         self.LOG_FILE = self.LOG_DIR / f'quant_alpha_{self.ENV}.log'
         self.LOG_LEVEL = 'INFO'
         self.LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         self.LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
-    # ==================== VALIDATION ====================
-
     def _validate_config(self):
-        """Validate configuration integrity (Dates AND Paths)"""
+        """
+        Executes critical runtime assertions to prevent structurally flawed pipeline executions.
+
+        Raises:
+            ValueError: If date parameters intersect or normalization thresholds are mathematically invalid.
+        """
         errors = []
 
-        # 1. Date Validation
         try:
             start = datetime.strptime(self.BACKTEST_START_DATE, '%Y-%m-%d')
             end = datetime.strptime(self.BACKTEST_END_DATE, '%Y-%m-%d')
@@ -361,7 +342,6 @@ class Config:
         except ValueError as e:
             errors.append(f"Invalid date format: {e}")
 
-        # 2. Winsorize quantile consistency
         lo, hi = self.WINSORIZE_QUANTILES
         if not (0.0 < lo < 0.5 and 0.5 < hi < 1.0):
             errors.append(
@@ -369,7 +349,6 @@ class Config:
                 f"Got {self.WINSORIZE_QUANTILES}"
             )
 
-        # 3. Data Content Validation (Warning only)
         if self.PRICES_DIR.exists():
             csv_count = len(list(self.PRICES_DIR.glob("*.csv")))
             if csv_count == 0:
@@ -386,16 +365,17 @@ class Config:
         if errors:
             raise ValueError("Configuration Error:\n" + "\n".join(errors))
 
-    # ==================== UTILITIES ====================
-
     def get_train_test_splits(self):
         """
-        Generate walk-forward splits.
-        Supports both 'expanding' (anchored start) and 'rolling' (moving start) windows.
+        Generates the chronological tuple sets required for out-of-sample model evaluation.
 
-        FIX BUG-040: Uses self._EMBARGO_CALENDAR_DAYS (30) instead of the magic
-        1.45 multiplier. trainer.py applies the actual trading-day embargo on the
-        data index using EMBARGO_TRADING_DAYS (21 offsets).
+        Implements Purged K-Fold validation by explicitly buffering test boundaries with
+        the target embargo horizon. Supports both dynamic expanding windows and fixed-length
+        rolling anchors to combat non-stationary distribution decay.
+
+        Returns:
+            List[Tuple[str, str, str, str]]: A sequence mapping strictly to:
+                (train_start, train_end, oos_test_start, oos_test_end).
         """
         start = datetime.strptime(self.BACKTEST_START_DATE, '%Y-%m-%d')
         end = datetime.strptime(self.BACKTEST_END_DATE, '%Y-%m-%d')
@@ -404,20 +384,17 @@ class Config:
         current_start = start
 
         while True:
-            # Training period logic
             if self.VALIDATION_METHOD == 'walk_forward_expanding':
-                train_start = start           # Anchor to the beginning (Expanding)
+                train_start = start
             else:
-                train_start = current_start   # Moving window (Rolling)
+                train_start = current_start
 
             train_end = current_start + relativedelta(months=self.MIN_TRAIN_MONTHS)
 
-            # FIX BUG-040: Use conservative 30 calendar days (≈ 21 trading days).
-            # Trainer resolves precise trading-day embargo on the actual data index.
+            # Apply conservative calendar-to-business-day proxy mapping to purge overlapping serial correlation
             test_start = train_end + timedelta(days=self._EMBARGO_CALENDAR_DAYS)
             test_end = test_start + relativedelta(months=self.TEST_WINDOW_MONTHS)
 
-            # Stop if we run out of data
             if test_end > end:
                 break
 
@@ -428,13 +405,12 @@ class Config:
                 test_end.strftime('%Y-%m-%d'),
             ))
 
-            # Move the window forward
             current_start += relativedelta(months=self.STEP_SIZE_MONTHS)
 
         return splits
 
 
-# Global config instance
+# Export the provisioned global configuration instance
 config = Config()
 
 

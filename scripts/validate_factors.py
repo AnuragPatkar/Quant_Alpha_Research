@@ -1,32 +1,28 @@
 """
-validate_factors.py
-===================
-Factor Quality Assurance & Validation Suite  — v3 (All Bugs Fixed)
-----------------------------------------------------------
-Fixes vs v2:
-  FIX-1:  _assert_target_is_forward called twice in __init__ — removed duplicate
-  FIX-2:  raw_ret_5d no clip in main() — added .clip(-0.5, 0.5) consistent with train_models
-  FIX-3:  groupby().apply(lambda) in IC loop — vectorised via pre-ranked arrays
-  FIX-4:  BH correction hardcoded df=500 — now uses per-factor n_dates
-  FIX-5:  IC decay re-ranks target per factor — pre-ranked shifted targets cached once
-  FIX-6:  Sector-neutral IC computed for all factors — now only for IC-passing candidates
-  FIX-7:  PASS/Inverted gate gap 0.50–0.55 — symmetric bounds (>0.55 / <=0.45)
-  FIX-8:  Look-ahead threshold 0.5 too loose — lowered to 0.3, raises ValueError
-  FIX-9:  Zero-variance AR(1) hardcoded to 1.0 — now returns NaN, tagged FAIL (Zero Variance)
-  FIX-10: Year-stratified sample includes partial year — min 60 rows guard added
-  FIX-11: Cumulative IC re-computed in main() — daily_ic_cache saved in compute_ic_stats
-  FIX-12: add_macro_features called twice — guard added in main()
-  MASTER FIXES:
-  - Memory/MP: ThreadPool executor + shared mem arrays via joblib prevents OOM.
-  - Statistical: Weighted IC implemented based on daily N_tickers.
-  - Degenerate: `pre_filter_factors` explicitly drops dead columns before loops.
-  - Look-ahead: Date gap detection added to find cross-month leakage.
+Factor Quality Assurance and Validation Suite
+=============================================
+Evaluates the statistical efficacy and robustness of engineered alpha factors.
 
-Usage:
-    python scripts/validate_factors.py
-    python scripts/validate_factors.py --threshold 0.015 --top-n 20
-    python scripts/validate_factors.py --force-rebuild
-    python scripts/validate_factors.py --force-lookahead   # skip look-ahead guard
+Purpose
+-------
+This module computes rigorous cross-sectional Information Coefficient (IC) 
+metrics, temporal signal decay, and collinearity profiles for all candidate
+features. It enforces strict guards against look-ahead bias and structural 
+degeneracy to ensure only robust signals are passed to the machine learning
+ensemble.
+
+Role in Quantitative Workflow
+-----------------------------
+Executed post-feature engineering and prior to model training. Acts as the 
+primary statistical gatekeeper, generating the `factor_validation_report.csv` 
+used to define the active feature set for the predictive modeling layer.
+
+Dependencies
+------------
+- **Pandas/NumPy**: Vectorized ranking and cross-sectional matrix operations.
+- **SciPy/Statsmodels**: T-statistics and Benjamini-Hochberg FDR correction.
+- **Joblib**: Parallel processing for computationally intensive IC calculations.
+- **Matplotlib/Seaborn**: Heatmap and decay visualizations.
 """
 
 import sys
@@ -68,12 +64,11 @@ META_COLS = {
 
 IC_DECAY_LAGS = [1, 2, 3, 5, 10, 21]
 
-# Clip bounds — strictly synced with config/settings.py
+# Establishes structural clipping thresholds exactly mirrored from the master configuration
 RETURN_CLIP_MIN = getattr(config, "RETURN_CLIP_MIN", -0.50)
 RETURN_CLIP_MAX = getattr(config, "RETURN_CLIP_MAX",  0.50)
 
-# Look-ahead bias: correlation threshold with intraday return
-# FIX-8: lowered from 0.5 to 0.3 — 0.5 gave false safety confidence
+# Establishes a highly restrictive threshold against contemporaneous correlation leakage
 LOOKAHEAD_CORR_THRESHOLD = 0.30
 
 
@@ -84,21 +79,36 @@ class FactorValidator:
         target_col: str = "raw_ret_5d",
         force_lookahead: bool = False,
     ) -> None:
+        """
+        Initializes the validation state matrix and evaluates structural prerequisites.
+
+        Args:
+            data (pd.DataFrame): Aggregated master dataset containing feature histories.
+            target_col (str, optional): The independent variable targeted for prediction. Defaults to "raw_ret_5d".
+            force_lookahead (bool, optional): Allows validation to proceed despite detected leakage. Defaults to False.
+        """
         self.data            = data.sort_values(["ticker", "date"]).reset_index(drop=True)
         self.target_col      = target_col
         self.force_lookahead = force_lookahead
         self.factors         = self._identify_factors()
         self.results: dict   = {}
-        # FIX-11: cache for daily IC series keyed by factor name
+        
+        # Caches daily IC series sequentially mapped by factor name to bypass redundant computation
         self._daily_ic_cache: dict[str, pd.Series] = {}
 
-        # FIX-1: was called twice — now called exactly once
+        # Triggers look-ahead bias detection during initialization
         self._assert_target_is_forward()
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # SETUP
-    # ──────────────────────────────────────────────────────────────────────────
     def _identify_factors(self) -> list[str]:
+        """
+        Isolates strictly numerical candidate columns, bypassing metadata constraints.
+
+        Args:
+            None
+
+        Returns:
+            list[str]: Array of target features valid for statistical analysis.
+        """
         return [
             c for c in self.data.columns
             if c not in META_COLS
@@ -108,12 +118,18 @@ class FactorValidator:
 
     def _assert_target_is_forward(self) -> None:
         """
-        Detect potential look-ahead bias.
+        Evaluates the dataset for potential look-ahead bias by correlating the target 
+        with contemporaneous intraday returns.
 
-        FIX-8: threshold lowered from 0.5 to 0.3.
-        A correlation of 0.3 with intraday returns already implies
-        the target was not properly shifted. Now raises ValueError
-        instead of just warning — use --force-lookahead to override.
+        Args:
+            None
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: If the absolute correlation exceeds the established threshold,
+                indicating future data leakage into the target variable.
         """
         if "close" not in self.data.columns or self.target_col not in self.data.columns:
             return
@@ -135,12 +151,17 @@ class FactorValidator:
             else:
                 raise ValueError(f"[LOOKAHEAD BIAS DETECTED] {msg}")
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 1. COVERAGE  (vectorised)
-    # ──────────────────────────────────────────────────────────────────────────
     @time_execution
     def check_coverage(self) -> pd.DataFrame:
-        """Vectorized coverage stats — O(cols) not O(cols × rows)."""
+        """
+        Computes vectorized sparsity arrays evaluating null boundaries globally.
+
+        Args:
+            None
+
+        Returns:
+            pd.DataFrame: Metric distributions capturing structural feature voids.
+        """
         logger.info("Checking data coverage...")
         df = self.data[self.factors]
         return pd.DataFrame({
@@ -152,7 +173,16 @@ class FactorValidator:
 
     @time_execution
     def pre_filter_factors(self) -> tuple[list[str], dict]:
-        """Prune zero-variance and highly missing factors before IC loop."""
+        """
+        Evaluates structural matrices, pruning highly sparse or absolutely zero-variance 
+        signals before committing to intensive calculation cycles.
+
+        Args:
+            None
+
+        Returns:
+            tuple[list[str], dict]: Extracted valid factor subsets alongside disqualification reasoning.
+        """
         logger.info("Pre-filtering degenerate factors...")
         df = self.data[self.factors]
         
@@ -173,13 +203,18 @@ class FactorValidator:
         logger.info(f"Pruned {len(self.factors) - len(valid_factors)} degenerate factors.")
         return valid_factors, filter_reasons
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 2. IC STATS  (raw + sector-neutral, vectorised inner loop)
-    # ──────────────────────────────────────────────────────────────────────────
     @time_execution
     def compute_ic_stats(self) -> pd.DataFrame:
         """
-        Compute Rank IC (Spearman) and sector-neutral Rank IC per factor.
+        Constructs absolute Rank IC (Spearman) boundaries dynamically capturing specific 
+        cross-sectional efficacy parameters for both raw and sector-neutral distributions.
+
+        Args:
+            None
+
+        Returns:
+            pd.DataFrame: A comprehensive matrix of statistical outcomes dictating 
+                signal directionality, significance, and relative breadth.
         """
         if "ic_stats" in self.results:
             return self.results["ic_stats"]
@@ -190,7 +225,7 @@ class FactorValidator:
         valid      = self.data.dropna(subset=[self.target_col]).copy()
         has_sector = "sector" in valid.columns
         
-        # Daily weights for Weighted IC
+        # Daily volume vectors to facilitate precise breadth-weighted evaluations
         daily_n = valid.groupby("date").size()
 
         if has_sector:
@@ -272,7 +307,7 @@ class FactorValidator:
                 logger.warning(f"IC failed for {f}: {exc}")
                 return None
 
-        # ThreadPool prevents memory exhaustion from multiprocessing serialization
+        # Implements threaded map execution to mitigate IPC boundaries causing systemic OOMs
         results = Parallel(n_jobs=-1, prefer="threads")(
             delayed(_process_factor)(f) for f in tqdm(valid_factors, desc="IC")
         )
@@ -283,7 +318,7 @@ class FactorValidator:
                 self._daily_ic_cache[r["factor"]] = r.pop("daily_ic")
                 ic_stats.append(r)
                 
-        # Inject filtered degenerate factors for reporting
+        # Injects disqualified factor configurations universally to maintain reporting dimensions
         for f, reason in filter_reasons.items():
             ic_stats.append({
                 "factor": f, "ic_mean": np.nan, "ic_std": np.nan, "icir": np.nan,
@@ -296,10 +331,7 @@ class FactorValidator:
 
         df = pd.DataFrame(ic_stats).set_index("factor")
 
-        # ── FIX-4: BH correction — per-factor df from n_dates ────────────────
-        # Original hardcoded df=500 for all factors regardless of their
-        # actual date count — inflated p-values for sparse factors,
-        # deflated for dense ones.
+        # Applies Benjamini-Hochberg False Discovery Rate (FDR) correction utilizing dynamic degrees of freedom
         try:
             from statsmodels.stats.multitest import multipletests
             p_vals = np.array([
@@ -321,21 +353,21 @@ class FactorValidator:
         self.results["ic_stats"] = df
         return df
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 3. IC DECAY
-    # ──────────────────────────────────────────────────────────────────────────
     @time_execution
     def compute_ic_decay(self, top_factors: list[str]) -> pd.DataFrame:
         """
-        IC at lags 1, 2, 3, 5, 10, 21 trading days.
+        Computes Information Coefficient measurements across specific target lags 
+        to identify the half-life and alpha turnover boundaries for prime candidates.
 
-        FIX-5: Shifted target ranks pre-computed ONCE per lag outside the
-               factor loop. Original re-ranked the shifted target for every
-               factor at every lag = O(F × lags) redundant ranking operations.
+        Args:
+            top_factors (list[str]): The subset array of top candidate signals to examine.
+
+        Returns:
+            pd.DataFrame: Temporally scaled coefficient observations mapped across specified delays.
         """
         logger.info(f"Computing IC decay for top {len(top_factors)} factors...")
 
-        # FIX-5: pre-rank shifted targets once per lag — O(lags) not O(F × lags)
+        # Pre-computes shifted target ranks universally across lags to optimize temporal complexity
         shifted_targets: dict[int, pd.Series] = {}
         for lag in IC_DECAY_LAGS:
             shifted = self.data.groupby("ticker")[self.target_col].shift(-lag)
@@ -346,7 +378,7 @@ class FactorValidator:
             row = {"factor": f}
             for lag in IC_DECAY_LAGS:
                 try:
-                    # BUG-001 FIX: Drop NaNs before ranking
+                    # Strictly excludes non-finite observations prior to cross-sectional ranking to prevent distributional skew
                     tmp_df = self.data[["date", f]].copy()
                     tmp_df["_t"] = shifted_targets[lag]
                     tmp_df = tmp_df.dropna()
@@ -364,7 +396,7 @@ class FactorValidator:
                         "date": tmp_df["date"].values,
                     })
 
-                    # Vectorised Spearman (same approach as compute_ic_stats)
+                    # Derives Spearman via vectorized distribution parameters
                     grp   = tmp.groupby("date")
                     f_dm  = tmp["f"] - tmp.groupby("date")["f"].transform("mean")
                     t_dm  = tmp["t"] - tmp.groupby("date")["t"].transform("mean")
@@ -382,18 +414,16 @@ class FactorValidator:
 
         return pd.DataFrame(decay_rows).set_index("factor")
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 4. AUTOCORRELATION  (per-ticker AR(1))
-    # ──────────────────────────────────────────────────────────────────────────
     @time_execution
     def compute_autocorrelation(self) -> pd.DataFrame:
         """
-        Per-ticker AR(1), averaged across tickers.
+        Quantifies the AR(1) signal stability parameters universally across execution arrays.
 
-        FIX-9: Zero-variance series now returns NaN instead of hardcoded 1.0.
-               A constant signal is zero-information and should be tagged
-               FAIL (Zero Variance) downstream, not given a perfect autocorr
-               score that masks the problem.
+        Args:
+            None
+
+        Returns:
+            pd.DataFrame: A matrix of calculated day-over-day turnover estimations indicating execution cost bounds.
         """
         logger.info("Computing factor autocorrelation (per-ticker AR1)...")
         auto_corrs = []
@@ -401,8 +431,7 @@ class FactorValidator:
         for f in tqdm(self.factors, desc="Autocorr"):
             try:
                 def _ticker_autocorr(s: pd.Series) -> float:
-                    # FIX-9: return NaN for constant series — caller tags as dead factor
-                    # Original returned 1.0 which masked zero-information factors
+                    # Evaluates and assigns NaN to zero-variance series to explicitly flag zero-information signals
                     if s.std() < 1e-8:
                         return np.nan
                     return float(s.corr(s.shift(1)))
@@ -424,23 +453,23 @@ class FactorValidator:
 
         return pd.DataFrame(auto_corrs).set_index("factor")
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 5. REDUNDANCY HEATMAP
-    # ──────────────────────────────────────────────────────────────────────────
     @time_execution
     def check_redundancy(self, top_n_factors: list[str]) -> None:
         """
-        Spearman correlation heatmap.
+        Computes macro-stratified correlation measurements against target factors 
+        to proactively map ensemble collinearity risks.
 
-        FIX-10: Year-stratified sample now requires >= 60 rows per year
-                to exclude partial years that bias the correlation estimate
-                toward recent data patterns.
+        Args:
+            top_n_factors (list[str]): Highly-scoring candidate series to evaluate.
+
+        Returns:
+            None: Renders generated figures directly into the platform output path.
         """
         logger.info("Generating correlation heatmap (year-stratified sample)...")
         if not top_n_factors:
             return
 
-        # FIX-10: min 60 rows guard excludes partial current year
+        # Enforces a strict observation floor to prevent partial-year structural biases in correlation estimations
         sample_df = (
             self.data[top_n_factors + ["date"]]
             .assign(year=lambda x: pd.to_datetime(x["date"]).dt.year)
@@ -479,16 +508,23 @@ class FactorValidator:
         plt.close()
         logger.info(f"Heatmap saved → {out_path}")
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # 6. MASTER REPORT
-    # ──────────────────────────────────────────────────────────────────────────
     def generate_report(
         self,
         output_dir: Path,
         threshold: float = 0.015,
         top_n: int = 20,
     ) -> pd.DataFrame:
-        """Compile all metrics → master CSV + console summary."""
+        """
+        Aggregates disparate testing arrays into unified management and execution summaries.
+
+        Args:
+            output_dir (Path): Destination registry where the generated artifacts map.
+            threshold (float, optional): IC configuration mapping strict thresholds. Defaults to 0.015.
+            top_n (int, optional): Evaluation constraint mapping decay sequences. Defaults to 20.
+
+        Returns:
+            pd.DataFrame: Absolute comprehensive matrix indicating the status parameters universally.
+        """
         coverage = self.check_coverage()
         ic_stats = self.compute_ic_stats()
         autocorr = self.compute_autocorrelation()
@@ -499,7 +535,6 @@ class FactorValidator:
 
         report = ic_stats.join(coverage, how="left").join(autocorr, how="left")
 
-        # ── Status classification ─────────────────────────────────────────────
         report["status"]    = "FAIL (Weak Signal)"
         report["rescuable"] = False
 
@@ -507,7 +542,7 @@ class FactorValidator:
             mask_filtered = report["_filter_reason"].notna()
             report.loc[mask_filtered, "status"] = report.loc[mask_filtered, "_filter_reason"]
 
-        # FIX-9: Zero-variance factors — flagged separately before other gates
+        # Isolates and explicitly tags absolute zero-variance factors prior to applying general performance gates
         if "n_const_tickers" in report.columns:
             n_tickers = self.data["ticker"].nunique() if "ticker" in self.data.columns else 1
             mask_zero_var = report["n_const_tickers"] > (n_tickers * 0.5)
@@ -515,13 +550,11 @@ class FactorValidator:
 
         mask_not_zero = report["status"] != "FAIL (Zero Variance)"
         
-        # 0. Missing Data
         mask_missing = report["coverage_pct"] < 0.50
         report.loc[mask_missing, "status"] = "FAIL (Missing Data > 50%)"
 
         sn_icir = report.get("sn_icir", pd.Series(0.0, index=report.index))
 
-        # 1. PASS
         mask_pass = (
             (report["coverage_pct"] >= 0.50) &
             (
@@ -531,7 +564,6 @@ class FactorValidator:
         )
         report.loc[mask_pass, "status"] = "PASS"
 
-        # 2. PASS (Inverted)
         mask_inverted = (
             (report["coverage_pct"] >= 0.50) &
             (
@@ -542,14 +574,12 @@ class FactorValidator:
         report.loc[mask_inverted, "status"]    = "PASS (Inverted — flip sign)"
         report.loc[mask_inverted, "rescuable"] = True
 
-        # 3. WARN: high turnover
         mask_warn_turnover = (
             report["status"].str.startswith("PASS") &
             (report["autocorr"] < 0.3)
         )
         report.loc[mask_warn_turnover, "status"] = "WARN (High Turnover)"
 
-        # 4. WARN: sector bias
         if "sn_icir" in report.columns:
             mask_sector_bias = (
                 report["status"].str.startswith("PASS") &
@@ -562,14 +592,12 @@ class FactorValidator:
         csv_path = output_dir / "factor_validation_report.csv"
         report.to_csv(csv_path)
 
-        # ── IC Decay for top passing factors ──────────────────────────────────
         passing  = report[report["status"].str.startswith("PASS")].head(top_n).index.tolist()
         decay_df = pd.DataFrame()
         if passing:
             decay_df = self.compute_ic_decay(passing)
             decay_df.to_csv(output_dir / "ic_decay.csv")
 
-        # ── Console Summary ───────────────────────────────────────────────────
         n_pass_clean = (report["status"] == "PASS").sum()
         n_inverted   = (report["status"] == "PASS (Inverted — flip sign)").sum()
         n_warn       = report["status"].str.startswith("WARN").sum()
@@ -622,10 +650,16 @@ class FactorValidator:
         return report
 
 
-# ==============================================================================
-# ENTRY POINT
-# ==============================================================================
 def main() -> None:
+    """
+    Orchestrates the entire cross-sectional factor validation DAG.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser(
         description="Quant Alpha Factor Validation Suite v3",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -643,19 +677,15 @@ Usage:
                         help="Top N passing factors for decay + heatmap.")
     parser.add_argument("--force-rebuild",  action="store_true",
                         help="Rebuild dataset from raw files.")
-    # FIX-8: --force-lookahead allows researcher to proceed despite look-ahead warning
     parser.add_argument("--force-lookahead", action="store_true",
                         help="Skip look-ahead bias guard (use with caution).")
     args = parser.parse_args()
 
-    # 1. Load
     logger.info("Loading master dataset...")
     try:
         data = load_and_build_full_dataset(force_rebuild=args.force_rebuild)
 
-        # FIX-12: Guard against double call — load_and_build_full_dataset already
-        # calls add_macro_features internally when building fresh.
-        # Calling it again here re-computes all macro columns unnecessarily.
+        # Guards against redundant macro feature initialization when hydrating from cold starts
         if "macro_mom_5d" not in data.columns:
             data = add_macro_features(data)
 
@@ -664,8 +694,7 @@ Usage:
             data = data.sort_values(["ticker", "date"])
             next_open   = data.groupby("ticker")["open"].shift(-1).replace(0, np.nan)
             future_open = data.groupby("ticker")["open"].shift(-6)
-            # FIX-2: clip to ±50% — matches RETURN_CLIP_MIN/MAX in train_models.py
-            # Original had no clip; a single halt/split row corrupts IC for many factors
+            # Restricts forward returns to defined thresholds to prevent anomaly propagation (e.g., structural gaps)
             data["raw_ret_5d"] = (
                 (future_open / next_open) - 1
             ).clip(RETURN_CLIP_MIN, RETURN_CLIP_MAX)
@@ -678,8 +707,7 @@ Usage:
 
     logger.info(f"Loaded: {len(data):,} rows x {len(data.columns)} cols")
 
-    # 2. Validate
-    # FIX-8: pass force_lookahead flag through to validator
+    # Instantiates the validation suite, passing the structural look-ahead guard override if configured
     try:
         validator = FactorValidator(
             data,
@@ -698,17 +726,12 @@ Usage:
     print(f"\nAnalysing {len(validator.factors)} factors...")
     output_dir = config.RESULTS_DIR / "validation"
 
-    # 3. Report — ic_stats cached inside, no double compute
     report = validator.generate_report(
         output_dir,
         threshold=args.threshold,
         top_n=args.top_n,
     )
 
-    # 4. Cumulative IC plot for best factor
-    # FIX-11: Use cached daily IC series — do NOT recompute from scratch.
-    # Original recomputed daily_ic in main() independently from compute_ic_stats,
-    # risking divergence if data was mutated between calls.
     ic_stats = validator.results.get("ic_stats", pd.DataFrame())
     if ic_stats.empty:
         return
@@ -716,7 +739,7 @@ Usage:
     best = ic_stats.index[0]
     logger.info(f"Plotting cumulative IC for best factor: {best}")
 
-    # FIX-11: Retrieve from cache — guaranteed same result as validation run
+    # Retrieves specific daily IC series directly from the pre-computed state to prevent evaluation divergence
     daily_ic = validator._daily_ic_cache.get(best)
     if daily_ic is None or daily_ic.empty:
         logger.warning(f"Daily IC cache empty for {best} — skipping plot.")
