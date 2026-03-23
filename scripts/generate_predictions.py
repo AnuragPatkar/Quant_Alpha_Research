@@ -289,6 +289,7 @@ def preprocess_inference_data(
         if c not in meta_exclude and processed[c].dtype == object
     ]
     processed[cat_cols] = processed[cat_cols].fillna("Unknown")
+    processed[cat_cols] = processed[cat_cols].astype("category")
 
     logger.info("✅ Preprocessing complete.")
     return processed, wins_scalers, norm_scalers
@@ -369,7 +370,7 @@ def generate_predictions(
 
     else:
         # DEFAULT: everything since last saved prediction (handles daily/weekly/monthly gap)
-        output_dir = config.RESULTS_DIR / "predictions"
+        output_dir = config.PREDICTIONS_DIR
         last_pred  = _find_last_predicted_date(output_dir)
         inference_end = data_end
         if last_pred is not None:
@@ -485,8 +486,7 @@ def generate_predictions(
         )
 
     # 7. Save
-    # FIX: config.PREDICTIONS_DIR does not exist — use RESULTS_DIR / "predictions"
-    output_dir = config.RESULTS_DIR / "predictions"
+    output_dir = config.PREDICTIONS_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"alpha_signals_{inference_end.strftime('%Y-%m-%d')}.parquet"
     save_parquet(ensemble_df, output_path)

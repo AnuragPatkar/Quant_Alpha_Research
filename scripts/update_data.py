@@ -53,6 +53,7 @@ import argparse
 import concurrent.futures
 from pathlib import Path
 from datetime import datetime, timedelta, date
+from typing import Optional
 
 import pandas as pd
 import yfinance as yf
@@ -62,8 +63,19 @@ from tqdm import tqdm
 # ---------------------------------------------------------
 # SETUP
 # ---------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
 from config.settings import config
 from quant_alpha.utils import setup_logging
+# FIX BUG-093: bare "import download_data" only resolves when CWD=scripts/.
+# When run_pipeline.py invokes this as a subprocess, CWD is the project root
+# and "download_data" is not on sys.path -> ModuleNotFoundError.
+# Fix: explicitly add the scripts/ directory to sys.path before importing.
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 import download_data as dd
 
 # Logging Configuration: Set to ERROR to suppress transient retry noise during bulk operations.
@@ -105,6 +117,14 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
         # Data Hygiene: Prune rows where all price columns are NaN (artifacts from failed prior fetches)
         price_cols = [c for c in df.columns if c != "date"]
         df = df.dropna(subset=price_cols, how="all")
+        
+        # Date Hygiene: Filter valid dates to prevent NaT AttributeError on .min().date()
+        df = df[pd.notna(df["date"])]
+
+        # Zero-Price Hygiene: Remove bankrupt/OTC artifacts (0.0 prices)
+        for col in ["close", "adj close"]:
+            if col in df.columns:
+                df = df[df[col] > 0.0]
 
         if df.empty:
             return "error"
@@ -144,6 +164,9 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
                 
                 if "date" in hist_data.columns:
                     hist_data["date"] = pd.to_datetime(hist_data["date"]).dt.tz_localize(None)
+                    for col in ["close", "adj close"]:
+                        if col in hist_data.columns:
+                            hist_data = hist_data[hist_data[col] > 0.0]
                     common = [c for c in df.columns if c in hist_data.columns]
                     if "date" in common:
                         dfs_to_merge.append(hist_data[common])
@@ -151,9 +174,12 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
 
         # --- 2. Fetch Recent Data ---
         if need_update:
+            # FIX: Fetch 5-day overlap to detect corporate actions (splits/dividends)
+            # that require retroactively adjusting the entire historical dataframe.
+            fetch_start = last_date - timedelta(days=5)
             new_data = yf.download(
                 ticker,
-                start=str(last_date),
+                start=str(fetch_start),
                 end=None,
                 auto_adjust=True,
                 progress=False,
@@ -168,10 +194,45 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
 
                 if "date" in new_data.columns:
                     new_data["date"] = pd.to_datetime(new_data["date"]).dt.tz_localize(None)
-                    common = [c for c in df.columns if c in new_data.columns]
-                    if "date" in common:
-                        dfs_to_merge.append(new_data[common])
-                        data_added = True
+                    for col in ["close", "adj close"]:
+                        if col in new_data.columns:
+                            new_data = new_data[new_data[col] > 0.0]
+                    
+                    # Overlap validation
+                    corporate_action = False
+                    if "close" in df.columns and "close" in new_data.columns:
+                        shared = pd.merge(df[["date", "close"]], new_data[["date", "close"]], on="date")
+                        if not shared.empty:
+                            mean_close = shared["close_y"].mean()
+                            if mean_close > 1e-6:
+                                max_diff = (shared["close_x"] - shared["close_y"]).abs().max()
+                                if max_diff / mean_close > 0.01: # 1% threshold
+                                    log.warning(f"Corporate action detected for {ticker}. Triggering full rebuild.")
+                                    df = df.iloc[0:0] # Purge old corrupted data
+                                    dfs_to_merge = [df]
+                                    need_history = True
+                                    data_added = False
+                                    corporate_action = True
+                    
+                    if not corporate_action:
+                        common = [c for c in df.columns if c in new_data.columns]
+                        if "date" in common:
+                            dfs_to_merge.append(new_data[common])
+                            data_added = True
+                        
+        # Ensure full history is re-fetched if corporate action triggered a purge
+        if need_history and df.empty:
+            hist_data = yf.download(ticker, start=str(required_start), end=str(today + timedelta(days=1)), auto_adjust=True, progress=False, threads=False)
+            if hist_data is not None and not hist_data.empty:
+                if isinstance(hist_data.columns, pd.MultiIndex):
+                    hist_data.columns = hist_data.columns.droplevel(1)
+                hist_data = hist_data.reset_index()
+                hist_data.columns = [str(c).lower() for c in hist_data.columns]
+                hist_data = hist_data.loc[:, ~hist_data.columns.duplicated()]
+                if "date" in hist_data.columns:
+                    hist_data["date"] = pd.to_datetime(hist_data["date"]).dt.tz_localize(None)
+                    dfs_to_merge.append(hist_data)
+                    data_added = True
 
         if not data_added:
             return "uptodate"
@@ -366,15 +427,16 @@ def _earnings_needs_update(ticker: str) -> bool:
         df = pd.read_csv(path)
         if "date" not in df.columns:
             return True
-        dates = pd.to_datetime(df["date"]).dt.tz_localize(None)
-        now   = pd.Timestamp.now().tz_localize(None)
+            
+        dates = pd.to_datetime(df["date"]).dt.normalize().dt.tz_localize(None)
+        today = pd.Timestamp.today().normalize()
 
         # Check for future dates (if none, we need an update)
-        if dates[dates >= now].empty:
+        if dates[dates >= today].empty:
             return True
 
         # Check for historical completeness
-        if (now - dates.min()).days < 365:
+        if (today - dates.min()).days < 365:
             return True
 
         return False
@@ -421,7 +483,7 @@ def update_earnings(workers: int = 8) -> None:
 # =========================================================
 # 4.  MACRO  (incremental append, same logic as prices)
 # =========================================================
-def _update_macro_series(name: str, ticker: str, today: date = None) -> str:
+def _update_macro_series(name: str, ticker: str, today: Optional[date] = None) -> str:
     """
     Worker Task: Updates global macro-economic indicators.
     Handles distinct data schema and source idiosyncrasies compared to equity tickers.
@@ -447,12 +509,13 @@ def _update_macro_series(name: str, ticker: str, today: date = None) -> str:
                 
                 if len(df) > 0:
                     # Parse the date column
-                    if 'date' in df.columns:
-                        last_date = pd.to_datetime(df['date'].iloc[-1]).date()
-                    else:
-                        # Try first column
-                        first_col = df.columns[0]
-                        last_date = pd.to_datetime(df[first_col].iloc[-1]).date()
+                    date_col = 'date' if 'date' in df.columns else df.columns[0]
+                    valid_dates = pd.to_datetime(df[date_col], errors='coerce').dropna()
+                    
+                    if valid_dates.empty:
+                        return "error"
+                        
+                    last_date = valid_dates.max().date()
                     
                     # Short-circuit if data is already current
                     if last_date >= today:

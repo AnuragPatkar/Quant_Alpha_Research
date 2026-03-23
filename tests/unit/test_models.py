@@ -282,25 +282,28 @@ class TestModels:
         df, features, target_col = synthetic_data
         params = _build_params(name, {"n_estimators": 5, "verbose": -1})
         
-        model = model_class(params=params)
+        # Fetch the LIVE class from sys.modules. Pytest collects 'model_class' early,
+        # but integration tests (like test_production.py) clear sys.modules. This causes
+        # the class to be reloaded. Pickle strictly checks memory identity and will fail
+        # if we try to pickle the stale 'model_class' object.
+        import importlib
+        live_module = importlib.import_module(model_class.__module__)
+        live_class = getattr(live_module, model_class.__name__)
+        
+        model = live_class(params=params)
         model.fit(df[features], df[target_col])
         
         # Round-trip pickle
         buffer = io.BytesIO()
-        try:
-            joblib.dump(model, buffer)
-            buffer.seek(0)
-            loaded_model = joblib.load(buffer)
-            
-            preds_orig = model.predict(df[features])
-            preds_load = loaded_model.predict(df[features])
-            
-            np.testing.assert_array_equal(preds_orig, preds_load, 
-                                          err_msg=f"{name}: Pickled model predictions differ from original")
-        except (ImportError, AttributeError, _pickle.PicklingError):
-            # If pickling fails due to test environment issues (e.g. dynamic classes),
-            # we skip the persistence check but pass the test if fit/predict worked.
-            pytest.skip(f"Skipping persistence check for {name} due to environment pickling issues.")
+        joblib.dump(model, buffer)
+        buffer.seek(0)
+        loaded_model = joblib.load(buffer)
+        
+        preds_orig = model.predict(df[features])
+        preds_load = loaded_model.predict(df[features])
+        
+        np.testing.assert_array_equal(preds_orig, preds_load, 
+                                      err_msg=f"{name}: Pickled model predictions differ from original")
 
     # ──────────────────────────────────────────────────────────────────────────
     # C1 + C2 FIX: Custom objective — all 3 cases + hessian magnitude

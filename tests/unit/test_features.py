@@ -1,4 +1,4 @@
-"""
+r"""
 Feature Engineering Validation Suite
 ====================================
 Comprehensive unit testing for the alpha factor library.
@@ -98,7 +98,7 @@ def registry():
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def sample_market_data():
-    """
+    r"""
     Generates a deterministic Geometric Brownian Motion (GBM) dataset for 2 tickers.
     
     Ensures OHLC consistency:
@@ -192,7 +192,7 @@ class TestFeatures:
     # H3 FIX: Technical factor — verify non-NaN output after warmup
     # ──────────────────────────────────────────────────────────────────────────
     def test_technical_factor_calculation(self, registry, sample_market_data):
-        """
+        r"""
         Verifies that technical factors produce valid numerical output after the warmup period.
         
         Constraint: $Values_{t} \neq NaN \quad \forall t > WindowSize$.
@@ -502,7 +502,7 @@ class TestFeatures:
     # OHLC consistency validation of the fixture itself
     # ──────────────────────────────────────────────────────────────────────────
     def test_fixture_ohlc_consistency(self, sample_market_data):
-        """
+        r"""
         Validates the integrity of the synthetic market data fixture.
         Invariant: $High \ge \max(Open, Close)$ and $Low \le \min(Open, Close)$.
         """ 
@@ -722,7 +722,7 @@ class TestFeatures:
 
 
     def test_beat_miss_momentum_logic(self, registry):
-        """
+        r"""
         Verifies "Beat/Miss Momentum": The percentage of recent quarters with positive surprises.
         $Mom = \frac{\sum \mathbb{I}(Surprise > 0)}{N_{quarters}}$
         """

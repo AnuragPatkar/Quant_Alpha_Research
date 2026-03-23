@@ -1,4 +1,4 @@
-"""
+r"""
 Production Signal Monitoring & Drift Detection
 ==============================================
 Automated audit pipeline for detecting distributional shifts, signal decay, and
@@ -25,7 +25,7 @@ Executed automatically after `generate_predictions.py`.
 
 .. code-block:: bash
 
-    # Standard execution (Default threshold $\psi < 0.15$)
+    # Standard execution (Default threshold $\\psi < 0.15$)
     python scripts/monitor_production.py
 
     # Strict monitoring for stable regimes
@@ -67,7 +67,7 @@ logger = logging.getLogger("ProdMonitor")
 
 
 def calculate_psi(expected, actual, buckets=10, buckettype='quantiles'):
-    """
+    r"""
     Calculates the Population Stability Index (PSI) to measure distributional drift.
 
     Mathematical Formulation:
@@ -107,7 +107,7 @@ def calculate_psi(expected, actual, buckets=10, buckettype='quantiles'):
     actual_counts, _ = np.histogram(actual, breakpoints)
     
     # Probability Mass Function (PMF) with Epsilon Smoothing
-    # $\epsilon = 10^{-4}$ prevents division by zero / log(0)
+    # $\\epsilon = 10^{-4}$ prevents division by zero / log(0)
     epsilon = 1e-4
     expected_percents = np.maximum(expected_counts / len(expected), epsilon)
     actual_percents = np.maximum(actual_counts / len(actual), epsilon)
@@ -202,7 +202,7 @@ def main():
         logger.info(f"✅ Universe Check Passed: {n_tickers} tickers")
 
     # Audit 4: Temporal Stability (Turnover Proxy)
-    # Calculates auto-correlation $\rho(S_t, S_{t-1})$
+    # Calculates auto-correlation $\\rho(S_t, S_{t-1})$
     if len(files) >= 2:
         prev_file = files[-2]
         df_prev = load_parquet(prev_file)

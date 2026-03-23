@@ -31,7 +31,7 @@ Executed via CLI for daily portfolio rebalancing.
     # Risk Parity (Equal Risk Contribution)
     python scripts/optimize_portfolio.py --method risk_parity --top-n 30
 
-    # Volatility Targeting ($\sigma = 15\%$)
+    # Volatility Targeting ($\\sigma = 15\\%$)
     python scripts/optimize_portfolio.py --method mean_variance --target-vol 0.15
 
     python scripts/optimize_portfolio.py --method black_litterman
@@ -158,7 +158,7 @@ class ProductionOptimizer:
     # 2. MARKET DATA
     # ──────────────────────────────────────────────────────────────────────────
     def load_market_data(self, tickers: list[str], end_date: date) -> tuple[pd.DataFrame, dict]:
-        """
+        r"""
         Ingests historical pricing for Risk Modeling ($\Sigma$) and Market Caps for
         Black-Litterman Priors ($\Pi$).
 
@@ -213,7 +213,7 @@ class ProductionOptimizer:
     # 3. RISK MODEL
     # ──────────────────────────────────────────────────────────────────────────
     def estimate_risk_model(self, price_matrix: pd.DataFrame) -> pd.DataFrame:
-        """Estimates Annualized Covariance Matrix $\Sigma$ via Ledoit-Wolf Shrinkage."""
+        r"""Estimates Annualized Covariance Matrix $\Sigma$ via Ledoit-Wolf Shrinkage."""
         returns   = calculate_returns(price_matrix).dropna(how="all")
         valid_cols = returns.columns[returns.isnull().mean() < 0.3]
 
@@ -226,7 +226,14 @@ class ProductionOptimizer:
                 f"{sorted(dropped)[:5]}{'...' if len(dropped) > 5 else ''}"
             )
 
-        returns = returns[valid_cols].fillna(0.0)
+        # FIX BUG-089: fillna(0.0) biases covariance toward zero for tickers
+        # with sparse data — makes them appear artificially low-risk, causing
+        # MVO to overweight them. Identical pattern to BUG-079 in run_backtest.py.
+        # Fix: drop columns with any remaining NaN after the >30% filter.
+        returns = returns[valid_cols].dropna(axis=1, how="any")
+        if returns.empty or returns.shape[1] < 2:
+            logger.error("Risk model: insufficient clean return columns after NaN drop.")
+            raise ValueError("Not enough clean return series for covariance estimation.")
 
         if len(returns) < 60:
             logger.warning("Short history (<60 days). Covariance estimation may be unstable.")
@@ -253,7 +260,7 @@ class ProductionOptimizer:
     # ──────────────────────────────────────────────────────────────────────────
     def generate_orders(self, weights: dict[str, float],
                         prices: pd.Series) -> pd.DataFrame:
-        """
+        r"""
         Discretizes target weights into integer share counts.
 
         Implementation Note:
@@ -304,7 +311,7 @@ class ProductionOptimizer:
         tickers = cov_matrix.index.tolist()
         w_vec   = np.array([weights.get(t, 0.0) for t in tickers])
 
-        # Variance Calculation: $\sigma^2 = w^T \Sigma w$
+        # Variance Calculation: $\\sigma^2 = w^T \\Sigma w$
         port_var = float(w_vec.T @ cov_matrix.values @ w_vec)
         port_vol = np.sqrt(port_var) if port_var > 0 else 0.0
 
@@ -411,8 +418,9 @@ class ProductionOptimizer:
         # (e.g. top-ranked stock → +30% expected, bottom → -30%)
         MAX_ALPHA_RET = getattr(config, "MAX_ALPHA_RET", 0.30)  # annualized
         raw_scores = np.array([alpha_scores.get(t, 0.5) for t in valid_tickers])
-        # Normalise rank to [-1, +1] then scale to return range
-        normalised = (raw_scores - raw_scores.mean()) / (raw_scores.std() + 1e-8)
+        # BUG-004 FIX: Z-score normalization can exceed bounds (e.g. [-3, 3]), 
+        # causing extreme leverage. Since ranks are strictly [0, 1], map them explicitly to [-1, 1].
+        normalised = (raw_scores - 0.5) * 2.0
         scaled_rets = normalised * MAX_ALPHA_RET
         expected_returns = {t: float(scaled_rets[i]) for i, t in enumerate(valid_tickers)}
         logger.info(
@@ -437,8 +445,13 @@ class ProductionOptimizer:
                 logger.info(f"Black-Litterman: {real_caps}/{len(market_caps)} tickers have real market caps.")
 
         # View Confidence (Black-Litterman):
-        # $\tau = 1.0 \rightarrow$ Full Alpha trust. $\tau = 0.0 \rightarrow$ Market Prior only.
+        # $\\tau = 1.0 \\rightarrow$ Full Alpha trust. $\\tau = 0.0 \\rightarrow$ Market Prior only.
         bl_confidence = getattr(config, "BL_CONFIDENCE_LEVEL", 0.6)
+        
+        # Portfolio Constraints (Defaults to 10% if not explicitly set)
+        _min_weight = getattr(config, "OPT_MIN_WEIGHT", 0.0)
+        _POSITION_LIMIT = getattr(config, "BACKTEST_POSITION_LIMIT", 0.10)
+        _max_weight = getattr(config, "OPT_MAX_WEIGHT", getattr(config, "MAX_POSITION_SIZE", _POSITION_LIMIT))
 
         if self.method == "top_n":
             # Equal weight across top_n tickers — no optimizer needed
@@ -453,6 +466,8 @@ class ProductionOptimizer:
                     market_caps=market_caps,
                     risk_free_rate=RISK_FREE_RATE,
                     confidence_level=bl_confidence,   # used by BL; ignored by other methods
+                    min_weight=_min_weight,
+                    max_weight=_max_weight,
                 )
             except Exception as exc:
                 logger.error(f"Optimization failed: {exc}. Falling back to equal weight.")
@@ -460,7 +475,7 @@ class ProductionOptimizer:
 
         # ── 3b. Volatility targeting ──────────────────────────────────────────
         # Scale portfolio weights to match target annualized volatility.
-        # Formula: $w_{scaled} = w \times \min(\frac{\sigma_{target}}{\sigma_{port}}, 3.0)$
+        # Formula: $w_{scaled} = w \\times \\min(\\frac{\\sigma_{target}}{\\sigma_{port}}, 3.0)$
         if self.target_vol > 0 and self.method != "top_n":
             w_vec    = np.array([weights.get(t, 0.0) for t in valid_tickers])
             port_var = float(w_vec.T @ cov_matrix.values @ w_vec)
@@ -473,7 +488,8 @@ class ProductionOptimizer:
                 if scaler < 1.0 and self.method in RISK_ONLY_METHODS:
                     logger.info(
                         f"Vol targeting: raw vol={port_vol:.1%} > target={self.target_vol:.1%}. "
-                        f"Skipping scale-down for '{self.method}' — "                        f"reduce universe size (--top-n) instead."
+                        f"Skipping scale-down for '{self.method}' — "
+                        f"reduce universe size (--top-n) instead."
                     )
                 else:
                     logger.info(
@@ -492,6 +508,14 @@ class ProductionOptimizer:
                         )
                         scaled = {t: w / (gross_exp / MAX_LEVERAGE) for t, w in scaled.items()}
 
+                    # STRICT POSITION LIMIT CHECK POST-SCALING
+                    # Prevents volatility multiplier from blowing up individual positions
+                    for t, w in list(scaled.items()):
+                        if w > _max_weight:
+                            scaled[t] = _max_weight
+                        elif w < -_max_weight:
+                            scaled[t] = -_max_weight
+                            
                     weights = scaled
 
         # ── 4. Generate orders ────────────────────────────────────────────────

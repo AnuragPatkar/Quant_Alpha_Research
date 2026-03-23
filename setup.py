@@ -74,6 +74,14 @@ setup(
         "matplotlib>=3.7.0",
         "seaborn>=0.12.0",
         "python-dotenv>=1.0.0",
+        "python-dateutil>=2.8.2",
+        "lxml>=4.9.0",
+        "pyarrow>=10.0.0",
+        "hmmlearn>=0.3.0",
+        "cvxpy>=1.3.0",
+        "pandas_market_calendars>=4.1.0",
+        "statsmodels>=0.13.0",
+        "streamlit>=1.20.0",
     ],
     # Optional dependencies for development, testing, and code quality.
     # Installed via `pip install .[dev]`. This keeps the core production

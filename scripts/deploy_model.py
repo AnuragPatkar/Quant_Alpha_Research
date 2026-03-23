@@ -75,7 +75,7 @@ logger = logging.getLogger("Quant_Alpha")
 # SERIALIZATION COMPATIBILITY LAYER
 # ==============================================================================
 def weighted_symmetric_mae(y_true, y_pred):
-    """
+    r"""
     Custom gradient/hessian for the Weighted Symmetric Mean Absolute Error objective.
     Must match the definition in ``train_models.py`` exactly to ensure deserialization integrity.
 
@@ -113,7 +113,7 @@ _ENS_IC_TSTAT       = getattr(config, "MIN_OOS_IC_TSTAT",      1.5)
 
 
 def _gate_tier(ic: float, ic_std: float, n_dates: int) -> str:
-    """
+    r"""
     Classifies model quality based on Information Coefficient (IC) statistics.
 
     Statistical Significance ($t$-test):

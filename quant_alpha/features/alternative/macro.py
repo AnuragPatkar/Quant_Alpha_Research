@@ -65,16 +65,16 @@ class OilMomentum(AlternativeFactor):
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if 'oil_close' not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing 'oil_close'")
             return pd.Series(0, index=df.index)
         
         # Calculate 21-day momentum (1 trading month).
         # Smoothing: 5-day rolling mean to mitigate impact of spot price microstructure noise.
+        # FutureWarning fix: Use ffill() before pct_change() to handle NaN values properly.
         if 'ticker' in df.columns:
-            momentum = df.groupby('ticker')['oil_close'].pct_change(21) * 100
+            momentum = df.groupby('ticker')['oil_close'].ffill().groupby(df['ticker']).pct_change(21) * 100
             return momentum.groupby(df['ticker']).transform(lambda x: x.rolling(window=5, min_periods=1).mean()).fillna(0)
         else:
-            momentum = df['oil_close'].pct_change(21) * 100
+            momentum = df['oil_close'].ffill().pct_change(21) * 100
             return momentum.rolling(window=5, min_periods=1).mean().fillna(0)
 
 @FactorRegistry.register()
@@ -131,10 +131,11 @@ class YieldTrend(AlternativeFactor):
         
         # 63-day (approx. 1 quarter) percentage change in yields.
         # This captures medium-term structural repricing of the bond market.
+        # FutureWarning fix: Use ffill() before pct_change() to handle NaN values properly.
         if 'ticker' in df.columns:
-            yield_momentum = df.groupby('ticker')['us_10y_close'].pct_change(63) * 100
+            yield_momentum = df.groupby('ticker')['us_10y_close'].ffill().groupby(df['ticker']).pct_change(63) * 100
         else:
-            yield_momentum = df['us_10y_close'].pct_change(63) * 100
+            yield_momentum = df['us_10y_close'].ffill().pct_change(63) * 100
             
         return yield_momentum.fillna(0)
 
@@ -167,12 +168,13 @@ class MacroEconomicScore(AlternativeFactor):
         
         if 'ticker' in df.columns:
             usd_z = df.groupby('ticker')['usd_close'].transform(lambda x: z_score(x, 252))
-            yield_z = df.groupby('ticker')['us_10y_close'].transform(lambda x: z_score(x.pct_change(63), 252))
-            oil_z = df.groupby('ticker')['oil_close'].transform(lambda x: z_score(x.pct_change(21), 252))
+            # FutureWarning fix: Use ffill() before pct_change() in transform lambdas.
+            yield_z = df.groupby('ticker')['us_10y_close'].transform(lambda x: z_score(x.ffill().pct_change(63), 252))
+            oil_z = df.groupby('ticker')['oil_close'].transform(lambda x: z_score(x.ffill().pct_change(21), 252))
         else:
             usd_z = z_score(df['usd_close'], 252)
-            yield_z = z_score(df['us_10y_close'].pct_change(63), 252)
-            oil_z = z_score(df['oil_close'].pct_change(21), 252)
+            yield_z = z_score(df['us_10y_close'].ffill().pct_change(63), 252)
+            oil_z = z_score(df['oil_close'].ffill().pct_change(21), 252)
 
         # --- Composite Calculation ---
         # Logic: (Oil Z-Score) - (USD Z-Score) + (Yield Momentum Z-Score)

@@ -137,7 +137,7 @@ def _calc_sharpe(series: pd.Series) -> float:
     """
     if len(series) < 2: return 0.0
     rets = series.pct_change().dropna()
-    if rets.std() == 0: return 0.0
+    if rets.std() < 1e-9: return 0.0  # FIX BUG-090: float equality fails for near-zero std
     return (rets.mean() / rets.std()) * np.sqrt(252)
 
 def _calc_sortino(series: pd.Series, rf_annual: float = 0.035) -> float:
@@ -149,9 +149,12 @@ def _calc_sortino(series: pd.Series, rf_annual: float = 0.035) -> float:
     rets  = series.pct_change().dropna()
     rf_d  = rf_annual / 252
     excess = rets - rf_d
-    downside = excess[excess < 0]
-    if len(downside) < 2 or downside.std() == 0: return 0.0
-    return (excess.mean() / downside.std()) * np.sqrt(252)
+    
+    # Target Downside Deviation (Root Mean Square of negative excess returns)
+    downside_sq = np.minimum(0, excess) ** 2
+    tdd = np.sqrt(downside_sq.mean())
+    if tdd < 1e-9: return 0.0  # FIX BUG-090: float equality fails for near-zero tdd
+    return (excess.mean() / tdd) * np.sqrt(252)
 
 def _get_top_drawdowns(series: pd.Series, n: int = 3) -> list:
     """
@@ -702,30 +705,28 @@ class QuantitativeManagerReport:
         long_val     = longs["value"].sum() if "value" in longs.columns else 0.0
         short_val    = shorts["value"].sum() if "value" in shorts.columns else 0.0
         
-        # Calculate exposure ratios relative to Net Liquidation Value of positions
-        # Note: If holding cash, these % will be higher than % of Total Equity.
-        gross_pct = (long_val + abs(short_val)) / total_val if total_val > 0 else 0.0
-        net_pct   = (long_val - abs(short_val)) / total_val if total_val > 0 else 0.0
+        gross_exp = long_val + abs(short_val)
+        net_exp   = long_val - abs(short_val)
 
         # Herfindahl-Hirschman Index (Concentration)
-        if "weight" in df.columns:
+        if "weight" in df.columns and df["weight"].abs().sum() > 0:
             w   = df["weight"].abs()
-            hhi = (w ** 2).sum()
+            w_norm = w / w.sum() # Normalize to sum to 1.0 for valid HHI bounds
+            hhi = (w_norm ** 2).sum()
             hhi_str = f"{hhi:.4f}"
             hhi_label = "Concentrated ⚠️" if hhi > 0.10 else "Diversified ✅"
         else:
             hhi_str   = "N/A"
             hhi_label = ""
 
-        lines.append(f"Net Position Val: {_format_currency(total_val)}")
+        lines.append(f"Net Position Val: {_format_currency(net_exp)}")
         lines.append(f"Long Value:       {_format_currency(long_val)}")
         lines.append(f"Short Value:      {_format_currency(short_val)}")
         lines.append(
             f"Positions:        {len(df)} "
             f"({len(longs)} Long | {len(shorts)} Short)"
         )
-        if total_val > 0:
-            lines.append(f"Gross / Net:      {gross_pct:.1%} / {net_pct:.1%} (of invested equity)")
+        lines.append(f"Gross Exposure:   {_format_currency(gross_exp)}")
         
         lines.append(f"HHI Concentration: {hhi_str}  {hhi_label}")
 

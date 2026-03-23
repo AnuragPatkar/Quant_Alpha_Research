@@ -1,311 +1,139 @@
 """
-Performance Metrics Engine
-==========================
-Institutional-grade analytics for portfolio performance evaluation.
+quant_alpha/backtest/metrics.py
+================================
+Performance metric calculations and report printing for backtest results.
 
-Purpose
--------
-Computes a comprehensive suite of risk and return metrics from equity curves and trade logs.
-The pipeline is designed to be non-redundant and mathematically robust, handling
-edge cases like zero volatility or sparse trading activity gracefully.
-
-Usage
------
-.. code-block:: python
-
-    metrics_engine = PerformanceMetrics(risk_free_rate=0.02)
-    report = metrics_engine.calculate_all(equity_df, trades_df, initial_capital=1_000_000)
-    print_metrics_report(report)
-
-Importance
-----------
-- **Risk-Adjustment**: Standardizes returns against risk (Sharpe, Sortino, Calmar) to enable cross-strategy comparison.
-- **Tail Risk**: Quantifies extreme downside via VaR/CVaR (95% confidence) and maximum drawdown duration.
-- **Trade Efficiency**: Evaluates execution quality through Expectancy and Profit Factor analysis.
-
-Tools & Frameworks
-------------------
-- **Pandas**: Time-series resampling and rolling window calculations.
-- **NumPy**: Vectorized statistical computations (Standard Deviation, LPM, Quantiles).
+Provides:
+  - compute_metrics()         : full suite of annualised performance statistics
+  - print_metrics_report()    : formatted stdout summary (used by run_backtest.py)
 """
 
-import pandas as pd
 import numpy as np
-from typing import Dict, Optional
-import logging
+import pandas as pd
+from typing import Dict, Any, Optional
 
-from .utils import calculate_returns, calculate_max_drawdown
 
-logger = logging.getLogger(__name__)
+# ---------------------------------------------------------------------------
+# Core metric computation
+# ---------------------------------------------------------------------------
 
-class PerformanceMetrics:
+def compute_metrics(
+    equity_curve: pd.DataFrame,
+    risk_free_rate: float = 0.035,
+    trading_days: int = 252,
+) -> Dict[str, Any]:
     """
-    Institutional-Grade Performance Analytics.
-    
-    Attributes:
-        rf_rate (float): Annualized risk-free rate.
-        ann_factor (int): Annualization factor (252 for daily trading).
+    Compute a full suite of annualised performance statistics from an equity curve.
+
+    Parameters
+    ----------
+    equity_curve  : DataFrame with columns ['date', 'total_value'].
+    risk_free_rate: Annual risk-free rate (default 3.5%).
+    trading_days  : Trading days per year (default 252).
+
+    Returns
+    -------
+    Dict of metric name → value.
     """
-    def __init__(self, risk_free_rate: float = 0.02, periods_per_year: int = 252):
-        """
-        Args:
-            risk_free_rate: Annual risk-free rate (e.g., 0.02 for 2%).
-            periods_per_year: Trading periods per year (252 for Equities, 365 for Crypto).
-        """
-        self.rf_rate = risk_free_rate
-        self.ann_factor = periods_per_year
-        self.daily_rf = risk_free_rate / periods_per_year
+    ec = equity_curve.copy()
+    ec["date"] = pd.to_datetime(ec["date"])
+    ec = ec.sort_values("date").reset_index(drop=True)
 
-    def calculate_all(self,
-                      equity_df:pd.DataFrame,
-                      trades_df:pd.DataFrame,
-                      initial_capital:float
-                      ) -> Dict:
-        """
-        Orchestrates the calculation pipeline: Returns -> Risk -> Drawdown -> Trade Stats.
-        """
+    nav    = ec["total_value"].values.astype(float)
+    dates  = ec["date"]
+    n_days = len(nav)
 
-        if equity_df.empty:
-            logger.error("Equity DataFrame is empty.")
-            return {}
-        
-        # 1. Data Standardization & Return Series Generation
-        df = equity_df.copy()
+    if n_days < 2:
+        return {"error": "Insufficient data for metric computation."}
 
-        # Ensure index is DatetimeIndex for resampling operations
-        if 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
-        elif not isinstance(df.index, pd.DatetimeIndex):
-            raise KeyError("DataFrame must have a 'date' column or a DatetimeIndex.")
-        
-        # Compute periodic returns; drop NaN from first period to prevent statistical bias
-        df['return'] = calculate_returns(df['total_value'])
-        returns_series = df['return'].dropna()
+    # ---- Daily returns ----
+    daily_ret = np.diff(nav) / nav[:-1]
+    daily_ret = daily_ret[np.isfinite(daily_ret)]
 
-        metrics = {}
+    if len(daily_ret) == 0:
+        return {"error": "No finite daily returns."}
 
-        # 2. Sequential Metric Calculation
-        ret_metrics = self._calculate_return_metrics(df, initial_capital)
-        risk_metrics = self._calculate_risk_metrics(returns_series)
-        dd_metrics = self._calculate_drawdown_metrics(df)
+    # ---- CAGR ----
+    years = (dates.iloc[-1] - dates.iloc[0]).days / 365.25
+    cagr  = (nav[-1] / nav[0]) ** (1.0 / max(years, 1e-6)) - 1.0 if years > 0 else 0.0
 
-        # Risk-Adjusted Metrics (dependent on volatility and drawdown components)
-        risk_adj = self._calculate_risk_adjusted_metrics(
-            cagr=ret_metrics['cagr'],
-            ann_vol=risk_metrics['annual_volatility'],
-            downside_vol=risk_metrics['downside_volatility'],
-            max_dd=dd_metrics['max_drawdown'],
-            daily_mean_ret=returns_series.mean()
-        )
+    # ---- Volatility (annualised) ----
+    ann_vol = float(np.std(daily_ret) * np.sqrt(trading_days))
 
-        # Aggregation
-        metrics.update(ret_metrics)
-        metrics.update(risk_metrics)
-        metrics.update(dd_metrics)
-        metrics.update(risk_adj)
+    # ---- Sharpe ----
+    rf_daily      = risk_free_rate / trading_days
+    excess_daily  = daily_ret - rf_daily
+    sharpe        = (
+        float(np.mean(excess_daily) / np.std(excess_daily) * np.sqrt(trading_days))
+        if np.std(excess_daily) > 1e-12
+        else 0.0
+    )
 
-        # Metadata
-        metrics['start_date'] = df.index[0].strftime('%Y-%m-%d') if not df.empty else "N/A"
-        metrics['end_date'] = df.index[-1].strftime('%Y-%m-%d') if not df.empty else "N/A"
+    # ---- Sortino ----
+    downside = excess_daily[excess_daily < 0]
+    downside_std = float(np.std(downside) * np.sqrt(trading_days)) if len(downside) > 1 else 1e-12
+    sortino = float(np.mean(excess_daily) * trading_days / downside_std) if downside_std > 1e-12 else 0.0
 
-        # 3. Trade-Level Analytics
-        # Note: Use Trading Days (len(df)) for accurate frequency normalization
-        num_trading_days = len(df)
-        metrics.update(self._calculate_trade_metrics(trades_df, num_trading_days))
-        metrics['trading_days'] = num_trading_days
-        return metrics
-    
-    def _calculate_return_metrics(self, df: pd.DataFrame, initial_capital: float) -> Dict:
-        """Computes absolute and compounded return statistics."""
-        final_value = df['total_value'].iloc[-1]
-        days = (df.index[-1] - df.index[0]).days
-        years = max(days / 365.25, 1 / self.ann_factor)
+    # ---- Max Drawdown ----
+    hwm = np.maximum.accumulate(nav)
+    safe_hwm = np.where(hwm > 1e-12, hwm, 1e-12)
+    drawdowns = (nav - hwm) / safe_hwm
+    max_dd    = float(abs(drawdowns.min())) if len(drawdowns) > 0 else 0.0
 
-        # Compound Annual Growth Rate: $(V_{final} / V_{initial})^{1/t} - 1$
-        cagr = (final_value / initial_capital) ** (1 / years) - 1
+    # ---- Calmar ----
+    calmar = float(cagr / max_dd) if max_dd > 1e-12 else 0.0
 
-        # Monthly periodicity analysis
-        monthly_ret = df['total_value'].resample('ME').last().pct_change().dropna()
+    # ---- Hit rate ----
+    hit_rate = float((daily_ret > 0).mean())
 
-        return {
-            'total_return': (final_value / initial_capital) - 1,
-            'cagr': cagr,
-            'years': years,
-            'best_month': monthly_ret.max() if not monthly_ret.empty else 0,
-            'worst_month': monthly_ret.min() if not monthly_ret.empty else 0,
-            'avg_monthly_return': monthly_ret.mean() if not monthly_ret.empty else 0,
-            'monthly_win_rate': (monthly_ret > 0).mean() if not monthly_ret.empty else 0
-        }
-    
-    def _calculate_risk_metrics(self, returns: pd.Series) -> Dict:
-        """Computes volatility and tail-risk metrics."""
-        if len(returns) < 2:
-            return {'annual_volatility': 0.0, 'downside_volatility': 0.0, 'daily_var_95': 0.0, 'daily_cvar_95': 0.0}
+    # ---- Total return ----
+    total_return = float(nav[-1] / nav[0] - 1.0)
 
-        daily_vol = returns.std()
-        ann_vol = daily_vol * np.sqrt(self.ann_factor)
+    return {
+        "Total Return":      round(total_return, 6),
+        "CAGR":              round(cagr, 6),
+        "Ann. Volatility":   round(ann_vol, 6),
+        "Sharpe Ratio":      round(sharpe, 4),
+        "Sortino Ratio":     round(sortino, 4),
+        "Max Drawdown":      round(max_dd, 6),
+        "Calmar Ratio":      round(calmar, 4),
+        "Hit Rate":          round(hit_rate, 4),
+        "Start Date":        str(dates.iloc[0].date()),
+        "End Date":          str(dates.iloc[-1].date()),
+        "N Trading Days":    n_days,
+    }
 
-        # Downside Volatility: Lower Partial Moment (LPM) of order 2 around 0.
-        # $\sigma_d = \sqrt{\frac{1}{N} \sum min(r_i, 0)^2}$
-        neg_ret = returns.copy()
-        neg_ret[neg_ret > 0] = 0
-        downside_vol = np.sqrt((neg_ret**2).mean()) * np.sqrt(self.ann_factor)
 
-        # Tail Risk: Historical Value at Risk (VaR) and Conditional VaR (Expected Shortfall)
-        var_95 = returns.quantile(0.05)
-        cvar_95 = returns[returns <= var_95].mean() if not returns[returns <= var_95].empty else 0.0
+# ---------------------------------------------------------------------------
+# Print helper — called directly by run_backtest.py
+# ---------------------------------------------------------------------------
 
-        return {
-            'annual_volatility': ann_vol,
-            'downside_volatility': downside_vol,
-            'daily_var_95': var_95,
-            'daily_cvar_95': cvar_95,
-            'skewness': returns.skew(),
-            'kurtosis': returns.kurtosis()
-        }
-    
-    def _calculate_risk_adjusted_metrics(self, cagr, ann_vol, downside_vol, max_dd, daily_mean_ret) -> Dict:
-        """
-        Computes ratios normalizing return per unit of risk.
-        
-        Note: Uses Arithmetic Mean for Sharpe/Sortino to avoid double-penalizing volatility 
-        (as CAGR is geometric).
-        """
-        ann_excess_ret = (daily_mean_ret * self.ann_factor) - self.rf_rate
+def print_metrics_report(metrics: Dict[str, Any]) -> None:
+    """
+    Print a formatted performance metrics table to stdout.
 
-        # Sharpe: $SR = \frac{R_p - R_f}{\sigma_p}$
-        sharpe = ann_excess_ret / ann_vol if ann_vol > 0 else 0
-        # Sortino: $SoR = \frac{R_p - R_f}{\sigma_{down}}$
-        sortino = ann_excess_ret / downside_vol if downside_vol > 0 else sharpe
-        # Calmar: $CR = \frac{CAGR}{|MDD|}$
-        calmar = cagr / abs(max_dd) if max_dd != 0 else 0
+    Parameters
+    ----------
+    metrics : Dict returned by compute_metrics() or engine.run()['metrics'].
+    """
+    sep = "=" * 52
+    print(f"\n{sep}")
+    print(f"  BACKTEST PERFORMANCE METRICS")
+    print(f"{sep}")
 
-        return {
-            'sharpe_ratio': sharpe, 
-            'sortino_ratio': sortino, 
-            'calmar_ratio': calmar
-        }
-    
-    def _calculate_drawdown_metrics(self, df: pd.DataFrame) -> Dict:
-        """Computes drawdown depth, duration, and recovery statistics."""
-        equity = df['total_value']
-        
-        # Robust headline calculation
-        max_dd = calculate_max_drawdown(equity)
+    # Formatting rules per metric type
+    pct_keys   = {"Total Return", "CAGR", "Ann. Volatility", "Max Drawdown", "Hit Rate"}
+    ratio_keys = {"Sharpe Ratio", "Sortino Ratio", "Calmar Ratio"}
 
-        # Detailed series analysis for duration/recovery
-        running_max = equity.cummax()
-        safe_max = running_max.replace(0, np.nan) # Numerical stability
-        drawdowns = (equity - safe_max) / safe_max
-        
-        trough_date = drawdowns.idxmin()
-        peak_date = equity[:trough_date].idxmax()
-        peak_val = equity.loc[peak_date]
-
-        # Recovery Duration (Time from Trough to New High)
-        post_trough = equity[trough_date:]
-        recovery_series = post_trough[post_trough >= peak_val]
-
-        if not recovery_series.empty:
-            recovery_date = recovery_series.index[0]
-            recovery_days = (recovery_date - peak_date).days
+    for k, v in metrics.items():
+        if isinstance(v, float):
+            if k in pct_keys:
+                print(f"  {k:<30} {v:>10.2%}")
+            elif k in ratio_keys:
+                print(f"  {k:<30} {v:>10.4f}")
+            else:
+                print(f"  {k:<30} {v:>10.4f}")
         else:
-            recovery_days = (equity.index[-1] - peak_date).days # Drawdown is active
+            print(f"  {k:<30} {str(v):>10}")
 
-        return {
-            'max_drawdown': max_dd,
-            'avg_drawdown': drawdowns[drawdowns < 0].mean() if any(drawdowns < 0) else 0,
-            'max_dd_peak_to_trough': (trough_date - peak_date).days,
-            'recovery_days': recovery_days,
-            'max_drawdown_duration': (trough_date - peak_date).days 
-        }
-    
-    def _calculate_trade_metrics(self, trades_df: pd.DataFrame, strategy_days: int) -> Dict:
-        """Computes trade-level statistics (Win Rate, Profit Factor, Expectancy)."""
-        if trades_df.empty or 'pnl' not in trades_df.columns:
-            return {'total_trades': 0, 'trade_win_rate': 0.0, 'profit_factor': 0.0, 'expectancy': 0.0, 'trades_per_day': 0.0}
-        
-        # Identification of Round-Trip Trades
-        # Defaults to 'sell' side for exits in Long-Only context; fallback to PnL != 0 for legacy data.
-        if 'side' in trades_df.columns:
-            closed_trades = trades_df[trades_df['side'] == 'sell']
-        else:
-            closed_trades = trades_df[trades_df['pnl'] != 0]
-        
-        pnls = closed_trades['pnl']
-        wins = pnls[pnls > 0]
-        losses = pnls[pnls < 0]
-        
-        win_rate = len(wins) / len(closed_trades) if not closed_trades.empty else 0.0
-        avg_win = wins.mean() if not wins.empty else 0
-        avg_loss = losses.mean() if not losses.empty else 0
-
-        # Win/Loss Ratio: $|\frac{\text{Avg Win}}{\text{Avg Loss}}|$
-        if avg_loss != 0:
-            win_loss_ratio = abs(avg_win / avg_loss)
-        else:
-            win_loss_ratio = np.inf
-
-        # Profit Factor: $\frac{\sum \text{Gross Profit}}{|\sum \text{Gross Loss}|}$
-        profit_factor = wins.sum() / abs(losses.sum()) if losses.sum() != 0 else np.inf
-        avg_pnl = pnls.mean() if not pnls.empty else 0.0
-        
-        # Expectancy Ratio: $\frac{\text{Avg PnL}}{|\text{Avg Loss}|}$
-        if avg_loss != 0:
-            expectancy_ratio = avg_pnl / abs(avg_loss)
-        else:
-            expectancy_ratio = np.inf if avg_pnl > 0 else 0.0
-        
-        # Kelly Criterion: $K = W - \frac{1-W}{R}$
-        # Where $W$ = Win Rate, $R$ = Win/Loss Ratio
-        kelly = 0.0
-        if win_loss_ratio == np.inf:
-            kelly = win_rate  # If no losses, bet size -> Win Rate (Theoretical max)
-        elif win_loss_ratio > 0:
-            kelly = win_rate - ((1 - win_rate) / win_loss_ratio)
-
-        # Total Count reflects completed round-trips
-        num_completed_trades = len(closed_trades)
-
-        return {
-            'total_trades': num_completed_trades,
-            'avg_trade_return_pct': closed_trades['return_pct'].mean() if 'return_pct' in closed_trades.columns else 0.0,
-            'trade_win_rate': win_rate,
-            'profit_factor': profit_factor,
-            'avg_pnl': avg_pnl,
-            'expectancy_ratio': expectancy_ratio,
-            'num_buys': int((trades_df['side'] == 'buy').sum()) if 'side' in trades_df.columns else 0,
-            'num_sells': int((trades_df['side'] == 'sell').sum()) if 'side' in trades_df.columns else 0,
-            'avg_cost_bps': trades_df['cost_bps'].mean() if 'cost_bps' in trades_df.columns else 0.0,
-            'trades_per_day': num_completed_trades / max(strategy_days, 1),
-            'win_loss_ratio': win_loss_ratio,
-            'kelly_criterion': kelly
-        }
-
-def print_metrics_report(metrics: Dict):
-    """Generates an institutional-grade formatted text report of performance metrics."""
-    print("\n" + "═"*70)
-    print(f"{'QUANT ALPHA STRATEGY REPORT':^70}")
-    print("═"*70)
-    print(f"Period:       {metrics.get('start_date', 'N/A')} to {metrics.get('end_date', 'N/A')} ({metrics.get('trading_days', 0)} days)")
-
-    print(f"\n{'[ RETURN METRICS ]':<35} {'[ RISK METRICS ]':<35}")
-    print(f"  Total Return: {metrics.get('total_return', 0):>10.2%}      Ann. Volatility: {metrics.get('annual_volatility', 0):>10.2%}")
-    print(f"  CAGR:         {metrics.get('cagr', 0):>10.2%}      Downside Vol:    {metrics.get('downside_volatility', 0):>10.2%}")
-    print(f"  Best Month:   {metrics.get('best_month', 0):>10.2%}      Daily VaR (95%): {metrics.get('daily_var_95', 0):>10.2%}")
-    print(f"  Worst Month:  {metrics.get('worst_month', 0):>10.2%}      Daily CVaR (95%):{metrics.get('daily_cvar_95', 0):>10.2%}")
-    
-    print(f"\n{'[ RISK-ADJUSTED ]':<35} {'[ DRAWDOWN ]':<35}")
-    print(f"  Sharpe Ratio: {metrics.get('sharpe_ratio', 0):>10.2f}      Max Drawdown:    {metrics.get('max_drawdown', 0):>10.2%}")
-    print(f"  Sortino Ratio:{metrics.get('sortino_ratio', 0):>10.2f}      Peak-to-Trough:  {metrics.get('max_dd_peak_to_trough', 0):>7} days")
-    print(f"  Calmar Ratio: {metrics.get('calmar_ratio', 0):>10.2f}      Recovery Time:   {metrics.get('recovery_days', 0):>7} days")
-    
-    print(f"\n{'[ TRADE STATISTICS ]':<70}")
-    print(f"  Total Trades: {metrics.get('total_trades', 0):>10,}      Win Rate:        {metrics.get('trade_win_rate', 0):>10.2%}")
-    print(f"  Profit Factor:{metrics.get('profit_factor', 0):>10.2f}      Avg PnL:         {metrics.get('avg_pnl', 0):>10.2f}")
-    print(f"  Exp. Ratio:   {metrics.get('expectancy_ratio', 0):>10.2f}      Kelly Crit:      {metrics.get('kelly_criterion', 0):>10.2%}")
-    print(f"  Avg Trade %:  {metrics.get('avg_trade_return_pct', 0):>10.2%}      Trades/Day:      {metrics.get('trades_per_day', 0):>10.2f}")
-    print(f"  Avg Cost (bps):{metrics.get('avg_cost_bps', 0):>10.1f}      Trading Days:    {metrics.get('trading_days', 0):>10,}")
-    
-    print("\n" + "═"*70 + "\n")
+    print(f"{sep}\n")

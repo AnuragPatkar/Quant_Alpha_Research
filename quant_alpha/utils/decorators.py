@@ -21,76 +21,113 @@ Usage
 
 Importance
 ----------
--   **Observability**: `time_execution` enables identification of $O(N^2)$ bottlenecks
+-   **Observability**: `time_execution` enables identification of O(N^2) bottlenecks
     in the research pipeline, critical for optimizing backtest throughput.
 -   **Robustness**: `retry` implements the "Fail-Safe" pattern, ensuring the
     ETL pipeline recovers gracefully from stochastic network failures (e.g., API rate limits).
 
 Tools & Frameworks
 ------------------
--   **Functools**: Preserves metadata (`__name__`, `__doc__`) of decorated functions.
+-   **Functools**: Preserves metadata (__name__, __doc__) of decorated functions.
 -   **Time**: High-resolution clock access for latency measurement.
+
+FIXES
+-----
+  BUG-086: Invalid escape sequence \\Delta in inline comment on line 44
+           (\"Logs the latency $\\Delta t = ...$\") triggers SyntaxWarning
+           in Python 3.12+ and is an error in future versions.
+           Fixed by removing LaTeX from plain string context.
+
+  Also: `timer` alias added so quant_alpha/utils/__init__.py can export it
+  under the name used by the rest of the codebase (timer, retry).
 """
 import time
 import functools
 import logging
+from typing import Tuple, Type
 
 logger = logging.getLogger(__name__)
 
+
 def time_execution(func):
     """
-    Instrumentation decorator for measuring Wall-Clock execution time.
-    
-    Logs the latency $\Delta t = t_{end} - t_{start}$ to the active logger.
-    
+    Instrumentation decorator for measuring wall-clock execution time.
+
+    Logs the elapsed time (t_end - t_start) to the active logger.
+    Execution time is captured in the `finally` block to ensure it is
+    recorded even if the wrapped function raises.
+
     Args:
         func (Callable): The function to wrap.
-        
+
     Returns:
         Callable: The wrapped function with profiling side-effects.
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        start_time = time.time()
+        start_time = time.perf_counter()  # Use perf_counter for sub-millisecond accuracy
         try:
-            # Execute the core logic
             result = func(*args, **kwargs)
             return result
         finally:
             # Guaranteed execution regardless of exceptions to capture failure latency
-            end_time = time.time()
-            execution_time = end_time - start_time
-            logger.info(f"Function '{func.__name__}' took {execution_time:.4f} seconds to execute.")
+            elapsed = time.perf_counter() - start_time
+            logger.info(
+                f"[timer] '{func.__name__}' completed in {elapsed:.4f}s"
+            )
     return wrapper
 
-def retry(max_retries=3, delay=1, backoff=2, exceptions=(Exception,)):
+
+# Alias — quant_alpha/utils/__init__.py exports `timer` (matches codebase convention)
+timer = time_execution
+
+
+def retry(
+    max_retries: int = 3,
+    delay: float = 1.0,
+    backoff: float = 2.0,
+    exceptions: Tuple[Type[Exception], ...] = (Exception,),
+):
     """
     Resilience decorator implementing Exponential Backoff.
 
-    Wraps a function to automatically retry upon encountering specified transient exceptions.
-    The wait time grows geometrically: $t_{wait} = \text{delay} \times \text{backoff}^{k}$.
+    Wraps a function to automatically retry upon encountering specified
+    transient exceptions. The wait time grows geometrically:
+    t_wait = delay * backoff^k
 
     Args:
-        max_retries (int): Maximum attempts before propagating the exception.
-        delay (float): Initial wait time in seconds.
-        backoff (float): Multiplier for the wait time after each failure.
-        exceptions (Tuple[Exception]): Specific errors to catch (fail-safe). 
-                                       Avoid catching `BaseException` to allow system interrupts.
+        max_retries (int)  : Maximum attempts before propagating the exception.
+        delay (float)      : Initial wait time in seconds.
+        backoff (float)    : Multiplier for the wait time after each failure.
+        exceptions (tuple) : Specific errors to catch (fail-safe).
+                             Avoid catching BaseException to allow system interrupts.
+
+    Example
+    -------
+    .. code-block:: python
+
+        @retry(max_retries=3, delay=1, backoff=2, exceptions=(IOError,))
+        def download_prices(ticker: str) -> pd.DataFrame:
+            ...
     """
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            mtries, mdelay = max_retries, delay
-            while mtries > 1:
+            attempts_left = max_retries
+            current_delay = delay
+            while attempts_left > 1:
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
-                    msg = f"{str(e)}, Retrying in {mdelay} seconds..."
-                    logger.warning(msg)
-                    time.sleep(mdelay)
-                    mtries -= 1
-                    mdelay *= backoff
-            # Final attempt: propagate exception if this fails
+                    logger.warning(
+                        f"[retry] '{func.__name__}' failed "
+                        f"({max_retries - attempts_left + 1}/{max_retries}): "
+                        f"{e}. Retrying in {current_delay:.1f}s..."
+                    )
+                    time.sleep(current_delay)
+                    attempts_left -= 1
+                    current_delay *= backoff
+            # Final attempt: propagate exception if this also fails
             return func(*args, **kwargs)
         return wrapper
     return decorator

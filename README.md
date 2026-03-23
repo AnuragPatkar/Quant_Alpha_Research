@@ -1,63 +1,91 @@
 # 🏆 Institutional-Grade Quantitative Equity Alpha Platform
 
-[![CI/CD Pipeline](https://github.com/your-org/your-repo/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/your-org/your-repo/actions/workflows/ci_cd.yml)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![Docker](https://img.shields.io/badge/docker-ready-green.svg)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 📖 Executive Summary
+---
 
-This repository hosts a **production-grade quantitative research and trading platform** designed for systematic equity alpha generation. Engineered with an institutional mindset, the system integrates advanced machine learning pipelines, rigorous backtesting protocols, and robust risk management frameworks to identify and exploit market inefficiencies.
+## 1. Executive Summary
 
-The platform transitions seamlessly from **alpha research** (factor discovery, model training) to **production deployment** (live inference, portfolio optimization), ensuring consistency between simulation and execution.
+This repository implements an **institutional-grade quantitative research and systematic trading infrastructure** designed for scalable equity alpha generation. Engineered to tier-one hedge fund standards, the system integrates orthogonal factor engineering, non-linear machine learning ensembles, and convex portfolio optimization to systematically capture market inefficiencies.
+
+The architecture guarantees absolute mathematical parity between the research environment and the production execution pipeline, strictly mitigating look-ahead bias, survivorship bias, and model overfitting.
 
 ---
 
-## 🔬 Research Methodology & Architecture
+## 2. System Architecture Overview
 
-The system follows a rigorous scientific process to ensure statistical significance and robustness of alpha signals.
+The platform operates as a Directed Acyclic Graph (DAG), seamlessly transitioning from raw market data to optimal portfolio weights:
 
-### 1. Data Ingestion & Governance
-*   **Multi-Source Architecture**: Aggregates data from Polygon.io (Price), FMP (Fundamentals), Alpha Vantage (Earnings), and Finnhub (Sentiment).
-*   **Point-in-Time Correctness**: Strict handling of data timestamps to prevent look-ahead bias.
-*   **Quality Assurance**: Automated validation pipelines for outlier detection, missing data imputation, and regime shift monitoring.
+1. **Data Ingestion (Data Lake):** Aggregates daily OHLCV, Fundamental (10-K/10-Q), and Macro indicators.
+2. **Feature Engineering:** Computes 110+ orthogonal alpha factors, applying cross-sectional winsorization and dynamic sector-neutralization.
+3. **Signal Inference:** Employs an ensemble of Walk-Forward trained Gradient Boosted Decision Trees (GBDTs) to generate non-linear return predictions.
+4. **Portfolio Construction:** Ingests signals into a Convex Optimizer constrained by covariance matrices, transaction costs, and exposure limits.
+5. **Risk Management:** Enforces volatility targeting, sector bounds, and trailing stops to protect capital.
 
-### 2. Feature Engineering (110+ Factors)
-We implement a diverse library of alpha factors across multiple time horizons and categories:
+---
+
+## 3. Quantitative Methodology
+
+### 3.1 Data Warehouse & Universe Construction
+*   **Survivorship Bias Mitigation**: Dynamic historical constituent tracking via exact daily S&P 500 membership masks. Bankruptcies and delistings are natively simulated.
+*   **Point-in-Time (PiT) Correctness**: Strict adherence to reporting lag horizons for fundamental and earnings data to completely eliminate look-ahead bias.
+*   **Data Quality Guards**: Automated validation pipelines for anomaly detection, liquidity filters (Median ADV thresholds), and regime shift monitoring.
+
+### 3.2 Orthogonal Feature Engineering
 *   **Technical**: Momentum (Time-Series & Cross-Sectional), Mean Reversion, Volatility, Volume/Liquidity.
-*   **Fundamental**: Value (P/E, EV/EBITDA), Quality (ROE, Accruals), Growth (Revenue, EPS), Financial Health (Altman Z).
-*   **Alternative**: News Sentiment Analysis, Insider Trading Activity, Short Interest.
-*   **Composite**: Multi-factor scores (Piotroski F-Score, Quality-Minus-Junk).
+*   **Fundamental**: Value (Earnings Yield, EV/EBITDA), Quality (ROE, Accruals), Growth (Revenue, EPS), Financial Health (Altman Z-Score).
+*   **Alternative/Macro**: Term Premium, VIX proxies, Sentiment Analysis, and Insider Trading Activity.
+*   **Signal Preprocessing**: Strict *per-fold* cross-sectional winsorization and dynamic sector-neutralization to isolate pure idiosyncratic alpha.
 
-### 3. Machine Learning Pipeline
-*   **Ensemble Modeling**: Stacking of Gradient Boosted Decision Trees (**LightGBM**, **XGBoost**, **CatBoost**) to capture non-linear relationships.
-*   **Walk-Forward Validation**: Expanding window training with a **21-day embargo period** to strictly prevent data leakage.
-*   **Hyperparameter Optimization**: Bayesian optimization via **Optuna** to maximize Information Coefficient (IC).
-*   **Custom Objectives**: Specialized loss functions (e.g., Weighted Symmetric MAE) to penalize sign errors in return prediction.
+### 3.3 Machine Learning & Signal Extraction
+*   **Non-Linear Ensembles**: Stacking of Gradient Boosted Decision Trees (**LightGBM**, **XGBoost**, **CatBoost**) to capture complex, non-linear feature interactions.
+*   **Walk-Forward Validation**: Expanding window cross-validation with a strict **21-trading-day embargo period** (Purged K-Fold) to prevent temporal target overlapping.
+*   **Alpha Gatekeeping**: Models must pass rigorous out-of-sample Information Coefficient ($IC$) and $t$-statistic gates ($t > 2.5$) before entering the production ensemble.
+*   **Rank-Based Alpha**: Signals are smoothed temporally via EWMA and cross-sectionally ranked to maintain market neutrality.
+*   **Custom Objectives**: Specialized loss functions (e.g., Weighted Symmetric MAE) designed to strictly penalize directional sign errors over absolute magnitude.
 
-### 4. Portfolio Construction & Risk Management
-*   **Optimization Engines**: Mean-Variance (Markowitz), Risk Parity, and Kelly Criterion allocators.
-*   **Constraints**: Strict sector exposure limits, position concentration caps, and turnover constraints.
-*   **Transaction Costs**: Realistic modeling of commissions, slippage, and market impact (Almgren-Chriss model).
+### 3.4 Portfolio Optimization & Ex-Ante Risk
+*   **Risk Modeling**: Dynamic covariance matrix estimation via **Ledoit-Wolf Shrinkage** to stabilize matrix inversion.
+*   **Optimization Engines**: Configurable objective functions including Mean-Variance (Markowitz), Risk Parity (ERC), Black-Litterman, and Kelly Criterion allocators.
+*   **Volatility Targeting**: Dynamic gross exposure scaling to maintain a constant portfolio risk profile ($\sigma_{target}$).
+*   **Institutional Constraints**: Bound by maximum cardinality, sector tracking limits, Herfindahl-Hirschman Index (HHI) concentration caps, and turnover budgets.
 
----
-
-## 📊 Performance Snapshot (Historical Simulation)
-
-*Backtest Period: Jan 2019 – Dec 2023 | Strategy: Risk Parity Ensemble*
-
-| Metric | Strategy | Benchmark (S&P 500) | Alpha |
-| :--- | :--- | :--- | :--- |
-| **CAGR** | **+34.43%** | +14.00% | **+20.43%** |
-| **Sharpe Ratio** | **1.99** | 0.75 | **+1.24** |
-| **Max Drawdown** | **-16.30%** | -33.92% | **+17.62%** |
-| **Annual Volatility** | **18.50%** | 20.00% | **-1.50%** |
-
-*> Note: Past performance is not indicative of future results. Metrics derived from out-of-sample backtesting.*
+### 3.5 Transaction Cost Analysis (TCA)
+*   **Simulated Commissions**: Institutional commission schedules modeled at $10\text{ bps}$ per executed trade value.
+*   **Market Impact**: Almgren-Chriss linear impact model applied via percentage of Average Daily Volume (ADV).
+*   **Slippage**: Strict spread crossing and liquidity-adjusted slippage constraints ($5\text{ bps}$) embedded within execution.
 
 ---
 
-## 🛠️ Technology Stack
+## 4. Performance Analytics
+
+*Out-of-Sample (OOS) Backtest Period: February 2024 – February 2026 | Initial Capital: $1,000,000 | Benchmark: SPY*
+
+| Portfolio Construction Method | CAGR | Sharpe Ratio | Sortino Ratio | Max Drawdown | Excess Return (vs SPY) | Ending Equity |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Top-N (Equal Weight)** | **+47.50%** | 2.85 | 3.91 | -7.66% | **+30.41%** | $2,224,421 |
+| **Risk Parity (ERC)** | **+43.07%** | 2.89 | 3.99 | -7.30% | **+25.98%** | $2,090,137 |
+| **Kelly Criterion** | **+36.81%** | 2.72 | 3.78 | -7.84% | **+19.72%** | $1,907,266 |
+| **Mean-Variance (Markowitz)**| **+26.98%** | **2.98** | **3.96** | **-5.63%** | **+9.89%** | $1,636,030 |
+
+*> Note: Past performance is not indicative of future results. Metrics derived from rigorous out-of-sample walk-forward backtesting utilizing a multi-model GBDT ensemble. Results are fully burdened by simulated institutional TCA.*
+
+---
+
+## 5. Risk Management Framework
+
+The platform incorporates multi-layered risk management to preserve capital and ensure stable returns:
+
+* **Dynamic Covariance Modeling**: Utilizes **Ledoit-Wolf Shrinkage** to estimate the covariance matrix $\Sigma$.
+* **Volatility Targeting**: Dynamically scales gross exposure down during volatile market regimes.
+* **Concentration Caps**: Constrains the Herfindahl-Hirschman Index (HHI) to enforce strict diversification.
+* **Systemic Kill Switch**: Monitors peak-to-trough drawdowns ($MaxDD$). If a threshold is breached (e.g., $-20\%$), the system enters a mandatory 21-day cash cooldown.
+
+---
+
+## 6. Technology Stack
 
 | Domain | Technologies |
 | :--- | :--- |
@@ -70,10 +98,237 @@ We implement a diverse library of alpha factors across multiple time horizons an
 
 ---
 
-## 🚀 Quick Start Guide
+## 7. Repository Structure
+
+```text
+quant_alpha_research/                     # Root directory
+│
+├── 📁 config/                            # Configuration management
+│   ├── __init__.py                       # Package initialization
+│   ├── settings.py                       # Main configuration 
+│   ├── mappings.py                       # column mappings 
+│   └── logging_config.py                 # Logging setup
+│
+├── 📁 quant_alpha/                       # Main package (core logic)
+│   │
+│   ├── 📁 data/                          # Data acquisition layer
+│   │   ├── __init__.py
+│   │   ├── base_loader.py                # Abstract base class 
+│   │   ├── price_loader.py               # OHLCV data  
+│   │   ├── fundamental_loader.py         # Fundamentals 
+│   │   ├── earnings_loader.py            # Earnings data 
+│   │   ├── alternative_loader.py         # News, sentiment, insider 
+│   │   ├── DataManager.py                
+│   │
+│   ├── 📁 features/                      # Feature engineering 
+│   │   ├── __init__.py
+│   │   ├── base.py                       # BaseFactor abstract class 
+│   │   ├── registry.py                   # FactorRegistry manager 
+│   │   │
+│   │   ├── 📁 technical/                 # Technical indicators
+│   │   │   ├── __init__.py
+│   │   │   ├── momentum.py               # Momentum factors 
+│   │   │   ├── mean_reversion.py         # Mean reversion 
+│   │   │   ├── volatility.py             # Volatility factors 
+│   │   │   └── volume.py                 # Volume factors 
+│   │   │
+│   │   ├── 📁 fundamental/               # Fundamental factors
+│   │   │   ├── __init__.py
+│   │   │   ├── value.py                  # P/E, P/B, FCF yield 
+│   │   │   ├── quality.py                # ROE, ROIC, margins 
+│   │   │   ├── growth.py                 # Revenue, EPS growth 
+│   │   │   ├── utils.py           
+│   │   │   └── financial_health.py       # Debt, liquidity 
+│   │   │
+│   │   ├── 📁 earnings/                  # Earnings-based
+│   │   │   ├── __init__.py
+│   │   │   ├── surprises.py              # EPS surprises 
+│   │   │   ├── revisions.py              # Analyst revisions 
+│   │   │   ├── utils.py               
+│   │   │   └── estimates.py              # Consensus estimates 
+│   │   │
+│   │   ├── 📁 alternative/               # Alternative data
+│   │   │   ├── __init__.py
+│   │   │   ├── sentiment.py              
+│   │   │   ├── inflation.py               
+│   │   │   ├── marco.py        
+│   │   │   
+│   │   │
+│   │   ├── 📁 composite/                 # Multi-factor scores
+│   │   │   ├── __init__.py
+│   │   │   ├── marco_adjusted.py            
+│   │   │   ├── smart_signals.py          
+│   │   │   ├── system_health.py                    
+│   │   │
+│   │   └── utils.py                      # Feature utilities
+│   │
+│   ├── 📁 models/                        # ML modeling layer
+│   │   ├── __init__.py
+│   │   ├── base_model.py                 # Abstract model class
+│   │   ├── lightgbm_model.py             # LightGBM wrapper
+│   │   ├── xgboost_model.py              # XGBoost wrapper
+│   │   ├── catboost_model.py             # CatBoost wrapper
+│   │   ├── ensemble.py                   # Model averaging/stacking
+│   │   ├── trainer.py                    # Walk-forward trainer
+│   │   ├── predictor.py                  # Production predictions
+│   │   ├── feature_selector.py           # Feature selection
+│   │   ├── hyperopt.py                   # Hyperparameter tuning
+│   │   └── utils.py                      # Model utilities
+│   │
+│   ├── 📁 backtest/                      # Backtesting engine
+│   │   ├── __init__.py
+│   │   ├── engine.py                     # Main backtest loop
+│   │   ├── portfolio.py                  # Portfolio construction
+│   │   ├── execution.py                  # Trade execution simulator
+│   │   ├── market_impact.py              # Almgren-Chriss model
+│   │   ├── metrics.py                    # Performance metrics
+│   │   ├── attribution.py                # Factor attribution
+│   │   ├── risk_manager.py               # Risk controls
+│   │   └── utils.py                      # Backtest utilities
+│   │
+│   ├── 📁 research/                      # Research & analysis
+│   │   ├── __init__.py
+│   │   ├── factor_analysis.py            # IC, decay analysis
+│   │   ├── regime_detection.py           # Market regimes
+│   │   ├── correlation_analysis.py       # Factor correlation
+│   │   ├── significance_testing.py       # Statistical tests
+│   │   ├── alpha_decay.py                # Signal decay analysis
+│   │   └── utils.py                      # Research utilities
+│   │
+│   ├── 📁 optimization/                  # Portfolio optimization
+│   │   ├── __init__.py
+│   │   ├── mean_variance.py              # Markowitz optimization
+│   │   ├── risk_parity.py                # Risk parity
+│   │   ├── black_litterman.py            # Black-Litterman
+│   │   ├── kelly_criterion.py            # Kelly sizing
+│   │   ├── constraints.py                # Position constraints
+│   │   └── allocator.py                  # Portfolio Allocator
+│   │
+│   ├── 📁 monitoring/                    # Production monitoring
+│   │   ├── __init__.py
+│   │   ├── performance_tracker.py        # Live IC tracking
+│   │   ├── data_quality.py               # Data validation
+│   │   ├── model_drift.py                # Concept drift detection
+│   │   ├── alerts.py                     # Alert system
+│   │   └── dashboard.py                  # Monitoring dashboard
+│   │
+│   ├── 📁 visualization/                 # Plotting & reporting
+│   │   ├── __init__.py
+│   │   ├── plots.py                      # Standard plots
+│   │   ├── interactive.py                # Plotly dashboards
+│   │   ├── reports.py                    # PDF/HTML reports
+│   │   ├── factor_viz.py                 # Factor visualization
+│   │   └── utils.py                      # Viz utilities
+│   │
+│   └── 📁 utils/                         # Common utilities
+│       ├── __init__.py
+│       ├── coulmn_helpers.py             # Column mapping
+│       ├── date_utils.py                 # Date handling
+│       ├── math_utils.py                 # Math functions
+│       ├── io_utils.py                   # File I/O
+│       ├── logging_utils.py              # Logging helpers
+│       └── decorators.py                 # Python decorators
+│
+├── 📁 scripts/                           # Executable scripts
+│   ├── __init__.py
+│   ├── download_data.py                  # Initial data download
+│   ├── update_data.py                    # Daily data updates
+│   ├── run_backtest.py                   # Backtest runner
+│   ├── train_models.py                   # Model training
+│   ├── generate_predictions.py           # Production predictions
+│   ├── validate_factors.py               # Factor validation
+│   ├── optimize_portfolio.py             # Portfolio optimization
+│   ├── create_report.py                  # Generate reports
+│   ├── deploy_model.py                   # Deployment script
+│   ├── monitor_production.py             # Concept drift monitoring
+│   ├── run_hyperopt.py                   # Hyperopt runner
+│   └── run_pipeline.py                   # Full pipeline orchestrator
+│
+├── 📁 tests/                             # Comprehensive testing
+│   ├── __init__.py
+│   ├── conftest.py                       # Pytest fixtures
+│   │
+│   ├── 📁 unit/                          # Unit tests
+│   │   ├── test_data_loaders.py          
+│   │   ├── test_data_updates.py         
+│   │   ├── test_features.py              
+│   │   ├── test_models.py                
+│   │   ├── test_backtest.py              
+│   │   ├── test_optimization.py          
+│   │   ├── test_scripts.py
+│   │   ├── test_validation.py 
+│   │   └── test_utils.py                 
+│   │
+│   ├── 📁 integration/                   # Integration tests
+│   │   ├── test_pipeline.py              
+│   │   ├── test_deployment_integration.py              
+│   │   ├── test_data_flow.py             
+│   │   ├── test_validation_integration.py            
+│   │   └── test_production.py            
+│   │
+│   └── 📁 performance/                   # Performance tests
+│       ├── test_speed.py                 # Speed benchmarks
+│       └── test_memory.py                # Memory usage
+│
+├── 📁 notebooks/                         # Jupyter notebooks
+│   ├── 01_data_exploration.ipynb         # EDA
+│   ├── 02_factor_research.ipynb          # Factor testing
+│   ├── 03_model_development.ipynb        # Model prototyping
+│   ├── 04_backtest_analysis.ipynb        # Backtest results
+│   ├── 05_production_monitoring.ipynb    # Live monitoring
+│   └── 06_research_tearsheet.ipynb       # Research template
+│
+├── 📁 data/                              # Data storage
+│   ├── 📁 raw/                           # Raw downloaded data
+│   │   ├── 📁 prices/                    # OHLCV data
+│   │   ├── 📁 fundamentals/              # Fundamental data
+│   │   ├── 📁 earnings/                  # Earnings data
+│   │   └── 📁 alternative/               # Alternative data
+│   │   
+│   ├── 📁 processed/                     # Processed data
+│   └── 📁 cache/                         # Cached results
+│
+├── 📁 models/                            # Saved models
+│   ├── 📁 production/                    # Production models
+│   ├── 📁 archive/                       # Historical models
+│   └── 📁 experiments/                   # Experimental models
+│
+├── 📁 results/                           # Results & outputs
+│   ├── 📁 backtests/                     # Backtest results
+│   │   ├── backtest_results.csv
+│   │   ├── metrics.json
+│   │   └── attribution.csv
+│   │
+│   ├── 📁 predictions/                   # Model predictions
+│   │   ├── daily_predictions.csv
+│   │   └── portfolio_weights.csv
+│   │
+│   └── 📁 reports/                       # Generated reports
+│
+├── 📁 docs/                              # Documentation
+├── 📁 docker/                            # Docker configuration
+├── 📁 deployment/                        # Deployment configs
+│
+├── .env.example                          # Environment variables template
+├── .gitignore                            # Git ignore rules
+├── .pre-commit-config.yaml               # Pre-commit hooks
+├── main.py                               # Main orchestrator
+├── requirements.txt                      # Python dependencies
+├── requirements-dev.txt                  # Development dependencies
+├── setup.py                              # Package setup
+├── pytest.ini                            # Pytest configuration
+├── mypy.ini                              # Type checking config
+├── README.md                             # Project README
+└── LICENSE                               # MIT License
+```
+
+---
+
+## 8. Quick Start Guide
 
 ### Prerequisites
 *   Python 3.9+
+*   Python 3.9+ (3.11 recommended)
 *   Docker (optional, for containerized execution)
 
 ### Installation
@@ -88,6 +343,7 @@ cp .env.example .env
 
 # 3. Install Dependencies
 pip install -r requirements.txt
+pip install -e .[dev]
 ```
 
 ### 2. Running the Full Pipeline

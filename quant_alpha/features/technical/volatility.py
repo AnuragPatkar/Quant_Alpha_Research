@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 from ..registry import FactorRegistry
 from ..base import TechnicalFactor
+from quant_alpha.utils.column_helpers import safe_col
 
 EPS = 1e-9  # Machine epsilon to prevent DivisionByZero
 
@@ -129,16 +130,24 @@ class GKVolatility21D(TechnicalFactor):
         self.period = period
 
     def compute(self, df:pd.DataFrame) -> pd.Series :
+        high = safe_col(df, "high")
+        low = safe_col(df, "low")
+        open_ = safe_col(df, "open")
+        close = safe_col(df, "close")
+        
+        if high.isna().all():
+            return pd.Series(np.nan, index=df.index)
+
         # Pre-calculate logarithmic returns (Vectorized $O(N)$)
-        log_hl = np.log((df['high'] / df['low']).replace(0,np.nan))
-        log_co = np.log((df['close'] / df['open']).replace(0,np.nan))
+        log_hl = np.log((high / low).replace(0,np.nan))
+        log_co = np.log((close / open_).replace(0,np.nan))
         
         # Variance Estimator per period
         gk_var = 0.5 * (log_hl ** 2) - (2 * np.log(2) - 1) * (log_co ** 2)
 
         # Rolling Variance Mean -> StdDev -> Annualize
         # Note: Using transform ensures strict index alignment with the input DataFrame
-        return gk_var.groupby(df['ticker']).transform(lambda x: np.sqrt(x.rolling(window=self.period).mean()) * np.sqrt(252))
+        return gk_var.groupby(df['ticker']).transform(lambda x: np.sqrt(x.rolling(window=self.period).mean().clip(lower=0)) * np.sqrt(252))
     
 @FactorRegistry.register()
 class GKVolatility63D(TechnicalFactor):
@@ -148,12 +157,20 @@ class GKVolatility63D(TechnicalFactor):
         self.period = period
 
     def compute(self, df:pd.DataFrame) -> pd.Series :
-        log_hl = np.log((df['high'] / df['low']).replace(0, np.nan))
-        log_co = np.log((df['close'] / df['open']).replace(0, np.nan))
+        high = safe_col(df, "high")
+        low = safe_col(df, "low")
+        open_ = safe_col(df, "open")
+        close = safe_col(df, "close")
+        
+        if high.isna().all():
+            return pd.Series(np.nan, index=df.index)
+
+        log_hl = np.log((high / low).replace(0, np.nan))
+        log_co = np.log((close / open_).replace(0, np.nan))
         gk_var = 0.5 * (log_hl ** 2) - (2 * np.log(2) - 1) * (log_co ** 2)
         
         return gk_var.groupby(df['ticker']).transform(
-            lambda x: np.sqrt(x.rolling(window=self.period).mean()) * np.sqrt(252)
+            lambda x: np.sqrt(x.rolling(window=self.period).mean().clip(lower=0)) * np.sqrt(252)
         )
     
 # ==================== 3. ATR (AVERAGE TRUE RANGE) ====================
@@ -172,14 +189,19 @@ class ATR14(TechnicalFactor):
         self.period = period
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        prev_close = df.groupby('ticker')['close'].shift(1)
-        tr1 = df['high'] - df['low']
-        tr2 = (df['high'] - prev_close).abs()
-        tr3 = (df['low'] - prev_close).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-       
-        # Cross-sectional alignment via transform
-        atr = tr.groupby(df['ticker']).transform(lambda x: x.rolling(window=self.period).mean())
+        def calc_atr(group):
+            high = safe_col(group, "high")
+            low = safe_col(group, "low")
+            if high.isna().all():
+                return pd.Series(np.nan, index=group.index)
+            prev_close = group['close'].shift(1)
+            tr1 = high - low
+            tr2 = (high - prev_close).abs()
+            tr3 = (low - prev_close).abs()
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            return tr.rolling(window=self.period).mean()
+
+        atr = df.groupby('ticker', group_keys=False).apply(calc_atr, include_groups=False)
         return atr / (df['close'] + EPS)
     
 @FactorRegistry.register()
@@ -190,15 +212,19 @@ class ATR21(TechnicalFactor):
         self.period = period
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        prev_close = df.groupby('ticker')['close'].shift(1)
-        
-        tr1 = df['high'] - df['low']
-        tr2 = (df['high'] - prev_close).abs()
-        tr3 = (df['low'] - prev_close).abs()
-        
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        
-        atr = tr.groupby(df['ticker']).transform(lambda x: x.rolling(window=self.period).mean())
+        def calc_atr(group):
+            high = safe_col(group, "high")
+            low = safe_col(group, "low")
+            if high.isna().all():
+                return pd.Series(np.nan, index=group.index)
+            prev_close = group['close'].shift(1)
+            tr1 = high - low
+            tr2 = (high - prev_close).abs()
+            tr3 = (low - prev_close).abs()
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            return tr.rolling(window=self.period).mean()
+
+        atr = df.groupby('ticker', group_keys=False).apply(calc_atr, include_groups=False)
         return atr / (df['close'] + EPS)
     
 # ==================== 4. REGIME INDICATORS (RATIO, SKEW, KURT) ====================

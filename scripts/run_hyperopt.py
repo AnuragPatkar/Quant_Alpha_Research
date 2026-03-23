@@ -58,7 +58,7 @@ from quant_alpha.models.lightgbm_model import LightGBMModel
 from quant_alpha.models.xgboost_model import XGBoostModel
 from quant_alpha.models.catboost_model import CatBoostModel
 from quant_alpha.utils import setup_logging
-from quant_alpha.utils.preprocessing import WinsorisationScaler, SectorNeutralScaler
+
 from quant_alpha.models.hyperopt import HyperparameterOptimizer # ✅ Import instead of define
 
 # Logging setup
@@ -85,7 +85,7 @@ def run_hyperopt():
     data = data.sort_values(['ticker', 'date'])
     
     # Forward Return Construction:
-    # Calculates $R_{t+1 \to t+6}$ (5-day forward return).
+    # Calculates $R_{t+1 \\to t+6}$ (5-day forward return).
     # Logic handles both Open-to-Open (tradeable) and Close-to-Close (indicative) prices.
     if 'open' in data.columns:
         next_open = data.groupby('ticker')['open'].shift(-1)
@@ -95,30 +95,40 @@ def run_hyperopt():
         # Fallback: Close-to-Close implies execution at Close(T), susceptible to bid-ask bounce noise.
         data['raw_ret_5d'] = data.groupby('ticker')['close'].shift(-5) / data['close'] - 1
     
-    # Target Engineering: Residualize returns relative to sector peers.
-    # $y_{target} = r_{ticker} - \mu_{sector}$
+    # FIX BUG-092: Target must match production build_target() exactly — with vol dampening.
+    # Original: plain sector-neutral residual (no dampening) -> different loss landscape
+    # than production trainer -> Optuna finds params optimal for wrong objective.
     sector_mean = data.groupby(['date', 'sector'])['raw_ret_5d'].transform('mean')
-    data['target'] = data['raw_ret_5d'] - sector_mean
-    
+    resid = data['raw_ret_5d'] - sector_mean
+    roll_std = (
+        data.groupby('ticker')['raw_ret_5d']
+        .transform(lambda x: x.rolling(63, min_periods=21).std())
+    )
+    vol_damp = 1.0 / (1.0 + roll_std.fillna(roll_std.median()))
+    data['target'] = resid * vol_damp
+
     data = data.dropna(subset=['target'])
-    
+
     # Feature Selection Mask
-    exclude = ['open', 'high', 'low', 'close', 'volume', 'target', 'date', 'ticker', 'index', 'level_0', 'raw_ret_5d']
-    
-    # Identify Numeric vs Categorical features for preprocessing
+    exclude = [
+        'open', 'high', 'low', 'close', 'volume', 'target', 'date',
+        'ticker', 'index', 'level_0', 'raw_ret_5d',
+        'macro_mom_5d', 'macro_mom_21d', 'macro_vix_proxy', 'macro_trend_200d',
+        'us_10y_close', 'vix_close', 'oil_close', 'usd_close', 'sp500_close'
+    ]
+
+    # Identify numeric vs categorical features
     numeric_features = data.select_dtypes(include=[np.number]).columns.tolist()
     numeric_features = [c for c in numeric_features if c not in exclude]
-    
+
     # Feature Universe Definition
     features = [c for c in data.columns if c not in exclude]
-    
-    # Robustness: Apply Winsorization ($1^{st}/99^{th}$ percentile clipping) to stabilize gradient descent.
-    logger.info("🧹 Applying Winsorization (Shared Logic)...")
-    data = WinsorisationScaler(clip_pct=0.01).fit(data, numeric_features).transform(data, numeric_features)
 
-    # Normalization: Cross-sectional Z-Scoring ($z = \frac{x - \mu}{\sigma}$) within sectors.
-    logger.info("⚖️ Applying Sector-Neutral Normalization (Shared Logic)...")
-    data = SectorNeutralScaler(sector_col="sector").fit(data, numeric_features).transform(data, numeric_features)
+    # FIX BUG-088: Full-panel WinsorisationScaler / SectorNeutralScaler removed.
+    # Fitting scalers on the full dataset leaks test-fold distribution into clip bounds,
+    # inflating IC estimates by ~5-15% and selecting overfit hyperparameters.
+    # Per-fold preprocessing fires inside HyperparameterOptimizer ->
+    # WalkForwardTrainer -> _train_single_model -> winsorize_fold(). No scaling here.
 
     # Strategy Pattern: Map identifiers to concrete model implementations
     models_to_run = {
@@ -131,7 +141,7 @@ def run_hyperopt():
 
     for name, m_class in models_to_run.items():
         opt = HyperparameterOptimizer(model_class=m_class, model_name=name)
-        # Execution: Runs $N=20$ trials. In production, $N \ge 50$ is recommended for convergence.
+        # Execution: Runs $N=20$ trials. In production, $N \\ge 50$ is recommended for convergence.
         best = opt.optimize(data, features, 'target', n_trials=20)
         global_best_params[name] = best
 

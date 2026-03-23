@@ -42,6 +42,7 @@ import numpy as np
 import pandas as pd
 from ..registry import FactorRegistry
 from ..base import TechnicalFactor
+from quant_alpha.utils.column_helpers import safe_col
 
 EPS = 1e-9  # Machine epsilon for numerical stability
 
@@ -256,12 +257,21 @@ class PriceToHighLow52W(TechnicalFactor):
         self.period = period
     
     def compute(self, df:pd.DataFrame) -> pd.Series:
-        roll_high = df.groupby('ticker')['high'].transform(lambda x: x.rolling(self.period).max())
-        roll_low = df.groupby('ticker')['low'].transform(lambda x: x.rolling(self.period).min())
-        denom = roll_high - roll_low
-        position = (df['close'] - roll_low) / (denom + EPS)
-        
-        return position.fillna(0)
+        def calc_pos(group):
+            high = safe_col(group, "high")
+            low = safe_col(group, "low")
+            if high.isna().all():
+                high = group['close']
+                low = group['close']
+
+            roll_high = high.rolling(self.period).max()
+            roll_low = low.rolling(self.period).min()
+            denom = roll_high - roll_low
+            position = (group['close'] - roll_low) / (denom + EPS)
+            return position
+
+        pos_series = df.groupby('ticker', group_keys=False).apply(calc_pos, include_groups=False)
+        return pos_series.fillna(0)
     
 # ==================== 6. CCI (Commodity Channel Index) ====================    
 
@@ -282,8 +292,13 @@ class CCI(TechnicalFactor):
     
     def compute(self, df:pd.DataFrame) -> pd.Series:
         def calc_cci(x):
+            high = safe_col(x, "high")
+            low = safe_col(x, "low")
+            if high.isna().all():
+                return pd.Series(np.nan, index=x.index)
+
             # 1. Typical Price
-            tp = (x['high'] + x['low'] + x['close']) / 3
+            tp = (high + low + x['close']) / 3
             
             # 2. SMA of Typical Price
             sma_tp = tp.rolling(self.period).mean()
@@ -299,7 +314,8 @@ class CCI(TechnicalFactor):
             # 4. CCI Calculation (0.015 is Lambert's Constant)
             cci = (tp - sma_tp) / (mean_dev * 0.015 + EPS)
             return cci
-        return df.groupby('ticker', group_keys=False).apply(calc_cci)
+        # FutureWarning fix: Add include_groups=False to avoid including grouping columns
+        return df.groupby('ticker', group_keys=False).apply(calc_cci, include_groups=False)
     
 
 

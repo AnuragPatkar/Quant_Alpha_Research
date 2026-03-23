@@ -160,18 +160,11 @@ class TestMathUtils:
 
 
 class TestDateUtils:
-    """Tests for date_utils.py using mocks for pandas_market_calendars."""
+    """Tests for date_utils.py."""
 
-    @pytest.fixture
-    def mock_calendar(self):
-        with patch("quant_alpha.utils.date_utils.get_market_calendar") as mock_get:
-            calendar = MagicMock()
-            mock_get.return_value = calendar
-            yield calendar
-
-    def test_get_trading_days(self, mock_calendar):
+    def test_get_trading_days(self):
         """Verify it extracts the index from the calendar schedule.
-        The mock is being ignored by pytest, so we test against the real calendar.
+        We test against the real calendar.
         """
         # Trading days for 2023-01-01 to 2023-01-05 are Jan 3, 4, 5.
         days = get_trading_days("2023-01-01", "2023-01-05")
@@ -283,6 +276,7 @@ class TestDecorators:
     def test_retry_success(self):
         """Function succeeds on first try."""
         mock_func = MagicMock(return_value="success")
+        mock_func.__name__ = "mock_func"
         decorated = retry(max_retries=3)(mock_func)
         
         res = decorated()
@@ -293,6 +287,7 @@ class TestDecorators:
         """Function fails once then succeeds."""
         # Side effect: Raise ValueError first, then return "success"
         mock_func = MagicMock(side_effect=[ValueError("Fail"), "success"])
+        mock_func.__name__ = "mock_func"
         
         # Use small delay to speed up test
         decorated = retry(max_retries=3, delay=0.01)(mock_func)
@@ -304,6 +299,7 @@ class TestDecorators:
     def test_retry_max_retries_exceeded(self):
         """Function fails always, should raise exception eventually."""
         mock_func = MagicMock(side_effect=ValueError("Persistent Fail"))
+        mock_func.__name__ = "mock_func"
         
         decorated = retry(max_retries=2, delay=0.01)(mock_func)
         
@@ -340,5 +336,9 @@ class TestDecorators:
             
         assert res == "done"
         # Check log message
-        assert "Function 'slow_func' took" in caplog.text
-        assert "seconds to execute" in caplog.text
+        # FIX BUG-095: Log message updated in decorators.py (BUG-086 fix).
+        # Old: "Function 'slow_func' took X seconds to execute."
+        # New: "[timer] 'slow_func' completed in Xs"
+        assert "[timer]" in caplog.text
+        assert "slow_func" in caplog.text
+        assert "completed in" in caplog.text

@@ -1,12 +1,37 @@
+# Environments
 venv/
 venv
+.env
+
+# Python caches
 __pycache__/
 *.pyc
-.env
+*.pyo
+*.pyd
+
+# Build / Packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Tooling / Testing
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.numba_cache
+
+# IDEs
+.vscode/
+.idea/
+
+# Project specific (Data / Outputs)
 data/
 models/
 results/
+*.log
+
+# Secrets / Local configs
 config/api_keys.py
-.vscode/
-.idea/
-.numba_cache
+config/simfin_data.py

@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 from ..registry import FactorRegistry
 from ..base import TechnicalFactor
+from quant_alpha.utils.column_helpers import safe_col
 
 # Machine epsilon for numerical stability (prevents DivisionByZero)
 EPS = 1e-9
@@ -248,13 +249,21 @@ class StochasticOscillator(TechnicalFactor):
         self.period = period
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        low_min = df.groupby('ticker')['low'].transform(lambda x: x.rolling(window=self.period).min())
-        high_max = df.groupby('ticker')['high'].transform(lambda x: x.rolling(window=self.period).max())
-        
-        denom = (high_max - low_min).replace(0, np.nan)
-        k = 100 * ((df['close'] - low_min) / denom)
-        
-        return k.fillna(50) # Neutral fill
+        def calc(g):
+            lo = safe_col(g, "low")
+            hi = safe_col(g, "high")
+            if lo.isna().all() or hi.isna().all():
+                return pd.Series(np.nan, index=g.index)
+
+            low_min = lo.rolling(window=self.period).min()
+            high_max = hi.rolling(window=self.period).max()
+            
+            denom = (high_max - low_min).replace(0, np.nan)
+            k = 100 * ((g['close'] - low_min) / denom)
+            return k
+
+        k_series = df.groupby('ticker', group_keys=False).apply(calc, include_groups=False)
+        return k_series.fillna(50) # Neutral fill
     
 # ==================== WilliamsR ====================
 
@@ -272,14 +281,21 @@ class WilliamsR(TechnicalFactor):
         self.period = period
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Vectorized Approach via Transform ($O(N)$)
-        low_min = df.groupby('ticker')['low'].transform(lambda x: x.rolling(window=self.period).min())
-        high_max = df.groupby('ticker')['high'].transform(lambda x: x.rolling(window=self.period).max())
+        def calc(g):
+            lo = safe_col(g, "low")
+            hi = safe_col(g, "high")
+            if lo.isna().all() or hi.isna().all():
+                return pd.Series(np.nan, index=g.index)
 
-        denom = (high_max - low_min).replace(0, np.nan)
-        wr = -100 * ((high_max - df['close']) / denom)
-        
-        return wr.fillna(-50) # Neutral fill
+            low_min = lo.rolling(window=self.period).min()
+            high_max = hi.rolling(window=self.period).max()
+
+            denom = (high_max - low_min).replace(0, np.nan)
+            wr = -100 * ((high_max - g['close']) / denom)
+            return wr
+
+        wr_series = df.groupby('ticker', group_keys=False).apply(calc, include_groups=False)
+        return wr_series.fillna(-50) # Neutral fill
     
 # =========================== TSI ============================
 
@@ -350,10 +366,13 @@ class ADX14(TechnicalFactor):
     def compute(self, df: pd.DataFrame) -> pd.Series:
         def calc_adx_group(group):
             # Pre-computation: Isolate series for cleaner syntax
-            high = group['high']
-            low = group['low']
+            high = safe_col(group, "high")
+            low = safe_col(group, "low")
             close = group['close']
             
+            if high.isna().all():
+                return pd.Series(np.nan, index=group.index)
+
             # True Range
             tr1 = high - low
             tr2 = (high - close.shift()).abs()
@@ -386,7 +405,8 @@ class ADX14(TechnicalFactor):
             
             return adx
         
-        return df.groupby('ticker', group_keys=False).apply(calc_adx_group)
+        # FutureWarning fix: Add include_groups=False to avoid including grouping columns
+        return df.groupby('ticker', group_keys=False).apply(calc_adx_group, include_groups=False)
 
 
 

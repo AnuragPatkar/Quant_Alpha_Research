@@ -92,9 +92,11 @@ class DummyConfig:
     ALTERNATIVE_DIR = Path("alternative")
     MODELS_DIR = Path("models")
     LOG_DIR = Path("logs")
+    PREDICTIONS_DIR = Path("results/predictions")
     BACKTEST_START_DATE = "2020-01-01"
     BACKTEST_END_DATE = "2023-12-31"
     INITIAL_CAPITAL = 100000
+    MODEL_WEIGHTS = {"lightgbm": 0.4, "xgboost": 0.3, "catboost": 0.3}
 
 # ---------------------------------------------------------------------------
 # Test Suite
@@ -254,6 +256,7 @@ class TestProductionCycle:
                 self.PRICES_DIR = dirs["prices"]
                 self.MODELS_DIR = root / "models"
                 self.RESULTS_DIR = dirs["results"]
+                self.PREDICTIONS_DIR = dirs["preds"]
                 self.LOG_DIR = dirs["logs"]
                 self.BACKTEST_START_DATE = "2020-01-01"
                 self.INITIAL_CAPITAL = 100_000
@@ -267,6 +270,7 @@ class TestProductionCycle:
                 self.MIN_OOS_IC_THRESHOLD = 0.005
                 self.MIN_OOS_IC_TSTAT = 1.5
                 self.INFERENCE_SCALER_LOOKBACK_YEARS = 1
+                self.MODEL_WEIGHTS = {"lightgbm": 0.4, "xgboost": 0.3, "catboost": 0.3}
                 
         mock_cfg = MockConfig()
         

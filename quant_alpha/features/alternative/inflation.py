@@ -63,8 +63,7 @@ class OilUSDRatio(AlternativeFactor):
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if not {'oil_close', 'usd_close'}.issubset(df.columns):
-            logger.warning(f"❌ {self.name}: Missing columns")
-            return pd.Series(0, index=df.index)
+            return pd.Series(np.nan, index=df.index)
         
         # Vectorized ratio calculation (Oil price in USD terms relative to DXY)
         # Replace 0s to prevent DivisionByZero errors ($O(N)$)
@@ -95,14 +94,15 @@ class YieldMomentum(AlternativeFactor):
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if 'us_10y_close' not in df.columns:
-            return pd.Series(0, index=df.index)
+            return pd.Series(np.nan, index=df.index)
         
         # Calculate 21-day (approx. 1 trading month) percentage change in yields.
+        # FutureWarning fix: Use ffill() before pct_change() to handle NaN values properly.
         if 'ticker' in df.columns:
-            momentum = df.groupby('ticker')['us_10y_close'].pct_change(21) * 100
+            momentum = df.groupby('ticker')['us_10y_close'].ffill().groupby(df['ticker']).pct_change(21) * 100
             return momentum.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean()).fillna(0)
         else:
-            momentum = df['us_10y_close'].pct_change(21) * 100
+            momentum = df['us_10y_close'].ffill().pct_change(21) * 100
             return momentum.rolling(5, min_periods=1).mean().fillna(0)
 
 @FactorRegistry.register()
@@ -123,15 +123,16 @@ class InflationProxyScore(AlternativeFactor):
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if not {'oil_close', 'us_10y_close'}.issubset(df.columns):
-            return pd.Series(50, index=df.index)
+            return pd.Series(np.nan, index=df.index)
         
         # --- Component 1: Oil Momentum (Realized Cost Shock) ---
         if 'ticker' in df.columns:
-            oil_mom = df.groupby('ticker')['oil_close'].pct_change(21).groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean())
+            # FutureWarning fix: Use ffill() before pct_change() to handle NaN values properly.
+            oil_mom = df.groupby('ticker')['oil_close'].ffill().groupby(df['ticker']).pct_change(21).groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean())
             y_min = df.groupby('ticker')['us_10y_close'].transform(lambda x: x.rolling(252, min_periods=63).min())
             y_max = df.groupby('ticker')['us_10y_close'].transform(lambda x: x.rolling(252, min_periods=63).max())
         else:
-            oil_mom = df['oil_close'].pct_change(21).rolling(5, min_periods=1).mean()
+            oil_mom = df['oil_close'].ffill().pct_change(21).rolling(5, min_periods=1).mean()
             y_min = df['us_10y_close'].rolling(252, min_periods=63).min()
             y_max = df['us_10y_close'].rolling(252, min_periods=63).max()
             
@@ -144,7 +145,7 @@ class InflationProxyScore(AlternativeFactor):
         
         # Weighted Average: Heavy weight on Oil (0.6) as it impacts margins directly
         combined = (oil_score * 0.6 + yield_score * 0.4).clip(0, 100)
-        return combined.fillna(50)
+        return combined.fillna(np.nan)
 
 @FactorRegistry.register()
 class GrowthInflationMix(AlternativeFactor):
@@ -163,18 +164,19 @@ class GrowthInflationMix(AlternativeFactor):
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if not {'us_10y_close', 'oil_close'}.issubset(df.columns):
-            return pd.Series(0, index=df.index)
+            return pd.Series(np.nan, index=df.index)
         
         # Calculate the rate of change spread: $\Delta Yields - \Delta Oil$
+        # FutureWarning fix: Use ffill() before pct_change() to handle NaN values properly.
         if 'ticker' in df.columns:
-            growth_sig = df.groupby('ticker')['us_10y_close'].pct_change(21)
-            infl_sig = df.groupby('ticker')['oil_close'].pct_change(21)
+            growth_sig = df.groupby('ticker')['us_10y_close'].ffill().groupby(df['ticker']).pct_change(21)
+            infl_sig = df.groupby('ticker')['oil_close'].ffill().groupby(df['ticker']).pct_change(21)
             spread = growth_sig - infl_sig
             spread_mean = spread.groupby(df['ticker']).transform(lambda x: x.rolling(63, min_periods=21).mean())
             spread_std = spread.groupby(df['ticker']).transform(lambda x: x.rolling(63, min_periods=21).std())
         else:
-            growth_sig = df['us_10y_close'].pct_change(21)
-            infl_sig = df['oil_close'].pct_change(21)
+            growth_sig = df['us_10y_close'].ffill().pct_change(21, fill_method=None)
+            infl_sig = df['oil_close'].ffill().pct_change(21, fill_method=None)
             spread = growth_sig - infl_sig
             spread_mean = spread.rolling(63, min_periods=21).mean()
             spread_std = spread.rolling(63, min_periods=21).std()
@@ -182,4 +184,6 @@ class GrowthInflationMix(AlternativeFactor):
         # Standardization: Z-Score normalization to identify statistical extremes
         z_mix = (spread - spread_mean) / (spread_std + 1e-6)
         
-        return z_mix.clip(-3, 3).fillna(0)
+        if 'ticker' in df.columns:
+            return z_mix.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean()).clip(-3, 3).fillna(np.nan)
+        return z_mix.rolling(5, min_periods=1).mean().clip(-3, 3).fillna(np.nan)

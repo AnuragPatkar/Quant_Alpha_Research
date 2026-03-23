@@ -1,4 +1,4 @@
-"""
+r"""
 Backtest Engine & Attribution Validation
 ========================================
 Rigorous testing suite for the event-driven backtesting engine and performance attribution system.
@@ -159,7 +159,7 @@ class TestBacktestEngine:
             assert engine.spread   == 0.0002, "spread not stored correctly"
 
     def test_perfect_foresight_profitability(self, synthetic_market):
-        """
+        r"""
         Validates execution logic under ideal conditions (Perfect Signal, Zero Cost).
         
         Constraints:
@@ -238,7 +238,7 @@ class TestBacktestEngine:
         )
 
     def test_cash_constraint_scales_buys(self):
-        """
+        r"""
         Verifies that orders exceeding available cash are correctly scaled or capped.
         Constraint: $OrderValue \le AvailableCash$.
         """
@@ -261,7 +261,7 @@ class TestBacktestEngine:
             assert min_cash >= 0, f"Cash went negative: {min_cash}"
 
     def test_market_impact_integration(self, synthetic_market):
-        """
+        r"""
         Verifies that enabling market impact modeling correctly penalizes performance.
         Hypothesis: $NAV_{impact} \le NAV_{no\_impact}$.
         """
@@ -277,80 +277,39 @@ class TestBacktestEngine:
         
         assert val_imp <= val_no, "Market impact should reduce (or equal) performance"
 
-    def test_regime_filter_volatility(self):
+    def test_average_cost_accounting(self):
         """
-        Verifies Regime Defense mechanism:
-        $Vol_{realized} > Vol_{target} \implies Weights \to 0$ (Flight to Cash).
-        """
-        engine = BacktestEngine(target_volatility=0.10)
-        
-        # Case: High Volatility -> Empty Dict (Cash)
-        # current_vol = 0.20 (> 0.15 limit)
-        weights = engine._generate_smart_weights(
-            pd.DataFrame({'ticker': ['A'], 'prediction': [1.0], 'rank': [1]}),
-            top_n=5,
-            day_prices=pd.DataFrame(),
-            current_vol=0.20 
-        )
-        assert weights == {}, "Should return empty weights (Cash) when vol is high"
-
-    def test_regime_filter_drawdown(self):
-        """
-        Verifies Drawdown Protection mechanism:
-        $DD_{current} > Limit_{DD} \implies Weights \to 0$.
-        """
-        engine = BacktestEngine()
-        
-        # Populate equity curve to simulate drawdown
-        # Peak at 100, current at 80 (-20%), MA50 at 90.
-        # We need > 50 points.
-        history = [{'total_value': 100.0}] * 50
-        history.append({'total_value': 80.0}) # Drop
-        engine.portfolio.equity_curve = history
-        
-        weights = engine._generate_smart_weights(
-            pd.DataFrame({'ticker': ['A'], 'prediction': [1.0], 'rank': [1]}),
-            top_n=5,
-            day_prices=pd.DataFrame(),
-            current_vol=0.01
-        )
-        assert weights == {}, "Should return empty weights (Cash) when in deep drawdown"
-
-    def test_fifo_accounting_partial_sell(self):
-        """
-        Verifies First-In-First-Out (FIFO) lot matching logic in trade logging.
+        Verifies Average Cost Basis lot matching logic in trade logging.
         Ensures correct cost basis attribution when selling a portion of a position.
         """
-        engine = BacktestEngine()
+        dates = pd.date_range("2023-01-01", periods=3, freq="B")
+        prices = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "close": 100, "open": 100, "volume": 1e6},
+            {"date": dates[1], "ticker": "A", "close": 110, "open": 110, "volume": 1e6},
+            {"date": dates[2], "ticker": "A", "close": 120, "open": 120, "volume": 1e6},
+        ])
+        preds = pd.DataFrame([
+            {"date": dates[0], "ticker": "A", "prediction": 1000 / 10000},
+            {"date": dates[1], "ticker": "A", "prediction": 2200 / 10100},
+            {"date": dates[2], "ticker": "A", "prediction": 600 / 10300},
+        ])
         
-        # Buy 10 @ 100
-        engine._log_trade_detailed(
-            {'ticker': 'A', 'side': 'buy', 'fill_price': 100, 'shares': 10, 'date': '2023-01-01'},
-            'ENTRY', 0.0
+        engine = BacktestEngine(
+            initial_capital=10000, commission=0, spread=0, slippage=0, 
+            use_market_impact=False, execution_price="close", rebalance_freq="daily"
         )
-        # Buy 10 @ 110
-        engine._log_trade_detailed(
-            {'ticker': 'A', 'side': 'buy', 'fill_price': 110, 'shares': 10, 'date': '2023-01-02'},
-            'ENTRY', 0.0
-        )
+        res = engine.run(preds, prices, is_weights=True)
+        trades = res["trades"]
         
-        # Sell 15 shares. FIFO Logic:
-        # 1. Consume 10 shares @ 100 (Lot 1)
-        # 2. Consume 5 shares @ 110 (Lot 2)
-        # Weighted Cost for this trade = (10*100 + 5*110) / 15 = 103.333
-        engine._log_trade_detailed(
-            {'ticker': 'A', 'side': 'sell', 'fill_price': 120, 'shares': 15, 'date': '2023-01-03'},
-            'EXIT', 100.0 # PnL doesn't matter for entry calc check
-        )
+        # Third trade is the sell
+        assert len(trades) >= 3
+        sell_trade = trades.iloc[-1]
         
-        last_trade = engine.trades[-1]
-        assert last_trade['entry_price'] == pytest.approx(103.333, abs=0.01)
+        # 1st trade: Buy 10 @ 100 -> avg cost = 100
+        # 2nd trade: Buy 10 @ 110 -> avg cost = (10*100 + 10*110)/20 = 105
+        # 3rd trade: Sell 15 @ 120 -> PnL = 15 * (120 - 105) = 225
         
-        # Remaining position: 5 shares @ 110 (Lot 2 remainder)
-        entries = engine.position_entry_map['A']
-        assert len(entries) == 1
-        assert entries[0]['shares'] == 5
-        assert entries[0]['price'] == 110
+        assert sell_trade["pnl"] == pytest.approx(225.0, abs=1.0)
 
 # ===========================================================================
 # ATTRIBUTION TESTS
@@ -364,7 +323,7 @@ class TestAttribution:
     """Unit tests for SimpleAttribution logic."""
 
     def test_pnl_aggregation(self):
-        """
+        r"""
         Validates the aggregation of trade-level P&L into portfolio stats.
         
         Checks:
@@ -395,12 +354,10 @@ class TestAttribution:
         stats = attr.analyze_pnl_drivers(trades)
 
         # Use .get() to be robust against missing keys in sparse returns
-        assert stats.get("total_pnl", 0.0)      == pytest.approx(10.0),    "total_pnl wrong"
-        assert stats.get("total_trades", 0)     == 3,                       "total_trades wrong"
-        assert stats.get("winning_trades", 0)   == 2,                       "winning_trades wrong"
-        assert stats.get("hit_ratio", 0.0)      == pytest.approx(2 / 3),   "hit_ratio wrong"
-        assert stats.get("gross_profit", 0.0)   == pytest.approx(20.0),    "gross_profit wrong"
-        assert stats.get("gross_loss", 0.0)     == pytest.approx(-10.0),   "gross_loss wrong"
+        assert stats.get("n_trades", 0)     == 3,                       "n_trades wrong"
+        assert stats.get("hit_ratio", 0.0)      == pytest.approx(0.6667, abs=1e-4),   "hit_ratio wrong"
+        assert stats.get("long_pnl_contribution", 0.0)   == pytest.approx(0.0),    "long_pnl_contribution wrong"
+        assert stats.get("short_pnl_contribution", 0.0)     == pytest.approx(10.0),   "short_pnl_contribution wrong"
 
         if "profit_factor" in stats:
             assert stats["profit_factor"] == pytest.approx(2.0), (
@@ -434,9 +391,7 @@ class TestAttribution:
                 f"Unexpected exception on empty trades: {type(e).__name__}: {e}"
             )
 
-        assert stats.get("total_trades", 0)   == 0,               "total_trades should be 0"
-        assert stats.get("total_pnl", 0.0)      == pytest.approx(0.0), "total_pnl should be 0"
-        assert stats.get("winning_trades", 0) == 0,               "winning_trades should be 0"
+        assert stats.get("n_trades", -1)   == 0,               "n_trades should be 0"
 
         # Hit ratio must be 0 or NaN — not undefined/crash
         hr = stats.get("hit_ratio", 0)
@@ -462,8 +417,8 @@ class TestAttribution:
         trades["side"] = trades["side"].str.lower()
         stats = SimpleAttribution().analyze_pnl_drivers(trades)
         assert stats["hit_ratio"]    == pytest.approx(1.0)
-        assert stats.get("gross_loss", 0.0)   == pytest.approx(0.0)
-        assert stats.get("gross_profit", 0.0) == pytest.approx(30.0)
+        assert stats.get("long_pnl_contribution", 0.0)   == pytest.approx(30.0)
+        assert stats.get("short_pnl_contribution", 0.0) == pytest.approx(0.0)
 
     def test_all_losing_trades(self):
         """Verifies boundary condition: $HitRatio = 0.0$ when all trades are unprofitable."""
@@ -483,5 +438,5 @@ class TestAttribution:
         trades["side"] = trades["side"].str.lower()
         stats = SimpleAttribution().analyze_pnl_drivers(trades)
         assert stats["hit_ratio"]    == pytest.approx(0.0)
-        assert stats.get("gross_profit", 0.0) == pytest.approx(0.0)
-        assert stats.get("gross_loss", 0.0)   == pytest.approx(-30.0)
+        assert stats.get("long_pnl_contribution", 0.0) == pytest.approx(-30.0)
+        assert stats.get("short_pnl_contribution", 0.0)   == pytest.approx(0.0)

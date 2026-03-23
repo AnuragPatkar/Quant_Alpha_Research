@@ -1,21 +1,22 @@
+# FIX BUG-097: Module docstring was placed AFTER imports — Python treats it as a
+# dead string expression, not a module docstring. Moved to top.
+"""
+conftest.py
+===========
+Global pytest configuration and fixtures.
+
+This file is automatically discovered by pytest and provides fixtures, hooks,
+and plugins available to all tests in the project.
+
+Note: tests are intended to live in tests/unit/ and tests/integration/
+subdirectories (matching PROJECT_ROOT = Path(__file__).resolve().parent.parent).
+"""
 import sys
 import os
 import pytest
 import pandas as pd
 import numpy as np
 from pathlib import Path
-"""
-conftest.py
-===========
-Global pytest configuration and fixtures.
-
-# 1. Setup Project Path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-This file is automatically discovered by pytest and is used to define
-fixtures, hooks, and plugins that are available to all tests in the project.
-"""
 
 # 2. Environment Variables (CPU Throttling for Tests)
 os.environ["OMP_NUM_THREADS"] = "4"

@@ -1,195 +1,179 @@
 """
 Financial Health & Solvency Factors
-===================================
-Quantitative metrics assessing a firm's leverage, liquidity, and long-term viability.
+====================================
+Quantitative metrics assessing leverage, liquidity, and long-term viability.
 
-Purpose
--------
-This module constructs factors that evaluate the balance sheet strength of a company.
-It focuses on two critical dimensions of risk:
-1. **Solvency**: The ability to meet long-term debt obligations (e.g., Debt/Equity, Net Debt/EBITDA).
-2. **Liquidity**: The ability to meet short-term liabilities (e.g., Current Ratio, Quick Ratio).
-
-Usage
------
-These factors are registered with the `FactorRegistry` and are typically used as
-"Quality" signals or negative screens (exclusionary filters) in portfolio construction.
-
-.. code-block:: python
-
-    registry = FactorRegistry()
-    health_factor = registry.get('health_net_debt_ebitda')
-    signals = health_factor.compute(fundamentals_df)
-
-Importance
-----------
-- **Risk Mitigation**: High leverage is a primary predictor of bankruptcy and
-  equity dilution events.
-- **Quality Factor**: "Quality-Minus-Junk" (QMJ) strategies rely heavily on
-  solvency metrics to identify robust firms.
-- **Regime Sensitivity**: These factors effectively stratify performance during
-  credit contractions and rising interest rate environments.
-
-Tools & Frameworks
-------------------
-- **Pandas**: Vectorized DataFrame operations for ratio calculations.
-- **NumPy**: Efficient handling of `NaN` propagation and numerical clipping.
-- **FactorRegistry**: Decorator-based registration system.
+FIXES:
+  BUG-027: CashToDebtRatio, NetDebtToEBITDA, DebtToRevenue, and EBITDAToDebt
+           were all checking for raw column names ('total_cash', 'total_debt', etc.)
+           directly via `if 'col' not in df.columns`, then accessing df['col']
+           directly. This bypassed FundamentalColumnValidator entirely and would
+           always fail when the DataManager/mappings.py had renamed columns.
+           All four factors now use FundamentalColumnValidator.find_column().
 """
 
 from ..registry import FactorRegistry
-from .utils import SingleColumnFactor, RatioFactor
+from .utils import SingleColumnFactor, RatioFactor, FundamentalColumnValidator
 import pandas as pd
 import numpy as np
-from ..base import FundamentalFactor
+from ..base import FundamentalFactor, EPS
+
 
 @FactorRegistry.register()
 class DebtToEquity(SingleColumnFactor):
     """
     Debt-to-Equity Ratio (Inverted).
-    
-    Measures financial leverage. We invert the sign ($ \times -1 $) so that
-    higher scores represent safer (lower) leverage, aligning with the
-    "Higher is Better" convention of alpha factors.
-    
-    Formula:
-    $$ Score = -1 \times \frac{\text{Total Debt}}{\text{Total Equity}} $$
+    Score = -1 × (Total Debt / Total Equity)
+    Higher = safer (lower leverage).
     """
     def __init__(self):
-        super().__init__('health_debt_to_equity', 'debt_equity', invert=True, description='Debt to Equity (inverted)')
+        super().__init__(
+            'health_debt_to_equity', 'debt_equity',
+            invert=True, description='Debt to Equity (inverted)'
+        )
+
 
 @FactorRegistry.register()
 class CurrentRatio(SingleColumnFactor):
     """
-    Current Ratio.
-    
-    A broad measure of short-term liquidity.
-    $$ \text{Current Ratio} = \frac{\text{Current Assets}}{\text{Current Liabilities}} $$
+    Current Ratio = Current Assets / Current Liabilities
+    Standard short-term liquidity measure.
     """
     def __init__(self):
-        super().__init__('health_current_ratio', 'current_ratio', description='Current Ratio')
+        super().__init__(
+            'health_current_ratio', 'current_ratio',
+            description='Current Ratio'
+        )
+
 
 @FactorRegistry.register()
 class QuickRatio(SingleColumnFactor):
     """
-    Quick Ratio (Acid-Test).
-    
-    A stringent measure of liquidity that excludes inventory.
-    $$ \text{Quick Ratio} = \frac{\text{Current Assets} - \text{Inventory}}{\text{Current Liabilities}} $$
+    Quick Ratio (Acid-Test) = (Current Assets - Inventory) / Current Liabilities
     """
     def __init__(self):
-        super().__init__('health_quick_ratio', 'quick_ratio', description='Quick Ratio')
+        super().__init__(
+            'health_quick_ratio', 'quick_ratio',
+            description='Quick Ratio'
+        )
 
 
 @FactorRegistry.register()
-class CashToDebtRatio(RatioFactor):
+class CashToDebtRatio(FundamentalFactor):
     """
     Cash to Debt Ratio = Total Cash / Total Debt
-    
-    Measures the ability to immediately service debt with available cash.
-    Higher values indicate lower financial risk.
-    
-    Formula:
-    $$ \text{Ratio} = \frac{\text{Total Cash}}{\text{Total Debt}} $$
+    Higher = lower financial risk.
+
+    FIX BUG-027: Was checking raw column names directly.
+    Now uses FundamentalColumnValidator.find_column() so that mapped/aliased
+    column names (e.g. 'End Cash Position' → 'total_cash') are resolved correctly.
     """
     def __init__(self):
-        super().__init__('health_cash_to_debt', num_key='total_cash', den_key='total_debt',
-                        description='Cash to Debt Ratio')
+        super().__init__(
+            name='health_cash_to_debt',
+            description='Cash to Debt Ratio'
+        )
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Data Validation: Ensure required columns exist
-        if 'total_cash' not in df.columns or 'total_debt' not in df.columns:
+        # FIX BUG-027: use validator instead of direct column access
+        cash_col = FundamentalColumnValidator.find_column(df, 'total_cash')
+        debt_col = FundamentalColumnValidator.find_column(df, 'total_debt')
+
+        if not cash_col or not debt_col:
             return pd.Series(np.nan, index=df.index)
-        
-        result = df['total_cash'] / df['total_debt']
-        
-        # Winsorization: Cap at 2.0 to dampen the impact of cash-rich outliers
-        # (e.g., biotech/tech firms) on the cross-sectional distribution.
-        result = result.clip(upper=2.0)
-        return result
+
+        # Replace exact zeros in debt to avoid Inf; NaN propagates naturally
+        denom  = df[debt_col].replace(0, np.nan)
+        result = df[cash_col] / (denom + EPS)
+
+        # Cap at 2.0 to dampen the impact of cash-rich outliers
+        return result.clip(upper=2.0)
 
 
 @FactorRegistry.register()
-class NetDebtToEBITDA(RatioFactor):
+class NetDebtToEBITDA(FundamentalFactor):
     """
-    Net Debt to EBITDA.
-    
-    Standard industry metric for leverage relative to earnings power.
-    Note: This factor is usually "Lower is Better".
-    
-    Formula:
-    $$ \text{Ratio} = \frac{\text{Total Debt} - \text{Total Cash}}{\text{EBITDA}} $$
-    
-    Interpretation:
-    - $< 2.0$: Conservative
-    - $> 5.0$: High Risk
+    Net Debt / EBITDA = (Total Debt - Total Cash) / EBITDA
+    Standard leverage metric.
+
+    FIX BUG-027: Same raw-column-name bypass fixed.
     """
     def __init__(self):
-        super().__init__('health_net_debt_ebitda', num_key='net_debt', den_key='ebitda',
-                        description='Net Debt to EBITDA')
+        super().__init__(
+            name='health_net_debt_ebitda',
+            description='Net Debt to EBITDA'
+        )
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Data Validation: Ensure required columns exist
-        if 'total_debt' not in df.columns or 'total_cash' not in df.columns or 'ebitda' not in df.columns:
+        # FIX BUG-027: use validator instead of direct column access
+        debt_col   = FundamentalColumnValidator.find_column(df, 'total_debt')
+        cash_col   = FundamentalColumnValidator.find_column(df, 'total_cash')
+        ebitda_col = FundamentalColumnValidator.find_column(df, 'ebitda')
+
+        if not debt_col or not cash_col or not ebitda_col:
             return pd.Series(np.nan, index=df.index)
-        
-        net_debt = df['total_debt'] - df['total_cash']
-        result = net_debt / df['ebitda']
-        
-        # Outlier Management:
-        # Lower bound -1.0: Handles "Negative Net Debt" (Cash > Debt).
-        # Upper bound 10.0: Caps distressed firms to prevent skew.
-        result = result.clip(lower=-1.0, upper=10.0)
-        return result
+
+        net_debt = df[debt_col] - df[cash_col]
+        ebitda   = df[ebitda_col].replace(0, np.nan)
+        result   = net_debt / (ebitda + EPS)
+
+        # Clip to [-1, 10]: -1 = cash > debt (net cash), 10 = highly distressed
+        return result.clip(lower=-1.0, upper=10.0)
 
 
 @FactorRegistry.register()
-class DebtToRevenue(RatioFactor):
+class DebtToRevenue(FundamentalFactor):
     """
-    Debt to Revenue Ratio.
-    
-    Measures the debt load relative to top-line sales. Useful for valuing
-    unprofitable growth companies where EBITDA is negative.
-    
-    Formula:
-    $$ \text{Ratio} = \frac{\text{Total Debt}}{\text{Total Revenue}} $$
+    Debt to Revenue = Total Debt / Total Revenue
+    Useful for unprofitable growth companies where EBITDA is negative.
+
+    FIX BUG-027: Same raw-column-name bypass fixed.
     """
     def __init__(self):
-        super().__init__('health_debt_to_revenue', num_key='total_debt', den_key='total_revenue',
-                        description='Debt to Revenue Ratio')
+        super().__init__(
+            name='health_debt_to_revenue',
+            description='Debt to Revenue Ratio'
+        )
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Data Validation: Ensure required columns exist
-        if 'total_debt' not in df.columns or 'total_revenue' not in df.columns:
+        # FIX BUG-027: use validator instead of direct column access
+        debt_col = FundamentalColumnValidator.find_column(df, 'total_debt')
+        rev_col  = FundamentalColumnValidator.find_column(df, 'total_revenue')
+
+        if not debt_col or not rev_col:
             return pd.Series(np.nan, index=df.index)
-        
-        result = df['total_debt'] / df['total_revenue']
-        
-        # Winsorization: Cap at 5.0x revenue (High distress zone).
+
+        revenue = df[rev_col].replace(0, np.nan)
+        result  = df[debt_col] / (revenue + EPS)
+
+        # Cap at 5× revenue (high distress zone)
         return result.clip(upper=5.0)
 
 
 @FactorRegistry.register()
-class EBITDAToDebt(RatioFactor):
+class EBITDAToDebt(FundamentalFactor):
     """
-    EBITDA to Debt Ratio.
-    
-    Inverse leverage metric measuring the years of EBITDA required to
-    repay gross debt. Higher is better (safer).
-    
-    Formula:
-    $$ \text{Ratio} = \frac{\text{EBITDA}}{\text{Total Debt}} $$
+    EBITDA to Debt = EBITDA / Total Debt
+    Inverse leverage metric; higher = safer.
+
+    FIX BUG-027: Same raw-column-name bypass fixed.
     """
     def __init__(self):
-        super().__init__('health_ebitda_to_debt', num_key='ebitda', den_key='total_debt',
-                        description='EBITDA to Debt Ratio')
+        super().__init__(
+            name='health_ebitda_to_debt',
+            description='EBITDA to Debt Ratio'
+        )
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Data Validation: Ensure required columns exist
-        if 'ebitda' not in df.columns or 'total_debt' not in df.columns:
+        # FIX BUG-027: use validator instead of direct column access
+        ebitda_col = FundamentalColumnValidator.find_column(df, 'ebitda')
+        debt_col   = FundamentalColumnValidator.find_column(df, 'total_debt')
+
+        if not ebitda_col or not debt_col:
             return pd.Series(np.nan, index=df.index)
-        
-        result = df['ebitda'] / df['total_debt']
-        
-        # Winsorization: Cap at 10.0 (Extremely strong coverage).
+
+        debt   = df[debt_col].replace(0, np.nan)
+        result = df[ebitda_col] / (debt + EPS)
+
+        # Cap at 10× (extremely strong debt coverage)
         return result.clip(upper=10.0)

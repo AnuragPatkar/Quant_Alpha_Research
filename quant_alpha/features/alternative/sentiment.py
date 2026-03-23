@@ -61,12 +61,15 @@ class VIXLevel(AlternativeFactor):
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if 'vix_close' not in df.columns:
-            return pd.Series(0, index=df.index)
+            return pd.Series(np.nan, index=df.index)
         
         # Min-Max Normalization: Maps VIX range [10, 40] to [0, 1].
         # This provides a bounded feature suitable for ML models.
         vix_norm = ((df['vix_close'] - 10) / 30).clip(0, 1)
-        return vix_norm.fillna(0)
+        if 'ticker' in df.columns:
+            return vix_norm.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean()).fillna(np.nan)
+        else:
+            return vix_norm.rolling(5, min_periods=1).mean().fillna(np.nan)
 
 @FactorRegistry.register()
 class VIXMomentum(AlternativeFactor):
@@ -82,14 +85,16 @@ class VIXMomentum(AlternativeFactor):
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if 'vix_close' not in df.columns:
-            return pd.Series(0, index=df.index)
+            return pd.Series(np.nan, index=df.index)
         
         # 5-day Rate of Change ($O(N)$).
         # Grouping ensures time-series integrity if dataframe contains multiple tickers.
         if 'ticker' in df.columns:
-            return df.groupby('ticker')['vix_close'].pct_change(5).fillna(0) * 100
+            mom = df.groupby('ticker')['vix_close'].pct_change(5) * 100
+            return mom.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean()).fillna(np.nan)
         else:
-            return df['vix_close'].pct_change(5).fillna(0) * 100
+            mom = df['vix_close'].pct_change(5) * 100
+            return mom.rolling(5, min_periods=1).mean().fillna(np.nan)
 
 @FactorRegistry.register()
 class RiskOnOffSignal(AlternativeFactor):
@@ -110,7 +115,7 @@ class RiskOnOffSignal(AlternativeFactor):
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if not {'vix_close', 'sp500_close'}.issubset(df.columns):
-            return pd.Series(0, index=df.index)
+            return pd.Series(np.nan, index=df.index)
         
         # Condition 1: Volatility below psychological threshold
         vix_calm = df['vix_close'] < 20
@@ -125,7 +130,7 @@ class RiskOnOffSignal(AlternativeFactor):
         
         # Intersection of conditions
         signal = (vix_calm & market_uptrend).astype(int)
-        return signal.fillna(0)
+        return signal.fillna(np.nan)
 
 @FactorRegistry.register()
 class VolatilityStressIndex(AlternativeFactor):
@@ -144,7 +149,7 @@ class VolatilityStressIndex(AlternativeFactor):
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         if 'vix_close' not in df.columns:
-            return pd.Series(50, index=df.index)
+            return pd.Series(np.nan, index=df.index)
         
         # 1. Level Score: 0 to 70 points
         vix_level_score = ((df['vix_close'] - 10) / 30).clip(0, 1) * 70
@@ -157,4 +162,4 @@ class VolatilityStressIndex(AlternativeFactor):
             vix_mom = df['vix_close'].pct_change(5).clip(0, 1) * 30
         
         stress = vix_level_score + vix_mom
-        return stress.fillna(50)
+        return stress.fillna(np.nan)

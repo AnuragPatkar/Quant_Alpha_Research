@@ -68,10 +68,10 @@ class MomentumVIXDivergence(CompositeFactor):
         
         # 1. Idiosyncratic Stock Momentum (21-day)
         mom = df.groupby('ticker')['close'].pct_change(21)
-        
+
         # 2. Systematic VIX Momentum (21-day)
         # Represents the rate of change in market fear/hedging demand.
-        vix_mom = df.groupby('ticker')['vix_close'].pct_change(21)
+        vix_mom = df.groupby('ticker')['vix_close'].ffill().groupby(df['ticker']).pct_change(21, fill_method=None)
         
         # Divergence Logic:
         # - If Price $\uparrow$ and VIX $\downarrow$: Signal boosts (Healthy Trend).
@@ -100,12 +100,13 @@ class ValueYieldCombo(CompositeFactor):
         super().__init__(name='comp_value_yield', description='Value-Yield Blend')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if 'us_10y_close' not in df.columns or 'pe_ratio' not in df.columns:
+        us_10y_col = next((c for c in ['us_10y_close', 'us_10y', 'treasury_yield', 'yield_proxy'] if c in df.columns), None)
+        if us_10y_col is None or 'pe_ratio' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
         # Macro Component: Inverted Yield Score
         # Lower rates (< 5%) imply higher equity multiple support.
-        yield_smooth = df.groupby('ticker')['us_10y_close'].transform(lambda x: x.rolling(21, min_periods=5).mean()).clip(0.1, 5)
+        yield_smooth = df.groupby('ticker')[us_10y_col].transform(lambda x: x.rolling(21, min_periods=5).mean()).clip(0.1, 5)
         rate_score = 1 - (yield_smooth / 5)
         
         # Equity Component: Cross-Sectional Value Rank
@@ -115,7 +116,8 @@ class ValueYieldCombo(CompositeFactor):
         # Rank stocks against peers on each specific date ($O(N \log N)$)
         value_rank = inv_pe.groupby(df['date']).rank(pct=True)
         
-        return (value_rank + rate_score) / 2
+        signal = (value_rank + rate_score) / 2
+        return signal.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean())
 
 @FactorRegistry.register()
 class QualityInDownturn(CompositeFactor):
@@ -139,6 +141,10 @@ class QualityInDownturn(CompositeFactor):
         # Feature availability check with safe fallbacks
         roe = df.get('roe', pd.Series(0, index=df.index))
         debt = df.get('debt_to_equity', pd.Series(1, index=df.index))
+        
+        if 'vix_close' not in df.columns:
+            return (roe.clip(-0.5, 0.5) - (debt.clip(0, 5) * 0.1)).fillna(0)
+            
         vix = df.get('vix_close', pd.Series(20, index=df.index))
         
         # Base Quality Score: Reward Efficiency (ROE), Penalize Leverage (Debt)
@@ -150,7 +156,8 @@ class QualityInDownturn(CompositeFactor):
         vix_ma = df.groupby('ticker')['vix_close'].transform(lambda x: x.rolling(63, min_periods=5).mean())
         stress_trigger = np.where(vix > vix_ma, 1.5, 1.0)
         
-        return (quality * stress_trigger).fillna(0)
+        signal = quality * stress_trigger
+        return signal.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean()).fillna(0)
 
 @FactorRegistry.register()
 class EarningsMacroAlignment(CompositeFactor):
@@ -173,25 +180,33 @@ class EarningsMacroAlignment(CompositeFactor):
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
         # Dynamic target selection: Prefer P/E for daily frequency, fallback to Growth
-        target_col = 'pe_ratio' if 'pe_ratio' in df.columns else 'earnings_growth'
+        target_col = None
+        for col in ['pe_ratio', 'growth_earnings_growth', 'earnings_growth']:
+            if col in df.columns:
+                target_col = col
+                break
         
-        if 'us_10y_close' not in df.columns or target_col not in df.columns:
-            logger.warning(f"❌ {self.name}: Missing macro or earnings data")
-            return pd.Series(0, index=df.index)
+        us_10y_col = next((c for c in ['us_10y_close', 'us_10y', 'treasury_yield', 'yield_proxy'] if c in df.columns), None)
+        
+        if target_col is None or us_10y_col is None:
+            missing = "us_10y_close" if us_10y_col is None else "pe_ratio/growth"
+            logger.warning(f"❌ {self.name}: Missing {missing} data")
+            return pd.Series(np.nan, index=df.index)
         
         # 1. Macro Signal: 21-day Change in 10Y Yields
         # Grouping ensures index alignment, though yields are systematic (same for all)
-        macro_momentum = df.groupby('ticker')['us_10y_close'].pct_change(21)
+        macro_momentum = df.groupby('ticker')[us_10y_col].ffill().groupby(df['ticker']).pct_change(21, fill_method=None)
         
         # 2. Rolling Correlation ($O(N \times Window)$)
         # Measures alignment between stock valuation/earnings and macro yields over 1 quarter (63d).
         # Note: `apply` here iterates per group; efficient enough for <5000 tickers.
         alignment = df.groupby('ticker', group_keys=False).apply(
-            lambda x: x[target_col].rolling(63, min_periods=10).corr(macro_momentum.loc[x.index])
+            lambda x: x[target_col].rolling(63, min_periods=10).corr(macro_momentum.loc[x.index]),
+            include_groups=False
         )
         
         # Default to 0 (Neutral/No Relationship) if data insufficient
-        return alignment.fillna(0)
+        return alignment.fillna(np.nan)
 
 @FactorRegistry.register()
 class MultiAssetOpportunity(CompositeFactor):
@@ -210,9 +225,13 @@ class MultiAssetOpportunity(CompositeFactor):
         super().__init__(name='comp_multi_asset', description='Oil-Yield-USD Consensus')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        assets = ['oil_close', 'us_10y_close', 'usd_close']
+        us_10y_col = next((c for c in ['us_10y_close', 'us_10y', 'treasury_yield', 'yield_proxy'] if c in df.columns), None)
+        if us_10y_col is None:
+            return pd.Series(np.nan, index=df.index)
+            
+        assets = ['oil_close', us_10y_col, 'usd_close']
         if not all(col in df.columns for col in assets):
-            return pd.Series(50, index=df.index)
+            return pd.Series(np.nan, index=df.index)
         
         # Calculate Binary Trend Direction for each macro asset
         # +1 if Price > 21-Day MA, else -1
@@ -228,4 +247,4 @@ class MultiAssetOpportunity(CompositeFactor):
         opp_score = ((consensus / 3) + 1) * 50
         
         # Smooth the final score over 1 week (5 days)
-        return pd.Series(opp_score, index=df.index).groupby(df['ticker']).transform(lambda x: x.rolling(5).mean()).fillna(50)
+        return pd.Series(opp_score, index=df.index).groupby(df['ticker']).transform(lambda x: x.rolling(5).mean()).fillna(np.nan)

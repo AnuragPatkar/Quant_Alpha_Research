@@ -1,5 +1,4 @@
-
-"""
+r"""
 Script Orchestration & Logic Validation
 =======================================
 Unit testing suite for the platform's core execution scripts.
@@ -111,7 +110,7 @@ class TestFactorValidator:
                 continue
             
             ic, p_val = spearmanr(clean_df[factor], clean_df[target_col])
-            # Calculate t-statistic: $t = r_s \sqrt{\frac{n-2}{1-r_s^2}}$
+            # Calculate t-statistic: $t = r_s \\sqrt{\\frac{n-2}{1-r_s^2}}$
             # Added epsilon (1e-10) to prevent division by zero in perfect correlation cases.
             denom = np.sqrt(1 - ic**2 + 1e-10)
             t_stat = abs(ic * np.sqrt(len(clean_df) - 2) / denom)
@@ -359,7 +358,7 @@ class TestModelTraining:
 
     def test_train_test_separation(self):
         
-        """
+        r"""
         Verifies the critical invariant: $Train \cap Test = \emptyset$.
         Also confirms the existence of the embargo gap to prevent look-ahead bias.
         """

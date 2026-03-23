@@ -75,7 +75,8 @@ class MacroAdjustedMomentum(CompositeFactor):
         vix_smooth = df.groupby('ticker')['vix_close'].transform(lambda x: x.rolling(5).mean()).clip(10, 40)
         adjustment = 25 / vix_smooth
         
-        return momentum * adjustment
+        signal = momentum * adjustment
+        return signal.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean())
 
 @FactorRegistry.register()
 class OilCorrectedValue(CompositeFactor):
@@ -106,7 +107,8 @@ class OilCorrectedValue(CompositeFactor):
         # Clipped to [0.01, 1.0] range (PE 1 to 100) to handle outliers/negative earnings
         value_signal = 1 / df['pe_ratio'].replace(0, np.nan).clip(1, 100)
         
-        return value_signal * oil_regime
+        signal = value_signal * oil_regime
+        return signal.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean())
 
 @FactorRegistry.register()
 class RateEnvironmentScore(CompositeFactor):
@@ -125,7 +127,8 @@ class RateEnvironmentScore(CompositeFactor):
         super().__init__(name='comp_rate_quality', description='Quality adjusted by interest rates')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if not {'us_10y_close', 'roe'}.issubset(df.columns):
+        roe_col = 'qual_roe' if 'qual_roe' in df.columns else 'roe'
+        if not {'us_10y_close', roe_col}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
         # Rate Penalty: Linearly decays as yields approach 5%
@@ -133,9 +136,10 @@ class RateEnvironmentScore(CompositeFactor):
         
         # Fundamental Signal: Return on Equity (ROE)
         # Forward-fill to handle quarterly reporting cadence
-        quality_signal = df.groupby('ticker')['roe'].ffill().clip(-1, 1)
+        quality_signal = df.groupby('ticker')[roe_col].ffill().clip(-1, 1)
         
-        return quality_signal * rate_weight
+        signal = quality_signal * rate_weight
+        return signal.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean())
 
 @FactorRegistry.register()
 class DollarAdjustedGrowth(CompositeFactor):
@@ -151,7 +155,8 @@ class DollarAdjustedGrowth(CompositeFactor):
         super().__init__(name='comp_dollar_growth', description='Growth adjusted for USD strength')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        if not {'usd_close', 'earnings_growth'}.issubset(df.columns):
+        growth_col = 'growth_earnings_growth' if 'growth_earnings_growth' in df.columns else 'earnings_growth'
+        if not {'usd_close', growth_col}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
         # FX Regime: Spot DXY vs 1-Year Median
@@ -159,9 +164,10 @@ class DollarAdjustedGrowth(CompositeFactor):
         usd_regime = np.where(df['usd_close'] < usd_median, 1.0, 0.7)
         
         # Fundamental Signal: Earnings Growth
-        growth_signal = df.groupby('ticker')['earnings_growth'].ffill().clip(-1, 1)
+        growth_signal = df.groupby('ticker')[growth_col].ffill().clip(-1, 1)
         
-        return growth_signal * usd_regime
+        signal = growth_signal * usd_regime
+        return signal.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean())
 
 @FactorRegistry.register()
 class RiskParityBlend(CompositeFactor):
@@ -193,4 +199,5 @@ class RiskParityBlend(CompositeFactor):
         vix_rank = df.groupby('ticker')['vix_close'].transform(lambda x: x.rolling(252).rank(pct=True))
         sentiment_rank = 1 - vix_rank
         
-        return (mom_rank + sentiment_rank) / 2
+        signal = (mom_rank + sentiment_rank) / 2
+        return signal.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean())
