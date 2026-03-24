@@ -16,12 +16,10 @@ This module is designed for zero-dependency integration into live ingestion loop
 
 .. code-block:: python
 
-    from quant_alpha.monitoring.data_quality import DataQualityMonitor
-
-    # 1. Initialize with training set reference data
+    # Initialize with historical training set reference data bounds
     monitor = DataQualityMonitor(reference_data=train_df)
 
-    # 2. Validate live batch
+    # Validate live inbound array batches dynamically
     report = monitor.check_incoming_data(live_batch, data_type='features')
 
     if report['status'] == 'FAIL':
@@ -55,34 +53,45 @@ class DataQualityMonitor:
     Production-grade validator for time-series and cross-sectional data batches.
 
     Capabilities:
-    1. **Schema Validation**: Enforces type safety, column existence, and domain constraints.
-    2. **Covariate Shift Detection**: Computes Population Stability Index ($PSI$) against a reference baseline.
-    3. **Anomaly Detection**: Identifies null spikes and impossible values (e.g., negative prices).
+    1. Schema Validation: Enforces type safety, column existence, and scalar domain bounds.
+    2. Covariate Shift Detection: Computes Population Stability Index (PSI) against reference bases.
+    3. Anomaly Detection: Tracks null spikes and systemic impossible states.
     """
     
     def __init__(self, reference_data: Optional[pd.DataFrame] = None):
         """
+        Initializes the dynamic data quality bounds checker.
+        
         Args:
-            reference_data (Optional[pd.DataFrame]): Historical baseline (Training Set).
-                Required for calculating PSI drift metrics.
+            reference_data (Optional[pd.DataFrame]): Historical standardized baseline representing 
+                the training set. Explicitly required for evaluating PSI drift coefficients.
         """
         self.reference_data = reference_data
         
     def set_reference_data(self, data: pd.DataFrame):
-        """Updates the baseline distribution (e.g., post-retraining)."""
+        """
+        Overwrites the baseline distribution tracking continuous drift variables.
+        
+        Employed directly post-retraining to re-anchor statistical benchmarks.
+        
+        Args:
+            data (pd.DataFrame): The new training tensor block limit map.
+        """
         self.reference_data = data
         logger.info(f"Reference data updated. Shape: {data.shape}")
         
     def check_incoming_data(self, data: pd.DataFrame, data_type: str = 'prices') -> Dict[str, Any]:
         """
-        Executes comprehensive validation logic on ingress data streams.
+        Executes comprehensive validation logic sequences against live ingress data arrays.
         
         Args:
-            data (pd.DataFrame): The live data batch to validate.
-            data_type (str): Context tag ('prices', 'fundamentals', 'features').
+            data (pd.DataFrame): The live incoming temporal matrix block to validate.
+            data_type (str): Topological context map classification 
+                (e.g., 'prices', 'fundamentals', 'features').
             
         Returns:
-            Dict[str, Any]: Validation report with status ('PASS'|'WARNING'|'FAIL') and issue logs.
+            Dict[str, Any]: Consolidated dictionary bounds mapping output status identifiers 
+                ('PASS', 'WARNING', 'FAIL') paired alongside discrete extracted issue logs.
         """
         report = {
             'status': 'PASS', 
@@ -96,16 +105,14 @@ class DataQualityMonitor:
             report['issues'].append("Incoming data is empty")
             return report
         
-        # 1. Schema & Domain Validation (Critical Path)
+        # Evaluates core absolute Schema & Domain Verification paths strictly isolating matrices
         integrity_issues = self._check_integrity(data, data_type)
         if integrity_issues:
             report['status'] = 'FAIL'
             report['issues'].extend(integrity_issues)
-            # Circuit Breaker: Abort immediately if schema is invalid to prevent cascading failures.
+            
             return report
 
-        # 2. Distributional Drift Analysis (Non-Blocking Warning)
-        # Only performed if reference baseline exists and data implies feature vectors.
         if self.reference_data is not None:
             drift_report = self._check_feature_drift(data)
             
@@ -118,20 +125,25 @@ class DataQualityMonitor:
         return report
 
     def _check_integrity(self, data: pd.DataFrame, data_type: str) -> List[str]:
-        """Performs deterministic checks on schema validity and domain constraints."""
+        """
+        Evaluates absolute deterministic states validating schema schemas against target bounds.
+        
+        Args:
+            data (pd.DataFrame): Input dimensional bounds matrix.
+            data_type (str): Topological structure label definition.
+            
+        Returns:
+            List[str]: Formatted array defining structural error parameters extracted during analysis.
+        """
         issues = []
         
-        # Check 1: Column Existence (Schema Validation)
         required_cols = []
         if data_type == 'prices':
             required_cols = ['ticker', 'date', 'close']
-            # Liquidity Constraint: Volume is essential for tradeability checks.
             if 'volume' not in data.columns:
                 issues.append("Missing recommended column: 'volume'")
         elif data_type == 'features':
-            # Feature Consistency: Ensure live feature set matches training schema.
             if self.reference_data is not None:
-                # Check for missing columns that are in reference (excluding metadata)
                 ref_cols = [c for c in self.reference_data.columns if c not in ['target', 'label']]
                 missing = [c for c in ref_cols if c not in data.columns]
                 if missing:
@@ -144,12 +156,10 @@ class DataQualityMonitor:
         if issues:
             return issues
             
-        # Check 2: Critical Nullity (Sparse Data Detection)
         if data_type == 'prices':
             if data['close'].isnull().any():
                 issues.append("Null values detected in 'close' price")
             
-            # Check 3: Domain Constraints (Non-Negativity)
             for col in ['close', 'open', 'high', 'low', 'volume']:
                 if col in data.columns and pd.api.types.is_numeric_dtype(data[col]):
                     if (data[col] < 0).any():
@@ -159,22 +169,27 @@ class DataQualityMonitor:
 
     def _check_feature_drift(self, current_data: pd.DataFrame, threshold: float = 0.25) -> Dict[str, Any]:
         """
-        Quantifies distributional shift using Population Stability Index ($PSI$).
+        Computes distributional shifts quantitatively via Population Stability Index evaluations.
         
         PSI Interpretation:
         - **PSI < 0.1**: Stable distribution.
         - **0.1 <= PSI <= 0.25**: Minor shift (Monitoring recommended).
         - **PSI > 0.25**: Critical drift (Retraining required).
+        
+        Args:
+            current_data (pd.DataFrame): Incoming continuous out-of-sample data.
+            threshold (float): Parametric scalar bounded for maximal limit warnings. Defaults to 0.25.
+            
+        Returns:
+            Dict[str, Any]: Boundary mappings exposing empirical drift evaluations.
         """
         drifted_features = []
         psi_scores = {}
         
-        # Identify common numeric columns
         numeric_cols = current_data.select_dtypes(include=[np.number]).columns
         ref_cols = self.reference_data.select_dtypes(include=[np.number]).columns
         common_cols = list(set(numeric_cols) & set(ref_cols))
         
-        # Exclude metadata
         exclude = ['date', 'ticker', 'target', 'label', 'prediction', 'sector', 'industry']
         cols_to_check = [c for c in common_cols if c not in exclude]
         
@@ -195,11 +210,19 @@ class DataQualityMonitor:
 
     def _calculate_psi(self, expected: pd.Series, actual: pd.Series, buckets: int = 10) -> float:
         """
-        Computes the Kullback-Leibler divergence-based PSI metric.
+        Formulates continuous Kullback-Leibler divergence-based metrics evaluating boundary disparities.
         
         Math:
         .. math::
             PSI = \sum (P_{expected} - P_{actual}) \times \ln(\\frac{P_{expected}}{P_{actual}})
+            
+        Args:
+            expected (pd.Series): Bound expected vector arrays generated in-sample.
+            actual (pd.Series): Actual discrete out-of-sample observed metrics.
+            buckets (int): Grouping density limits utilized for discrete evaluation bounds.
+            
+        Returns:
+            float: Aggregate absolute mathematical PSI magnitude limits.
         """
         expected_clean = expected.dropna()
         actual_clean = actual.dropna()
@@ -207,41 +230,31 @@ class DataQualityMonitor:
         if len(expected_clean) == 0 or len(actual_clean) == 0:
             return 0.0
 
-        # 1. Binning Strategy: Quantile-based discretization on Training Data
-        # Ensures bins are robust to outliers and scale-invariant.
         try:
             breakpoints = np.linspace(0, 100, buckets + 1)
             bins = np.percentile(expected_clean, breakpoints)
-            bins = np.unique(bins) # Handle cases with many identical values (e.g. 0s)
+            bins = np.unique(bins)
             
-            # Fallback if unique values are too few
             if len(bins) < 2:
-                # Degenerate Case: Constant feature. Check if mean shifted significantly.
                 if abs(expected_clean.mean() - actual_clean.mean()) > 1e-6:
                     return 1.0 # Max drift
                 return 0.0
                 
-            # Boundary Handling: Extend to +/- infinity to capture Out-of-Sample outliers.
             bins[0] = -np.inf
             bins[-1] = np.inf
             
         except Exception:
             return 0.0
             
-        # 2. Frequency Enumeration
         expected_counts, _ = np.histogram(expected_clean, bins)
         actual_counts, _ = np.histogram(actual_clean, bins)
 
-        # 3. Probability Mass Function (PMF) Derivation
         expected_dist = expected_counts / len(expected_clean)
         actual_dist = actual_counts / len(actual_clean)
         
-        # 4. Zero-Frequency Smoothing ($\epsilon$ injection)
-        # Prevents division by zero in log calculations.
         epsilon = 1e-5
         expected_dist = np.maximum(expected_dist, epsilon)
         actual_dist = np.maximum(actual_dist, epsilon)
         
-        # 5. PSI Calculation
         psi_values = (expected_dist - actual_dist) * np.log(expected_dist / actual_dist)
         return np.sum(psi_values)

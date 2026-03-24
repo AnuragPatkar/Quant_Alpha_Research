@@ -65,6 +65,8 @@ class PortfolioAllocator:
 
     def __init__(self, method: str = 'mean_variance', **kwargs):
         """
+        Initializes the dynamic algorithm execution boundary map.
+        
         Args:
             method (str): The optimization strategy identifier. Options:
                 - ``'mean_variance'``: Classical Markowitz Mean-Variance.
@@ -80,7 +82,16 @@ class PortfolioAllocator:
         logger.info(f"PortfolioAllocator initialized with method: {self.method}")
 
     def _get_optimizer(self, method: str, kwargs: Dict[str, Any]):
-        """Factory method: Instantiates the concrete optimization strategy class."""
+        """
+        Instantiates the strict concrete optimization strategy framework.
+        
+        Args:
+            method (str): The resolved internal execution method.
+            kwargs (Dict[str, Any]): Arbitrary map mapping explicitly bound configuration parameters.
+            
+        Returns:
+            object: The specific quantitative bounds optimization class correctly tuned.
+        """
         if method == 'mean_variance':
             return MeanVarianceOptimizer(
                 risk_aversion=kwargs.get('risk_aversion', 1.0)
@@ -107,7 +118,15 @@ class PortfolioAllocator:
             )
 
     def _equal_weight(self, tickers: List[str]) -> Dict[str, float]:
-        """Maximum Entropy Fallback: Assigns $w_i = 1/N$ to all assets."""
+        """
+        Generates a generic Maximum Entropy standard boundary ($w_i = 1/N$).
+        
+        Args:
+            tickers (List[str]): List of asset representations in universe.
+            
+        Returns:
+            Dict[str, float]: Flawlessly distributed proportional mappings.
+        """
         n = len(tickers)
         if n == 0:
             return {}
@@ -121,20 +140,16 @@ class PortfolioAllocator:
         **kwargs
     ) -> Dict[str, float]:
         """
-        Executes the optimization strategy to generate target portfolio weights.
+        Evaluates discrete expected return matrices synthesizing strict terminal allocation rules.
 
         Args:
-            expected_returns (Dict[str, float]): Expected returns vector ($\mu$).
-            covariance_matrix (pd.DataFrame): Asset covariance matrix ($\Sigma$).
+            expected_returns (Dict[str, float]): Forecasted prediction vector mapping ($\mu$).
+            covariance_matrix (pd.DataFrame): Asset structural covariance constraints ($\Sigma$).
             constraints (Optional[Dict]): Optimization constraints (e.g., leverage limits).
             **kwargs: Runtime parameters (e.g., `market_caps` for BL, `risk_free_rate` for Kelly).
 
         Returns:
             Dict[str, float]: Normalized target weights where $\sum w_i = 1.0$.
-            
-        Note:
-            Automatically falls back to Equal Weight allocation if the underlying
-            optimizer fails or returns an empty set due to data misalignment.
         """
         tickers = list(expected_returns.keys())
 
@@ -181,10 +196,9 @@ class PortfolioAllocator:
             else:
                 return {}
 
-            # Defensive Optimization: Check for solver failure / empty results.
-            # Underlying optimizers may return {} on convergence failure or data mismatch
-            # (e.g. zero intersection between returns and covariance).
-            # We treat this as a failure mode and degrade to Equal Weight (Max Entropy).
+            # Defensive bounds execution: Identifies solver non-convergence or discrete data 
+            # misalignments. Systematically degrades to a Maximum Entropy Equal Weight state 
+            # to strictly prevent pipeline termination during structural anomalies.
             if not result:
                 logger.warning(
                     f"{self.method} optimizer returned empty weights. "

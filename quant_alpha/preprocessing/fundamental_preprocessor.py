@@ -1,20 +1,27 @@
 """
-Fundamental Data Preprocessor — Production Module
-====================================================
-Transforms raw fundamental data into clean, derived factor inputs.
+Fundamental Data Preprocessor
+=============================
 
-FIXES:
-  BUG-024 (CRITICAL): Added a point-in-time guard in preprocess_fundamentals().
-    If available_date (= fiscal_year_end + reporting_lag_days) is in the FUTURE
-    relative to today, the row is silently excluded. Without this guard, a fiscal
-    year that ended Oct 31, 2025 and whose report becomes available Jan 29, 2026
-    would be included in the output. When DataManager merges by date and then
-    forward-fills, this future-dated row propagates to price rows before the
-    report is actually public, constituting look-ahead bias.
+Transforms raw unstructured financial reporting data into standardized, 
+structurally derived factor inputs optimized for algorithmic consumption.
 
-    The fix: `if available_date.date() > datetime.today().date(): continue`
-    is inserted immediately after computing available_date, before the row is
-    built.
+Purpose
+-------
+This module cleans, normalizes, and extracts continuous predictive metrics 
+from historical 10-K and 10-Q corporate filings (Balance Sheets, Cash Flow, 
+and Income Statements).
+
+Role in Quantitative Workflow
+-----------------------------
+Serves as the rigorous extraction barrier translating categorical accounting 
+structures into actionable alpha signals (e.g., Value, Quality, Growth primitives). 
+It strictly controls reporting delays by enforcing an artificial data 
+availability lag, guaranteeing zero look-ahead bias in the research outputs.
+
+Mathematical Dependencies
+-------------------------
+- **Pandas/NumPy**: Vectorized missing-value imputations, continuous scaling limits, 
+  and matrix arithmetic.
 """
 
 from __future__ import annotations
@@ -52,26 +59,22 @@ def preprocess_fundamentals(
     reporting_lag_days: int = 90,
 ) -> pd.DataFrame:
     """
-    Load and preprocess fundamental data for a single ticker.
+    Extracts and standardizes raw periodic fundamental data mapping to a distinct ticker.
 
-    Parameters:
-    -----------
-    fundamentals_dir : Path
-        Root directory containing ticker subdirectories.
-    ticker : str
-        Stock ticker (e.g. 'AAPL').
-    fiscal_year_end : str, optional
-        Expected fiscal year-end month. If None, inferred from data.
-    reporting_lag_days : int
-        Days added to fiscal year-end for data availability (default 90 = 10-K deadline).
+    Applies strict temporal offsetting to accurately simulate corporate reporting 
+    delays, preventing systemic data leakage from newly closed fiscal boundaries.
+
+    Args:
+        fundamentals_dir (Union[str, Path]): Root path pointing to hierarchical fundamental files.
+        ticker (str): The specific target equity symbol strictly mapping the data target.
+        fiscal_year_end (Optional[str]): Explicit expected calendar month defining the annual close. 
+            Defaults to None, initiating dynamic extraction based on local distributions.
+        reporting_lag_days (int): The mandatory padding buffer mimicking real-world 10-K/10-Q 
+            SEC publishing limits. Defaults to 90.
 
     Returns:
-    --------
-    pd.DataFrame — one row per fiscal year that has already been publicly released.
-
-    FIX BUG-024: Rows whose available_date is after today are now excluded before
-    the row dict is built. This prevents look-ahead bias when the most recent
-    fiscal year has ended but the report has not yet been filed.
+        pd.DataFrame: A fully formulated Point-in-Time validated matrix bounding discrete 
+            annual snapshots explicitly cleared for public execution states.
     """
     fundamentals_dir = Path(fundamentals_dir)
     ticker_dir = fundamentals_dir / ticker
@@ -112,10 +115,8 @@ def preprocess_fundamentals(
         # Point-in-time: data becomes available ~90 days after fiscal close
         available_date = fiscal_date + timedelta(days=reporting_lag_days)
 
-        # FIX BUG-024: Skip rows whose report has not yet been publicly filed.
-        # Without this guard the most recent fiscal year (e.g. FY Oct 31 2025
-        # → available Jan 29 2026) would be included and then forward-filled
-        # by DataManager onto price rows before the report is public.
+        # Strictly enforces rigorous Point-in-Time (PiT) data hygiene by strictly terminating 
+        # observations where the projected public disclosure date exceeds current runtime bounds.
         if available_date.date() > today:
             logger.debug(
                 f"[Fundamentals] {ticker}: Skipping FY {fiscal_date_str} "
@@ -165,7 +166,17 @@ def _load_csv_safe(
     path: Path,
     has_index: bool = False,
 ) -> Optional[pd.DataFrame]:
-    """Load a CSV file, returning None on any error."""
+    """
+    Instantiates discrete CSV extractions mapping resilient failsafes averting I/O exceptions.
+    
+    Args:
+        path (Path): Explicit filepath resolving localized mapping structures.
+        has_index (bool): Dictates target dimensionality interpreting historical primary indices.
+        
+    Returns:
+        Optional[pd.DataFrame]: Safely evaluated continuous panel, returning None 
+            if fundamental file dependencies are absent.
+    """
     if not path.exists():
         return None
     try:
@@ -180,7 +191,16 @@ def _load_csv_safe(
 
 
 def _get_field(series: Optional[pd.Series], key: str) -> float:
-    """Extract a scalar value from a Series by key, returning np.nan on failure."""
+    """
+    Isolates independent structural primitives dynamically mapping scalar series data.
+    
+    Args:
+        series (Optional[pd.Series]): Source target defining localized characteristics.
+        key (str): Dimensional feature key triggering extraction bounds.
+        
+    Returns:
+        float: Validated explicit continuous value explicitly casting missing states to np.nan.
+    """
     if series is None:
         return np.nan
     try:
@@ -191,7 +211,17 @@ def _get_field(series: Optional[pd.Series], key: str) -> float:
 
 
 def _safe_compute(fn, name: str) -> float:
-    """Execute fn(), returning np.nan and logging if it raises."""
+    """
+    Encapsulates arithmetic limits validating fault-tolerant continuous feature evaluations.
+    
+    Args:
+        fn (Callable): Dynamic extraction lambda evaluating structural equations.
+        name (str): Analytical definition string bounded for debug targeting.
+        
+    Returns:
+        float: Extracted valid arithmetic mapping, forcefully defaulting to np.nan resolving 
+            unforeseen division/attribute crashes.
+    """
     try:
         result = fn()
         return float(result) if pd.notna(result) else np.nan
@@ -213,7 +243,21 @@ def _compute_fundamental_row(
     cashflow: Optional[pd.Series],
     prev_financials: Optional[pd.Series] = None,
 ) -> Dict:
-    """Compute all derived columns for a single fiscal year snapshot."""
+    """
+    Synthesizes a standardized, single-observation temporal row strictly computing derived factors.
+
+    Args:
+        ticker (str): Target evaluation equity identifier.
+        available_date (datetime): Validated Point-in-Time target mapping index.
+        info (Optional[pd.Series]): Cross-sectional general equity descriptors.
+        balance_sheet (Optional[pd.Series]): Annual structural ledger parameters.
+        financials (Optional[pd.Series]): Income statement vector distributions.
+        cashflow (Optional[pd.Series]): Trailing cash flow extraction bounds.
+        prev_financials (Optional[pd.Series]): Lagged income vectors supporting YOY calculations.
+
+    Returns:
+        Dict: Mapped dictionary encoding absolute extracted financial targets uniformly.
+    """
 
     row: Dict = {
         'ticker': ticker,
@@ -571,8 +615,8 @@ def _forward_eps_growth(info):
 def _sustainable_growth_rate(financials, balance_sheet, cashflow):
     roe = _roe(financials, balance_sheet)
     if not pd.notna(roe): return np.nan
-    # Payout ratio proxy: we don't have a reliable dividends line here,
-    # so default to 40% payout (conservative estimate) when unknown.
+    # Resolves standard dividend structural limits conservatively evaluating an implicit 
+    # 40% baseline payout mapping boundary when granular cash flows are mathematically unavailable.
     payout = 0.4
     if cashflow is not None:
         div = _get_field(cashflow, 'Cash Dividends Paid')
@@ -611,8 +655,15 @@ def validate_preprocessed_data(
     coverage_threshold: float = 0.80,
 ) -> pd.DataFrame:
     """
-    Audit data coverage per column.
-    Returns DataFrame: [column_name, non_nan_count, coverage_pct, status]
+    Audits the structural density and sparsity limits of the processed matrix block.
+
+    Args:
+        df (pd.DataFrame): The preprocessed fundamental asset frame.
+        coverage_threshold (float): Minimum numerical density ratio mapped to strictly 
+            approve valid columns. Defaults to 0.80.
+
+    Returns:
+        pd.DataFrame: An aggregated diagnostic reporting matrix mapping individual column states.
     """
     if df.empty:
         logger.warning("[Validation] Empty DataFrame provided.")
@@ -669,7 +720,16 @@ def get_macro_data_for_earnings_signal(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Fetch quarterly macro proxies using yfinance."""
+    """
+    Constructs historical aggregate proxies extracting strictly continuous macro configurations.
+    
+    Args:
+        start_date (Optional[str]): Defines absolute initiating boundaries.
+        end_date (Optional[str]): Defines absolute terminal boundaries.
+        
+    Returns:
+        pd.DataFrame: Symmetrically bounded dataframe enclosing unified macro signals.
+    """
     logger.info("[Macro] Fetching macro data...")
 
     if HAS_YFINANCE:

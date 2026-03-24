@@ -60,27 +60,38 @@ class EPSSurprise(EarningsFactor):
     $$ SUE_{price} = \frac{EPS_{actual} - EPS_{estimate}}{Price_{close}} $$
     """
     def __init__(self):
+        """Initializes continuous cross-sectional standardized unexpected earnings bounds."""
         super().__init__(name='eps_sue_price', description='Surprise standardized by Price')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Evaluates discrete event boundaries mapping standardized unexpected earnings continuously.
+        
+        Args:
+            df (pd.DataFrame): Systemic temporal map arrays securely bounding event structures.
+            
+        Returns:
+            pd.Series: Evaluated parameter bounds representing continuous point-in-time state.
+        """
         if 'eps_actual' not in df.columns or 'eps_estimate' not in df.columns or 'close' not in df.columns:
             return pd.Series(np.nan, index=df.index)
             
         def _calc_sue(group):
+            # Extracts exact independent coordinate indices mapping discrete earnings releases
             is_new_event = detect_earnings_events(group)
             events = group.loc[is_new_event].copy()
             
             if events.empty:
                 return pd.Series(np.nan, index=group.index)
                 
-            # Data Alignment: Forward-fill pricing data to ensure availability
-            # for reports occurring on non-trading days (weekends/holidays).
+            # Strictly aligns point-in-time market vectors guaranteeing availability
+            # for accounting reports systematically released during macro non-trading bounds.
             filled_close = group['close'].ffill()
             events_close = filled_close.loc[events.index]
             valid_close = events_close.where(events_close > 0, np.nan)
             events['sue'] = (events['eps_actual'] - events['eps_estimate']) / valid_close
             
-            # Winsorization: Clip at +/- 0.5 to suppress microstructure noise.
+            # Mathematically bounds signal anomalies suppressing execution microstructure artifacts.
             return events['sue'].reindex(group.index).ffill().clip(-0.5, 0.5)
         
         return df.groupby('ticker', group_keys=False).apply(_calc_sue)
@@ -95,11 +106,21 @@ class EPSSurprisePercentage(EarningsFactor):
     $$ Surprise\% = \frac{EPS_{actual} - EPS_{estimate}}{|EPS_{estimate}|} $$
     """
     def __init__(self):
+        """Initializes absolute percentage scalar boundaries mapping earnings deviations."""
         super().__init__(name='earn_surprise_pct', description='EPS Surprise Percentage')
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Data Validation: Check for raw components or pre-computed surprise.
-        # We prioritize recalculating via the event logic to ensure consistent timing.
+        """
+        Calculates strict independent variations bounding normalized deviation sequences.
+        
+        Args:
+            df (pd.DataFrame): Bounding evaluation parameters safely mapped sequentially.
+            
+        Returns:
+            pd.Series: Symmetrically bounded parameters structurally standardizing event constraints.
+        """
+        # Identifies structural boundaries securely prioritizing native recalculation 
+        # explicitly guaranteeing synchronous temporal alignment.
         cols_needed = ['eps_actual', 'eps_estimate']
         if not all(c in df.columns for c in cols_needed) and 'surprise_pct' not in df.columns:
             return pd.Series(np.nan, index=df.index)
@@ -108,7 +129,7 @@ class EPSSurprisePercentage(EarningsFactor):
             events = get_events_with_surprise(group)
             if events.empty: return pd.Series(np.nan, index=group.index)
             
-            # Outlier Control: Clip at +/- 500% to mitigate denominator-near-zero artifacts.
+            # Safely clips variance at +/- 500% avoiding extreme denominator collapse artifacts.
             return events['surprise_pct'].reindex(group.index).ffill().clip(-500, 500)
 
         return df.groupby('ticker', group_keys=False).apply(_calc_pct)
@@ -123,9 +144,19 @@ class ConsecutiveSurprise(EarningsFactor):
     indicative of conservative guidance or superior execution.
     """
     def __init__(self):
+        """Initializes continuous run-length execution counting metrics exactly."""
         super().__init__(name='earn_streak', description='Consecutive Positive Surprises')
         
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Computes aggregate streak persistence applying vectorized state tracking efficiently.
+        
+        Args:
+            df (pd.DataFrame): Explicitly evaluating array parameter definitions exactly mapped.
+            
+        Returns:
+            pd.Series: Continuous parameters isolating historical trajectory streaks explicitly.
+        """
         if 'surprise_pct' not in df.columns or 'eps_actual' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
@@ -136,10 +167,9 @@ class ConsecutiveSurprise(EarningsFactor):
 
             condition = events['surprise_pct'] > 0
             
-            # Vectorized Run-Length Encoding:
-            # 1. Identify where state changes (True->False or False->True).
+            # Vectorized Run-Length Encoding systematically extracting continuous states:
+            # Identifies exact indices where evaluation boundaries change synchronously.
             run_ids = (condition != condition.shift()).cumsum()
-            # 2. Cumulative sum within each run, then zero out the 'Miss' runs.
             events['streak'] = condition.groupby(run_ids).cumsum()
             events['streak'] = events['streak'].where(condition, 0)
             
@@ -157,9 +187,19 @@ class LastQuarterMagnitude(EarningsFactor):
     $$ Magnitude_t = |Surprise\%_t| $$
     """
     def __init__(self):
+        """Initializes absolute surprise scalar extractions seamlessly."""
         super().__init__(name='earn_last_quarter_magnitude', description='Last Quarter Surprise Magnitude')
         
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Evaluates discrete boundaries cleanly matching trailing report magnitudes accurately.
+        
+        Args:
+            df (pd.DataFrame): Foundational execution bounds logically isolated smoothly.
+            
+        Returns:
+            pd.Series: Flawlessly tracked deviation amplitudes bounded strictly to historical states.
+        """
         if 'surprise_pct' not in df.columns or 'eps_actual' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
@@ -168,7 +208,7 @@ class LastQuarterMagnitude(EarningsFactor):
             if events.empty:
                 return pd.Series(np.nan, index=group.index)
             
-            # Absolute deviation captures the intensity of the surprise, regardless of direction.
+            # Evaluates pure magnitude boundaries disregarding specific structural directions.
             events['magnitude'] = events['surprise_pct'].abs()
             events['last_quarter_mag'] = events['magnitude']
             
@@ -186,9 +226,19 @@ class BeatMissMomentum(EarningsFactor):
     $$ Momentum_t = \frac{1}{4} \sum_{i=0}^{3} \mathbb{I}(Surprise_{t-i} > 0) \times 100 $$
     """
     def __init__(self):
+        """Initializes dynamic win-rate probabilistic mappings securely."""
         super().__init__(name='earn_beat_miss_momentum', description='% of Last 4Q Beaten')
         
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Calculates strict point-in-time statistical boundaries representing historical beat probability.
+        
+        Args:
+            df (pd.DataFrame): Execution matrices safely tracking underlying quarterly sequences.
+            
+        Returns:
+            pd.Series: Continuous historical momentum probability bounded symmetrically.
+        """
         if 'surprise_pct' not in df.columns or 'eps_actual' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
@@ -197,11 +247,10 @@ class BeatMissMomentum(EarningsFactor):
             if events.empty:
                 return pd.Series(np.nan, index=group.index)
             
-            # Missing Data Handling: Propagate NaN rather than imputing 0 (Miss).
+            # Properly propagates missing evaluations bounding empirical limits natively.
             events['beat'] = np.where(events['surprise_pct'].isna(), np.nan, (events['surprise_pct'] > 0).astype(float))
             
-            # Statistical Stability: Enforce minimum observation window ($N \ge 2$)
-            # to reduce variance in initial estimates for newly listed firms.
+            # Enforces statistical stability boundaries ($N \ge 2$) limiting early-state variance.
             events['momentum'] = events['beat'].rolling(window=4, min_periods=2).mean() * 100
             
             return events['momentum'].reindex(group.index).ffill()

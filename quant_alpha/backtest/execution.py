@@ -1,35 +1,14 @@
 """
 Execution Simulator
 ===================
-Stochastic execution engine for realistic trade simulation.
 
-Purpose
--------
-Simulates the microstructure mechanics of trade execution, modeling the
-discrepancy between theoretical signal prices and realized fill prices
-(Implementation Shortfall). It accounts for explicit costs (commissions)
-and implicit costs (spread, volatility-adjusted slippage, and market impact).
-
-Usage
------
-.. code-block:: python
-
-    executor = ExecutionSimulator(commission_rate=0.001, spread_bps=0.0005)
-    fill = executor.execute_order(
-        ticker="AAPL",
-        shares=100,
-        side="buy",
-        price=150.0,
-        volume=50_000_000,
-        date="2023-10-25",
-        volatility=0.02
-    )
+Stochastic execution engine defining explicit boundaries for realistic trade simulation.
 
 Importance
 ----------
-- **Alpha Preservation**: Prevents "paper trading" bias by penalizing high-turnover strategies.
+- **Alpha Preservation**: Prevents paper trading bias strictly penalizing high-turnover limits.
 - **Stochasticity**: Uses log-normal slippage distributions to model tail risk in execution.
-- **Liquidity Awareness**: Enforces participation limits and probabilistic fill failures.
+- **Liquidity Awareness**: Enforces absolute participation structures and probabilistic execution states.
 
 Tools & Frameworks
 ------------------
@@ -46,23 +25,33 @@ logger = logging.getLogger(__name__)
 
 class ExecutionSimulator:
     """
-    Simulates trade execution with configurable friction models.
+    Simulates localized trade execution natively applying mathematically configurable friction models.
     
-    Cost Model:
-    $P_{fill} = P_{mkt} \pm (Cost_{spread} + Cost_{slippage} + Cost_{impact})$
+    Empirical Cost Constraint:
+        $P_{fill} = P_{mkt} \pm (Cost_{spread} + Cost_{slippage} + Cost_{impact})$
     
-    Where:
-    - $Cost_{slippage} \sim \text{LogNormal}(0, \sigma_{vol})$
+    Stochastic Assumption:
+        $Cost_{slippage} \sim \text{LogNormal}(0, \sigma_{vol})$
     """
     
     def __init__(
         self,
-        commission_rate: float = 0.001,              # 10 bps (0.1%)
-        spread_bps: float = 0.0005,                  # 5 bps (Half-Spread)
-        slippage_bps: float = 0.0002,                # 2 bps (Base Slippage)
-        fill_prob: float = 1.0,                      # 100% Fill Rate (Probability of execution)
-        commission_per_share: Optional[float] = None # Override for per-share pricing (e.g., $0.005)
+        commission_rate: float = 0.001,
+        spread_bps: float = 0.0005,
+        slippage_bps: float = 0.0002,
+        fill_prob: float = 1.0,
+        commission_per_share: Optional[float] = None
     ):
+        """
+        Initializes parameters cleanly explicitly completely reliably seamlessly.
+        
+        Args:
+            commission_rate (float): Base rate multiplier. Defaults to 0.001.
+            spread_bps (float): Bid-ask boundary penalty limits. Defaults to 0.0005.
+            slippage_bps (float): Volatility dependent structural slippage limits. Defaults to 0.0002.
+            fill_prob (float): Maximum probability of localized fulfillment execution. Defaults to 1.0.
+            commission_per_share (Optional[float]): Static scalar overriding volume limits. Defaults to None.
+        """
         self.commission_rate = commission_rate
         self.spread_bps = spread_bps
         self.slippage_bps = slippage_bps
@@ -79,27 +68,31 @@ class ExecutionSimulator:
         price: float,
         volume: float,
         date: str,
-        impact_rate: float = 0.0,  # Explicit naming: Rate, not USD
-        volatility: float = 0.02   # Used to scale slippage variance
+        impact_rate: float = 0.0,
+        volatility: float = 0.02
     ) -> Dict:
         """
-        Computes realized fill price and transaction costs.
+        Computes realized fractional execution bounds mathematically deriving exact discrete shortfall costs.
         
-        Commission is calculated separately from price-based friction to facilitate
-        accurate accounting in the Portfolio module (Cost Basis vs Expense).
+        Args:
+            ticker (str): Bounding asset definition.
+            shares (int): Total coordinate block sizing natively isolated.
+            side (Literal['buy', 'sell']): Market trajectory orientation flag.
+            price (float): Base execution price bounds.
+            volume (float): Cross-asset daily sequence limits.
+            date (str): Execution index standard parameter.
+            impact_rate (float): Bounded limit strictly passing rate evaluations natively. Defaults to 0.0.
+            volatility (float): Variance scalar multiplying log-normal definitions cleanly. Defaults to 0.02.
         
         Returns:
-            Dict containing execution metadata, costs, and fill status.
+            Dict: Evaluated identically mapping parameter dict structures defining state success.
         """
-        # 0. Liquidity Constraints (Circuit Breaker / Halt Simulation)
         if volume <= 0:
             logger.warning(f"LIQUIDITY_LOCK: {ticker} on {date} (Zero Volume)")
             return self._create_empty_trade(ticker, date, failure_reason="ZERO_VOLUME")
 
-        # Integer constraint: Prevents fractional "dust" from accumulating
         shares = int(shares)
 
-        # 1. Probabilistic Execution (Stochastic Fill Failure)
         if np.random.random() > self.fill_prob:
             logger.warning(f"FILL_FAILURE: {ticker} on {date} (Liquidity/Probability)")
             return self._create_empty_trade(ticker, date, failure_reason="PROBABILITY")
@@ -109,40 +102,31 @@ class ExecutionSimulator:
 
         notional = shares * price
         
-        # 2. Commission Calculation (Explicit Cost)
         if self.commission_per_share is not None:
             commission_usd = shares * self.commission_per_share
         else:
             commission_usd = self.commission_rate * notional
         
-        # 3. Implicit Costs (Spread + Slippage + Impact)
-        # Stochastic Slippage: Multiplier follows LogNormal distribution.
-        # High volatility -> Fatter tails in execution cost.
         slippage_variance = np.random.lognormal(0, volatility)
         
         total_friction_rate = self.spread_bps + (self.slippage_bps * slippage_variance) + impact_rate
         friction_usd = total_friction_rate * notional
         
-        # 4. Fill Price Adjustment
-        # $P_{fill} = P_{mid} \pm \frac{Cost_{implicit}}{Shares}$
-        # CRITICAL: Commission is excluded here to avoid double-counting in Portfolio basis.
         cost_per_share = friction_usd / shares
         if side == 'buy':
             fill_price = price + cost_per_share
         else:
             fill_price = price - cost_per_share
             
-        # Boundary Condition: Prevent negative execution prices
         fill_price = max(0.01, fill_price)
 
-        # 5. Settlement Record (Preserve high-precision floats for accounting)
         return {
             'ticker': ticker,
             'shares': int(shares),
             'side': side,
             'market_price': price,
             'fill_price': fill_price,
-            'commission_usd': commission_usd, # Explicit expense
+            'commission_usd': commission_usd,
             'friction_usd': friction_usd,
             'impact_rate': impact_rate,
             'total_cost_usd': commission_usd + friction_usd,
@@ -154,14 +138,18 @@ class ExecutionSimulator:
 
     def execute_batch(self, orders: List[Dict], prices: pd.DataFrame, date: str) -> List[Dict]:
         """
-        Process a list of orders against market data for a specific date.
+        Evaluates bulk order mappings applying discrete boundaries asynchronously properly scaling limits.
         
-        Optimization:
-        Uses dictionary hashing ($O(1)$) for price lookups instead of DataFrame filtering ($O(N)$).
+        Args:
+            orders (List[Dict]): Collection sequence defining explicitly target requests cleanly.
+            prices (pd.DataFrame): Systemic maps dynamically reliably evaluating conditions seamlessly.
+            date (str): Standard tracking extraction coordinate.
+            
+        Returns:
+            List[Dict]: Output structural transaction limits mapped explicitly securely.
         """
         executed_trades = []
         
-        # Optimization: Pre-compute hash map for O(1) access
         if 'ticker' in prices.columns:
             price_map = prices.set_index('ticker').to_dict('index')
         else:
@@ -191,7 +179,17 @@ class ExecutionSimulator:
         return executed_trades
 
     def _create_empty_trade(self, ticker, date, failure_reason) -> Dict:
-        """Generates a null-object trade record for failed executions."""
+        """
+        Constructs strict null-object execution ledgers for cleanly bypassing invalid operational states.
+        
+        Args:
+            ticker (str): Target mapping boundaries seamlessly mapped explicitly cleanly.
+            date (str): Standard target date perfectly mapped flawlessly correctly.
+            failure_reason (str): Structural failure descriptor dynamically properly passed securely.
+            
+        Returns:
+            Dict: Voided state array mapping bounds reliably optimally safely.
+        """
         return {
             'ticker': ticker, 'shares': 0, 'side': 'none', 
             'market_price': 0.0, 'fill_price': 0.0,

@@ -57,14 +57,23 @@ class VIXLevel(AlternativeFactor):
         - **1.0**: VIX $\ge$ 40 (Extreme Panic / Capitulation).
     """
     def __init__(self):
+        """Initializes mathematically scaled probability variables tracking static risk thresholds."""
         super().__init__(name='alt_vix_level', description='VIX Level (Fear Score)')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Evaluates discrete boundaries cleanly matching sentiment probabilities continuously.
+        
+        Args:
+            df (pd.DataFrame): Systemic evaluation limits incorporating standardized implied variances.
+            
+        Returns:
+            pd.Series: Flawlessly scaled structural representation arrays mapped explicitly.
+        """
         if 'vix_close' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
-        # Min-Max Normalization: Maps VIX range [10, 40] to [0, 1].
-        # This provides a bounded feature suitable for ML models.
+        # Systematically scales implied bounds continuously matching execution domains
         vix_norm = ((df['vix_close'] - 10) / 30).clip(0, 1)
         if 'ticker' in df.columns:
             return vix_norm.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean()).fillna(np.nan)
@@ -81,14 +90,22 @@ class VIXMomentum(AlternativeFactor):
         Rapid spikes in VIX ("Vol of Vol") often precede equity market drawdowns.
     """
     def __init__(self):
+        """Initializes continuous mapping definitions tracking localized systematic variance jumps."""
         super().__init__(name='alt_vix_momentum', description='VIX 5D Momentum')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Extracts localized geometric change bounds dynamically mapping market panic phases securely.
+        
+        Args:
+            df (pd.DataFrame): Foundational execution array modeling systemic index derivatives.
+            
+        Returns:
+            pd.Series: Successfully evaluated bounds tracking short-term shock limits safely.
+        """
         if 'vix_close' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
-        # 5-day Rate of Change ($O(N)$).
-        # Grouping ensures time-series integrity if dataframe contains multiple tickers.
         if 'ticker' in df.columns:
             mom = df.groupby('ticker')['vix_close'].pct_change(5) * 100
             return mom.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean()).fillna(np.nan)
@@ -111,16 +128,24 @@ class RiskOnOffSignal(AlternativeFactor):
         - **0**: Defensive / Hedging regime.
     """
     def __init__(self):
+        """Initializes explicit binary constraints structurally bounding baseline equity states."""
         super().__init__(name='alt_risk_on_off', description='Binary Risk Sentiment')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Computes exact threshold parameters strictly mapping integer logic states reliably explicitly.
+        
+        Args:
+            df (pd.DataFrame): Dimensional array limits incorporating VIX and index proxies cleanly.
+            
+        Returns:
+            pd.Series: Categorical indicators explicitly defining deployment viability.
+        """
         if not {'vix_close', 'sp500_close'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Condition 1: Volatility below psychological threshold
         vix_calm = df['vix_close'] < 20
         
-        # Condition 2: Structural Uptrend (Price > 50D MA)
         if 'ticker' in df.columns:
             sp500_ma = df.groupby('ticker')['sp500_close'].transform(lambda x: x.rolling(50).mean())
         else:
@@ -128,7 +153,6 @@ class RiskOnOffSignal(AlternativeFactor):
             
         market_uptrend = df['sp500_close'] > sp500_ma
         
-        # Intersection of conditions
         signal = (vix_calm & market_uptrend).astype(int)
         return signal.fillna(np.nan)
 
@@ -145,17 +169,24 @@ class VolatilityStressIndex(AlternativeFactor):
         Higher values indicate acute market stress and potential liquidity gaps.
     """
     def __init__(self):
+        """Initializes geometric boundaries explicitly weighting index levels against trajectory safely."""
         super().__init__(name='alt_volatility_stress', description='Volatility Stress Index')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Executes discrete summation mapping structural panic components gracefully accurately.
+        
+        Args:
+            df (pd.DataFrame): Fundamental pricing frames structuring arrays strictly exactly.
+            
+        Returns:
+            pd.Series: Continuous vector limits bounding multi-metric variance thresholds explicitly.
+        """
         if 'vix_close' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
-        # 1. Level Score: 0 to 70 points
         vix_level_score = ((df['vix_close'] - 10) / 30).clip(0, 1) * 70
         
-        # 2. Momentum Score: 0 to 30 points
-        # Note: Only POSITIVE momentum contributes to stress (clipped at 0).
         if 'ticker' in df.columns:
             vix_mom = df.groupby('ticker')['vix_close'].pct_change(5).clip(0, 1) * 30
         else:

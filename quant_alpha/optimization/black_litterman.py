@@ -1,22 +1,25 @@
 """
-quant_alpha/optimization/black_litterman.py
-=============================================
 Black-Litterman Portfolio Optimization Framework.
+===============================================
 
-FIXES:
-  BUG-080 (MEDIUM): calculate_posterior() computed:
-           Sigma_post = Sigma + M_inv
-           The correct He & Litterman (1999) posterior covariance is:
-           Sigma_post = Sigma + (τΣ) M_inv (τΣ)
-           The code was missing the τΣ scaling on both sides of M_inv.
+Provides Bayesian alpha-view blending over market equilibrium priors.
 
-           Impact: Low — the code comments explicitly state that the
-           posterior covariance is NOT used in the downstream MVO call
-           (prior Σ is used instead, which is standard practitioner
-           approach). The formula error in Sigma_post has zero numerical
-           effect on the final weights. Fixed for correctness and to
-           prevent future callers who use the returned Sigma_post from
-           receiving a wrong value.
+Purpose
+-------
+This module implements the Black-Litterman asset allocation model, combining 
+market equilibrium returns (CAPM prior) with proprietary machine learning alpha views 
+to produce a mathematically stabilized posterior expected return vector.
+
+Role in Quantitative Workflow
+-----------------------------
+Serves as a robust expectation engine, mitigating the extreme estimation error 
+sensitivity inherent to classical Mean-Variance optimization by anchoring 
+predictions to market-capitalization-derived structural priors.
+
+Mathematical Dependencies
+-------------------------
+- **NumPy/Pandas**: Matrix inversion and cross-sectional data alignment.
+- **CVXPY**: Indirectly utilized via the downstream Mean-Variance optimizer.
 """
 
 import numpy as np
@@ -37,21 +40,24 @@ class BlackLittermanModel:
     is fed into Mean-Variance optimization.
 
     Mathematical foundation:
-        Prior:    E[R] ~ N(Π, τΣ)
-        Views:    P·E[R] = Q + ε,  ε ~ N(0, Ω)
+        Prior:    $E[R] \sim \mathcal{N}(\Pi, \tau\Sigma)$
+        Views:    $P \cdot E[R] = Q + \epsilon, \quad \epsilon \sim \mathcal{N}(0, \Omega)$
         Posterior:
-            M         = (τΣ)⁻¹ + Pᵀ Ω⁻¹ P
-            E[R]_post = M⁻¹ [ (τΣ)⁻¹ Π + Pᵀ Ω⁻¹ Q ]
-            Σ_post    = Σ + (τΣ) M⁻¹ (τΣ)      ← FIX BUG-080
+            $M         = (\tau\Sigma)^{-1} + P^T \Omega^{-1} P$
+            $E[R]_{post} = M^{-1} [ (\tau\Sigma)^{-1} \Pi + P^T \Omega^{-1} Q ]$
+            $\Sigma_{post}    = \Sigma + (\tau\Sigma) M^{-1} (\tau\Sigma)$
     """
 
     def __init__(self, tau: float = 0.05, risk_aversion: float = 2.5):
         """
+        Initializes the Bayesian framework configurations.
+        
         Args:
-            tau           : Uncertainty scalar for the prior. Small τ (≈0.01)
-                            keeps the portfolio close to the market portfolio;
-                            large τ (≈1.0) lets views dominate.
-            risk_aversion : Market risk aversion δ for reverse optimization.
+            tau (float): Uncertainty scalar bound for the prior. Small values (e.g., 0.01) 
+                anchor the portfolio tightly to the market baseline, whereas large values 
+                (e.g., 1.0) permit algorithmic views to structurally dominate. Defaults to 0.05.
+            risk_aversion (float): Structural market risk aversion $\delta$ bounding 
+                reverse-optimization prior extraction. Defaults to 2.5.
         """
         self.tau          = tau
         self.risk_aversion = risk_aversion
@@ -70,9 +76,16 @@ class BlackLittermanModel:
         market_caps: Dict[str, float],
     ) -> pd.Series:
         """
-        Compute Market Implied Returns Π via reverse optimization.
+        Computes Market Implied Returns ($\Pi$) utilizing reverse optimization.
 
-            Π = δ Σ w_mkt
+        Formula: $\Pi = \delta \Sigma w_{mkt}$
+        
+        Args:
+            covariance_matrix (pd.DataFrame): Systemic covariance structure ($\Sigma$).
+            market_caps (Dict[str, float]): Mapped capitalizations enforcing $w_{mkt}$ ratios.
+            
+        Returns:
+            pd.Series: Continuous vector array bounding extracted equilibrium expected returns.
         """
         tickers = list(covariance_matrix.columns)
 
@@ -107,13 +120,18 @@ class BlackLittermanModel:
         confidence_level: float = 0.5,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Convert ML alpha predictions into BL view matrices (P, Q, Ω).
+        Translates machine learning alpha signals directly into BL view structures ($P, Q, \Omega$).
+        
+        Args:
+            ml_predictions (Dict[str, float]): Absolute return forecasts isolated from estimators.
+            tickers (List[str]): Universe of target constituents for sequence alignment.
+            confidence_level (float): The targeted structural confidence mapping to view uncertainty. Defaults to 0.5.
 
-        Returns
-        -------
-        P      : Pick matrix (K × N)
-        Q      : View vector (K,)
-        Omega  : Diagonal uncertainty matrix (K × K)
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray]: Standardized arrays detailing:
+                - $P$: Pick matrix projecting execution targets ($K \times N$).
+                - $Q$: Directional view vector ($K$).
+                - $\Omega$: Diagonal bounding uncertainty matrix ($K \times K$).
         """
         n = len(tickers)
 
@@ -138,7 +156,6 @@ class BlackLittermanModel:
             P[i, ticker_map[ticker]] = 1.0
             Q[i]                     = pred
 
-        # Small uncertainty = high confidence in views
         uncertainty = (1.0 - confidence_level) * 0.1 + 1e-6
         Omega       = np.eye(k) * uncertainty
         return P, Q, Omega
@@ -156,16 +173,20 @@ class BlackLittermanModel:
         Omega: np.ndarray,
     ) -> Tuple[pd.Series, pd.DataFrame]:
         """
-        Compute posterior distribution E[R]_post and Σ_post.
+        Calculates posterior probability distribution boundaries $E[R]_{post}$ and $\Sigma_{post}$.
 
-        FIX BUG-080: Σ_post was Σ + M⁻¹.
-        Correct formula (He & Litterman 1999, eq. 12):
-            Σ_post = Σ + (τΣ) M⁻¹ (τΣ)
-        where M = (τΣ)⁻¹ + Pᵀ Ω⁻¹ P.
+        Applies the He & Litterman (1999) scaling theorem integrating prior covariance directly:
+            $\Sigma_{post} = \Sigma + (\tau\Sigma) M^{-1} (\tau\Sigma)$
 
-        Note: Σ_post is returned for completeness but is NOT used in
-        optimize() — the prior Σ is used for MVO per standard practitioner
-        approach (avoids epistemic uncertainty inflating portfolio risk).
+        Args:
+            pi (pd.Series): Reverse-optimized structural market implied returns.
+            covariance_matrix (pd.DataFrame): Systemic baseline covariance map.
+            P (np.ndarray): Pick matrix designating active views.
+            Q (np.ndarray): The mathematical magnitude defining ML forecasts.
+            Omega (np.ndarray): Evaluated uncertainty scalar bounded to ML views.
+            
+        Returns:
+            Tuple[pd.Series, pd.DataFrame]: The optimized posterior expectations and posterior covariance.
         """
         tickers = pi.index
         Sigma   = covariance_matrix.loc[tickers, tickers].values
@@ -184,11 +205,9 @@ class BlackLittermanModel:
             M     = inv_tau_Sigma + P.T @ inv_Omega @ P
             M_inv = np.linalg.pinv(M)
 
-            # FIX BUG-080: correct posterior covariance
-            # Σ_post = Σ + (τΣ) M⁻¹ (τΣ)
+            # Computes the Bayesian posterior covariance strictly bounding the scaled uncertainty prior
             Sigma_post = Sigma + tau_Sigma @ M_inv @ tau_Sigma
 
-            # Posterior expected returns (unchanged — was already correct)
             term2       = inv_tau_Sigma @ Pi_vec + P.T @ inv_Omega @ Q
             post_er     = M_inv @ term2
 
@@ -214,13 +233,18 @@ class BlackLittermanModel:
         constraints: Optional[Dict] = None,
     ) -> Dict[str, float]:
         """
-        End-to-end Black-Litterman optimization.
+        Executes end-to-end Black-Litterman blending and optimal structural constraint resolution.
 
-        Workflow:
-        1. Compute Π (prior) via reverse optimization on market caps.
-        2. Convert ML predictions to view matrices (P, Q, Ω).
-        3. Bayesian update → posterior E[R]_post and Σ_post.
-        4. Run MVO using (E[R]_post, Σ_prior) — standard practitioner choice.
+        Args:
+            ml_predictions (Dict[str, float]): Absolute directional signals mapped to assets.
+            covariance_matrix (pd.DataFrame): Empirical prior risk representation map.
+            market_caps (Dict[str, float]): Aggregate capitalization sizes establishing standard baseline.
+            confidence_level (float): The overarching algorithmic view conviction. Defaults to 0.5.
+            constraints (Optional[Dict]): Positional overrides strictly passed to the inner optimization engine.
+            
+        Returns:
+            Dict[str, float]: Normalized terminal allocation weights structurally resolving ML targets 
+                and systematic baseline assumptions.
         """
         tickers = list(covariance_matrix.columns)
 
@@ -232,7 +256,6 @@ class BlackLittermanModel:
             pi, covariance_matrix, P, Q, Omega
         )
 
-        # Use posterior returns + PRIOR covariance for MVO
         effective_constraints = constraints if constraints is not None else {
             "max_weight": 1.0
         }
@@ -242,6 +265,6 @@ class BlackLittermanModel:
         )
         return self.mvo.optimize(
             post_returns.to_dict(),
-            covariance_matrix,         # prior covariance — intentional
+            covariance_matrix,         # Injects pure prior covariance bounding practitioner standard
             effective_constraints,
         )

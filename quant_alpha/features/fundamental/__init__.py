@@ -1,6 +1,20 @@
 """
-Fundamental Factors Package
-Value, Quality, Growth, and Financial Health metrics
+Fundamental Feature Engineering Subsystem
+=========================================
+
+Provides structural extraction algorithms mapping trailing and forward-looking 
+accounting data into cross-sectional predictive alpha metrics.
+
+Purpose
+-------
+Aggregates valuation, quality, growth, and financial health boundaries, bridging 
+unstructured SEC filings and corporate releases into standardized, quantitatively 
+stationary machine-learning signals.
+
+Mathematical Dependencies
+-------------------------
+- **Pandas/NumPy**: Dimensional mapping, scalar conversions, and dynamic 
+  data type enforcement matching historical execution states.
 """
 
 # Value Factors

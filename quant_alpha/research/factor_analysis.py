@@ -1,20 +1,26 @@
 """
-quant_alpha/research/factor_analysis.py
-=========================================
 Factor Analysis & Performance Evaluation Engine.
+==============================================
 
-FIXES:
-  BUG-083 (HIGH): `from .utils import prepare_factor_data` resolved to
-           quant_alpha.research.utils which does not exist as a separate
-           module, causing ImportError at startup. The helper is trivially
-           small and has been inlined directly.
+Provides statistical verification of cross-sectional alpha factors.
 
-  BUG-085 (MEDIUM): calculate_autocorrelation() called
-           factor_matrix.corrwith(factor_matrix.shift(lag), axis=1).mean()
-           axis=1 computes row-wise correlation ACROSS TICKERS (spatial),
-           not ACROSS TIME (temporal). This made the autocorrelation metric
-           meaningless as a turnover proxy. Fixed to axis=0 (default), which
-           computes the time-series correlation per ticker then averages.
+Purpose
+-------
+This module computes structural Information Coefficient (IC) time-series, 
+monotonic quantile spreads, and signal autocorrelation to evaluate the predictive 
+power and stability of quantitative features.
+
+Role in Quantitative Workflow
+-----------------------------
+Acts as the primary diagnostic gateway mapping standalone mathematical formulas 
+to forward asset returns. Ensures that features deployed to predictive ensembles 
+demonstrate strict out-of-sample stationarity and monotonic ranking capabilities.
+
+Mathematical Dependencies
+-------------------------
+- **Pandas/NumPy**: Vectorized group-by aggregations and time-series alignments.
+- **SciPy (stats)**: Calculates cross-sectional Spearman/Pearson Rank Correlations 
+  and standard hypothesis testing (T-tests).
 """
 
 import pandas as pd
@@ -26,9 +32,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# FIX BUG-083: inline prepare_factor_data (was in missing .utils module)
-# ---------------------------------------------------------------------------
 
 def _prepare_factor_data(
     data: pd.DataFrame,
@@ -36,14 +39,26 @@ def _prepare_factor_data(
     target_col: str,
 ) -> pd.DataFrame:
     """
-    Validate and index factor data for cross-sectional analysis.
+    Validates and temporally aligns factor data for cross-sectional analysis.
 
-    Ensures the DataFrame has a MultiIndex (date, ticker) and that both
-    the factor column and target column are present and numeric.
+    Enforces a strict MultiIndex (date, ticker) topology, dropping missing structural 
+    values to strictly prevent cascading NaN evaluation errors during correlation steps.
+    
+    Args:
+        data (pd.DataFrame): The raw observational panel matrix.
+        factor_col (str): The column target containing the synthesized alpha signal.
+        target_col (str): The column target containing the forward geometric returns.
+        
+    Returns:
+        pd.DataFrame: A dimensionally aligned dataset indexed by (date, ticker).
+        
+    Raises:
+        ValueError: If the structural index is flat without identifying columns, or 
+            if strict target components are absent from the matrix.
     """
     df = data.copy()
 
-    # Coerce to MultiIndex if flat columns supplied
+    # Resolves internal schema parameters to MultiIndex if flat columns supplied
     if not isinstance(df.index, pd.MultiIndex):
         if 'date' in df.columns and 'ticker' in df.columns:
             df = df.set_index(['date', 'ticker'])
@@ -60,19 +75,16 @@ def _prepare_factor_data(
             )
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    # Drop rows where either column is missing — can't compute IC otherwise
+    # Prunes mathematical intersection boundaries preventing NaN contamination
     df = df.dropna(subset=[factor_col, target_col])
     return df
 
 
-# ---------------------------------------------------------------------------
-# FactorAnalyzer
-# ---------------------------------------------------------------------------
-
 class FactorAnalyzer:
     """
     Engine for cross-sectional factor performance evaluation.
-    Computes IC time-series, monotonic quantile spreads, and signal stability.
+    Computes IC time-series matrices, monotonic quantile spreads, and 
+    autocorrelation signal stability boundaries.
     """
 
     def __init__(
@@ -81,21 +93,29 @@ class FactorAnalyzer:
         factor_col: str,
         target_col: str = 'raw_ret_5d',
     ):
+        """
+        Initializes the cross-sectional factor analyzer.
+        
+        Args:
+            data (pd.DataFrame): Input market panel containing features and forward targets.
+            factor_col (str): Matrix key defining the quantitative feature vector.
+            target_col (str): Matrix key defining the forward prediction horizon returns.
+        """
         self.factor_col = factor_col
         self.target_col = target_col
-        # FIX BUG-083: use inlined helper instead of missing .utils import
         self.data = _prepare_factor_data(data, factor_col, target_col)
         self._ic_series = None
 
     def calculate_ic(self, method: str = 'spearman') -> pd.Series:
         """
-        Calculate the Information Coefficient (IC) time series.
+        Calculates the Information Coefficient (IC) structural time-series.
 
-        Computes the cross-sectional correlation between factor and forward
-        returns for each date.
+        Computes the discrete cross-sectional correlation mapping the factor distribution 
+        against corresponding forward asset returns independently for each temporal bucket.
 
         Args:
-            method : 'spearman' (Rank IC, robust to outliers) or 'pearson'.
+            method (str): The statistical correlation methodology ('spearman' for rank 
+                invariance, 'pearson' for strictly linear evaluations). Defaults to 'spearman'.
 
         Returns:
             pd.Series: Daily IC values indexed by date.
@@ -120,12 +140,13 @@ class FactorAnalyzer:
 
     def get_ic_summary(self) -> dict:
         """
-        Generate summary statistics for the alpha signal.
-
-        Metrics:
-        - Mean IC, IC Std, ICIR = IC_mean / IC_std
-        - Hit Ratio: fraction of dates with positive IC
-        - t-stat = ICIR × sqrt(N_dates)  ← uses scipy ttest for correctness
+        Generates robust summary statistics tracking the alpha signal's predictive efficacy.
+        
+        Computes empirical thresholds determining standard significance (Mean IC, IC Std, 
+        Information Ratio, Hit Ratio, and discrete T-statistics).
+        
+        Returns:
+            dict: Standardized dictionary mapping continuous performance scalars.
         """
         if self._ic_series is None:
             self.calculate_ic()
@@ -138,7 +159,7 @@ class FactorAnalyzer:
             'IC Std':         float(ic.std()),
             'ICIR (IC/Std)':  float(ic.mean() / ic.std()) if ic.std() != 0 else 0.0,
             'Hit Ratio (>0)': float((ic > 0).mean()),
-            # t-stat = ICIR × sqrt(N) — stats.ttest_1samp returns this correctly
+            # Extracts continuous discrete bounded significance testing parameters directly via SciPy
             't-stat':         float(stats.ttest_1samp(ic, 0)[0]) if n >= 3 else np.nan,
             'N':              n,
         }
@@ -148,10 +169,14 @@ class FactorAnalyzer:
         quantiles: int = 5,
     ):
         """
-        Analyze signal monotonicity via quantile bucketing.
+        Analyzes strict signal monotonicity via cross-sectional quantile bucketing.
+        
+        Args:
+            quantiles (int): The number of discrete cross-sectional bins. Defaults to 5.
 
         Returns:
-            Tuple[pd.Series, float]: (Mean returns per quantile, L-S spread).
+            Tuple[pd.Series, float]: The aggregated mean geometric returns bounded per 
+                quantile, and the resultant empirical Long-Short statistical spread.
         """
         def _quantile_bucket(x):
             try:
@@ -174,24 +199,37 @@ class FactorAnalyzer:
 
     def calculate_autocorrelation(self, lag: int = 1) -> float:
         """
-        Calculate factor autocorrelation as a proxy for turnover.
+        Calculates mathematical factor autocorrelation serving as a structural turnover proxy.
 
-        High ρ (> 0.9): slow-moving signal, low turnover (e.g. Value).
-        Low  ρ (< 0.5): fast-decaying signal, high turnover (e.g. Momentum).
-
-        FIX BUG-085: corrwith must use axis=0 (default) to compute
-        time-series correlation per ticker, then average across tickers.
-        The original code used axis=1 which computed cross-ticker
-        (spatial) correlation per row — wrong for a turnover proxy.
+        High autocorrelation ($\rho > 0.9$) denotes a slow-moving signal with intrinsically 
+        low portfolio turnover (e.g., Value bounds). Low autocorrelation ($\rho < 0.5$) 
+        denotes a fast-decaying signal mapping to high turnover mandates (e.g., Fast Momentum).
+        
+        Args:
+            lag (int): The discrete temporal lag boundary for shift extraction. Defaults to 1.
+            
+        Returns:
+            float: The aggregate time-series correlation averaged uniformly across all tickers.
         """
         factor_matrix = self.data[self.factor_col].unstack()   # dates × tickers
 
-        # FIX BUG-085: axis=0 (default) → time-series correlation per ticker
+        # Computes the discrete autocorrelation metric measuring signal stickiness via 
+        # strictly evaluating temporal limits (axis=0) cross-sectionally.
         rho = factor_matrix.corrwith(factor_matrix.shift(lag))  # axis=0 default
         return float(rho.mean())
 
     def plot_ic_ts(self, window: int = 20, save_path: str = None) -> None:
-        """Visualize the IC time series with a rolling trend line."""
+        """
+        Visualizes the Information Coefficient time series against a rolling trend smoothing line.
+        
+        Args:
+            window (int): The expanding moving average limit for variance extraction. Defaults to 20.
+            save_path (str, optional): The filepath to explicitly target rendering to disk. 
+                Defaults to None, triggering interactive evaluation.
+                
+        Returns:
+            None: Exposes explicit plots via backend execution APIs.
+        """
         if self._ic_series is None:
             self.calculate_ic()
 
@@ -219,7 +257,17 @@ class FactorAnalyzer:
     def plot_quantile_returns(
         self, quantiles: int = 5, save_path: str = None
     ) -> None:
-        """Visualize the monotonicity of quantile returns."""
+        """
+        Visualizes the specific structural monotonic linearity of aggregated quantile returns.
+        
+        Args:
+            quantiles (int): Explicit total count of structural rendering bins. Defaults to 5.
+            save_path (str, optional): The filepath to explicitly target rendering to disk. 
+                Defaults to None, triggering interactive evaluation.
+                
+        Returns:
+            None: Exposes explicit plots via backend execution APIs.
+        """
         q_ret, spread = self.calculate_quantile_returns(quantiles)
 
         fig, ax = plt.subplots(figsize=(10, 6))

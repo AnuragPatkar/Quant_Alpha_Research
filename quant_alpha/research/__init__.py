@@ -1,20 +1,26 @@
 """
-quant_alpha/research/__init__.py
-==================================
-Quantitative research toolkit: factor analysis, statistical significance
-testing, alpha decay, regime detection, and factor correlation analysis.
+Quantitative Research Subsystem
+===============================
 
-Confirmed public API (from validate_factors.py, test_validation_integration.py,
-run_hyperopt.py, test_features.py):
-    from quant_alpha.research import FactorAnalyzer
-    from quant_alpha.research.factor_analysis      import FactorAnalyzer
-    from quant_alpha.research.significance_testing import SignificanceTester
-    from quant_alpha.research.alpha_decay          import AlphaDecayAnalyzer
-    from quant_alpha.research.regime_detection     import RegimeDetector
-    from quant_alpha.research.correlation_analysis import FactorCorrelator
+Provides an institutional-grade research toolkit for alpha factor discovery, 
+statistical validation, and structural market analysis.
 
-NOTE: The correlation analysis class is FactorCorrelator (not CorrelationAnalyzer —
-that was an incorrect name used in the first __init__ draft).
+Purpose
+-------
+This module exposes a unified public API for discrete research engines evaluating 
+alpha signal efficacy, persistence, correlation boundaries, and latent market regimes.
+
+Role in Quantitative Workflow
+-----------------------------
+Serves as the primary analytical workbench for quantitative researchers, transforming 
+raw algorithmic signals into statistically verified, production-ready alpha features 
+prior to model ingestion.
+
+Mathematical Dependencies
+-------------------------
+- **Pandas/NumPy**: Structural matrix manipulations and cross-sectional indices.
+- **SciPy/Statsmodels**: Hypothesis testing, distributional analysis, and 
+  time-series stationarity bounding.
 """
 
 from .factor_analysis      import FactorAnalyzer      # noqa: F401

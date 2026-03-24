@@ -1,45 +1,28 @@
 """
 Aspect-Oriented Programming (AOP) Utilities
 ===========================================
-Decorators for cross-cutting concerns such as profiling and fault tolerance.
+
+Provides high-order decorators managing execution profiling and transient fault tolerance.
 
 Purpose
 -------
-This module provides high-order functions to augment the behavior of core
-execution logic without modifying the underlying source code. It handles:
-1.  **Performance Profiling**: Instrumentation of execution latency.
-2.  **Resilience**: Transient fault handling via exponential backoff retries.
+This module exposes functional wrappers designed to augment the behavioral execution 
+of core logic primitives without requiring modifications to the underlying target source. 
+It seamlessly orchestrates:
+1. **Performance Profiling**: Granular instrumentation mapping execution latency constraints.
+2. **Resilience Boundaries**: Transient fault extraction utilizing exponential backoff retries.
 
-Usage
------
-.. code-block:: python
+Role in Quantitative Workflow
+-----------------------------
+- **Observability**: Ensures rapid identification of $O(N^2)$ algorithm bottlenecks 
+  percolating across the pipeline, strictly prioritizing high-frequency backtest throughput.
+- **Robustness**: Enforces systematic "Fail-Safe" recovery procedures, guaranteeing 
+  the ingestion ETL gracefully bounds network variance (e.g., HTTP rate limits).
 
-    @time_execution
-    @retry(max_retries=3, backoff=2, exceptions=(ConnectionError,))
-    def fetch_market_data(ticker):
-        ...
-
-Importance
-----------
--   **Observability**: `time_execution` enables identification of O(N^2) bottlenecks
-    in the research pipeline, critical for optimizing backtest throughput.
--   **Robustness**: `retry` implements the "Fail-Safe" pattern, ensuring the
-    ETL pipeline recovers gracefully from stochastic network failures (e.g., API rate limits).
-
-Tools & Frameworks
-------------------
--   **Functools**: Preserves metadata (__name__, __doc__) of decorated functions.
--   **Time**: High-resolution clock access for latency measurement.
-
-FIXES
------
-  BUG-086: Invalid escape sequence \\Delta in inline comment on line 44
-           (\"Logs the latency $\\Delta t = ...$\") triggers SyntaxWarning
-           in Python 3.12+ and is an error in future versions.
-           Fixed by removing LaTeX from plain string context.
-
-  Also: `timer` alias added so quant_alpha/utils/__init__.py can export it
-  under the name used by the rest of the codebase (timer, retry).
+Mathematical Dependencies
+-------------------------
+- **Functools**: Preserves metadata schemas of wrapped primitives structurally.
+- **Time**: Integrates `perf_counter` mapping sub-millisecond execution precision.
 """
 import time
 import functools
@@ -51,11 +34,11 @@ logger = logging.getLogger(__name__)
 
 def time_execution(func):
     """
-    Instrumentation decorator for measuring wall-clock execution time.
+    Instrumentation wrapper isolating exact sub-millisecond wall-clock execution durations.
 
-    Logs the elapsed time (t_end - t_start) to the active logger.
-    Execution time is captured in the `finally` block to ensure it is
-    recorded even if the wrapped function raises.
+    Implicitly logs the absolute duration delta to the standardized active logger. 
+    Evaluates tracking mechanics explicitly inside a `finally` block to ensure 
+    terminal state recording even upon severe structural exceptions.
 
     Args:
         func (Callable): The function to wrap.
@@ -65,12 +48,12 @@ def time_execution(func):
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        start_time = time.perf_counter()  # Use perf_counter for sub-millisecond accuracy
+        start_time = time.perf_counter()
         try:
             result = func(*args, **kwargs)
             return result
         finally:
-            # Guaranteed execution regardless of exceptions to capture failure latency
+            # Guarantees extraction execution capturing latency regardless of stack exceptions
             elapsed = time.perf_counter() - start_time
             logger.info(
                 f"[timer] '{func.__name__}' completed in {elapsed:.4f}s"
@@ -78,7 +61,7 @@ def time_execution(func):
     return wrapper
 
 
-# Alias — quant_alpha/utils/__init__.py exports `timer` (matches codebase convention)
+# Exports global standardized alias bridging backwards compatibility targets
 timer = time_execution
 
 
@@ -89,26 +72,20 @@ def retry(
     exceptions: Tuple[Type[Exception], ...] = (Exception,),
 ):
     """
-    Resilience decorator implementing Exponential Backoff.
+    Resilience wrapper implementing geometrical Exponential Backoff recovery loops.
 
-    Wraps a function to automatically retry upon encountering specified
-    transient exceptions. The wait time grows geometrically:
-    t_wait = delay * backoff^k
+    Automatically intercepts specific transient runtime exceptions and re-initiates 
+    execution, compounding delays structurally by: $t_{wait} = delay \times backoff^k$.
 
     Args:
-        max_retries (int)  : Maximum attempts before propagating the exception.
-        delay (float)      : Initial wait time in seconds.
-        backoff (float)    : Multiplier for the wait time after each failure.
-        exceptions (tuple) : Specific errors to catch (fail-safe).
-                             Avoid catching BaseException to allow system interrupts.
-
-    Example
-    -------
-    .. code-block:: python
-
-        @retry(max_retries=3, delay=1, backoff=2, exceptions=(IOError,))
-        def download_prices(ticker: str) -> pd.DataFrame:
-            ...
+        max_retries (int): Maximum bounded attempts before strictly propagating the fault.
+        delay (float): Initial execution suspension interval evaluated in seconds.
+        backoff (float): Mathematical multiplier expanding the wait horizon on failure.
+        exceptions (tuple): Strict class tuple defining target error states. Excludes 
+            `BaseException` to safely map keyboard or system interrupts.
+            
+    Returns:
+        Callable: The fault-tolerant wrapped function.
     """
     def decorator(func):
         @functools.wraps(func)
@@ -127,7 +104,7 @@ def retry(
                     time.sleep(current_delay)
                     attempts_left -= 1
                     current_delay *= backoff
-            # Final attempt: propagate exception if this also fails
+            # Initiates terminal attempt boundary allowing strict propagation if state fails
             return func(*args, **kwargs)
         return wrapper
     return decorator

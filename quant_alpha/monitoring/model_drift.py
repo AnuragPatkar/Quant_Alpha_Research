@@ -67,21 +67,23 @@ class ModelDriftDetector:
     
     def __init__(self, rolling_window: int = 30):
         """
+        Initializes the dynamic probabilistic drift analyzer bounded by structural sequences.
+        
         Args:
-            rolling_window (int): The lookback period $N$ for establishing baseline statistics.
+            rolling_window (int): The trailing lookback horizon length $N$ designated for 
+                establishing strict continuous baseline statistics. Defaults to 30.
         """
         self.window = rolling_window
-        # State Management: O(1) append/pop operations for sliding window history.
         self.history = deque(maxlen=252) 
         
     def update(self, date: str, predictions: pd.Series, actual_returns: Optional[pd.Series] = None):
         """
-        Ingests daily inference results and (optional) realized returns.
+        Ingests point-in-time cross-sectional daily inference vectors and mapped future returns.
 
         Args:
-            date (str): ISO-8601 date string.
-            predictions (pd.Series): Vector of model alpha scores $\hat{y}$.
-            actual_returns (Optional[pd.Series]): Vector of realized forward returns $y$.
+            date (str): Discrete standard ISO-8601 coordinate evaluation metric.
+            predictions (pd.Series): Array bounding standardized model alpha predictions ($\hat{y}$).
+            actual_returns (Optional[pd.Series]): Array evaluating realized corresponding metrics ($y$).
         """
         record = {
             'date': date,
@@ -95,8 +97,6 @@ class ModelDriftDetector:
             record['actual_mean'] = actual_returns.mean()
             record['actual_std'] = actual_returns.std()
             
-            # Error Metric: Mean Squared Error ($MSE$)
-            # Data Alignment: Intersection of indices (Inner Join) required for vector subtraction.
             common_idx = predictions.index.intersection(actual_returns.index)
             if len(common_idx) > 0:
                 mse = np.mean((predictions[common_idx] - actual_returns[common_idx]) ** 2)
@@ -109,45 +109,38 @@ class ModelDriftDetector:
         
     def detect_drift(self) -> Dict:
         """
-        Performs statistical tests to identify significant regime shifts.
+        Evaluates bounds identifying structural statistically significant predictive regime shifts.
 
         Returns:
-            Dict: Status report containing drift flags and Z-score metrics.
+            Dict: Configured boundaries detailing distinct drift warnings and standard Z-score deviations.
         """
         if len(self.history) < self.window * 2:
             return {'status': 'INSUFFICIENT_DATA'}
             
         df = pd.DataFrame(list(self.history))
         
-        # Partitioning Strategy:
-        # 1. Current Window: The most recent $N$ days (Test distribution).
-        # 2. Reference Window: The preceding $N$ days (Baseline distribution).
         current = df.tail(self.window)
         reference = df.iloc[-(self.window * 2):-self.window]
         
         alerts = []
         
-        # 1. Directional Bias Test: Z-Score of Prediction Means
-        # Detects if the model's central tendency ($\mu$) has shifted significantly.
-        # .. math::
-        #     Z = \frac{\mu_{current} - \mu_{reference}}{\sigma_{reference}}
+        # Analyzes statistical prediction biases calculating the uniform directional bounds Z-Scores
+        # Functionally tracking if internal mapping ($\mu$) strictly isolates significant variance shifts.
         curr_mean = current['pred_mean'].mean()
         ref_mean = reference['pred_mean'].mean()
         ref_std = reference['pred_mean'].std()
         
-        # Numerical Stability: Epsilon check for division by zero
         if ref_std > 1e-6:
             z_score = (curr_mean - ref_mean) / ref_std
             if abs(z_score) > 2.0:
                 alerts.append(f"Prediction Mean Shift: Z-Score {z_score:.2f}")
             
-        # 2. Performance Degradation Test
-        # Checks for a relative increase in MSE compared to the reference baseline.
+        # Evaluates absolute metric performance structural degradations isolating discrete 
+        # percentage deviations strictly measuring historical out-of-sample prediction baselines.
         if 'mse' in df.columns and not df['mse'].isnull().all():
             current_mse = current['mse'].mean()
             ref_mse = reference['mse'].mean()
             
-            # Threshold: > 50% degradation in Mean Squared Error ($MSE$)
             if ref_mse > 0 and current_mse > ref_mse * 1.5:
                 alerts.append(f"MSE Degradation: +{(current_mse/ref_mse - 1):.1%}")
                 

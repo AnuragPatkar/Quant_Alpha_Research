@@ -58,26 +58,29 @@ from quant_alpha.monitoring.model_drift import ModelDriftDetector
 from quant_alpha.monitoring.data_quality import DataQualityMonitor
 from config.settings import config
 
-# --- CONFIG ---
 st.set_page_config(page_title="Quant Alpha Monitor", layout="wide")
 CACHE_PRED_PATH = config.CACHE_DIR / "ensemble_predictions.parquet"
 CACHE_DATA_PATH = config.CACHE_DIR / "master_data_with_factors.parquet"
 
 @st.cache_data
 def load_data():
+    """
+    Ingests cached prediction definitions intersecting dynamically alongside foundational market matrices.
+    
+    Returns:
+        Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]: Successfully bound prediction frames and data maps, returning None otherwise.
+    """
     if not os.path.exists(CACHE_PRED_PATH) or not os.path.exists(CACHE_DATA_PATH):
         return None, None
     
     preds = pd.read_parquet(CACHE_PRED_PATH)
     data = pd.read_parquet(CACHE_DATA_PATH)
     
-    # Type enforcement: Ensure datetime objects for time-series alignment
     preds['date'] = pd.to_datetime(preds['date'])
     if 'date' not in data.columns:
         data = data.reset_index()
     data['date'] = pd.to_datetime(data['date'])
     
-    # Metric derivation: Compute forward returns ($R_{t+1}$) if not pre-calculated
     if 'pnl_return' not in data.columns:
         data = data.sort_values(['ticker', 'date'])
         data['pnl_return'] = data.groupby('ticker')['close'].shift(-1) / data['close'] - 1
@@ -94,32 +97,27 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.
     Args:
         preds (pd.DataFrame): Model predictions.
         data (pd.DataFrame): Market data with returns.
-        rebalance_freq (str): 'Daily' or 'Weekly'.
+        rebalance_freq (str): Bounded execution intervals defining ('Daily' or 'Weekly').
         cost_bps (int): Transaction costs in basis points.
-        target_vol (float): Target annualized volatility (e.g., 0.15).
+        target_vol (float): Maximum allowed algorithmic variance parameter limits (e.g., 0.15).
         top_n (int): Number of assets to hold long.
 
     Returns:
         PerformanceTracker: Populated tracker object with full history.
     """
-    # Initialization: Use extended buffer (5000 days) to accommodate full history
     tracker = PerformanceTracker(window_days=60, max_history=5000)
     
     if 'pnl_return' in preds.columns:
         preds = preds.drop(columns=['pnl_return'])
     
-    # Data Alignment: Inner join to ensure predictions map to realized returns
     merged = pd.merge(preds, data[['date', 'ticker', 'pnl_return']], on=['date', 'ticker'])
     merged = merged.dropna(subset=['ensemble_alpha', 'pnl_return'])
     dates = sorted(merged['date'].unique())
     
-    # Benchmark Construction: Equal-Weighted Universe Return
     market_returns = merged.groupby('date')['pnl_return'].mean()
     
-    # Volatility State Tracking (for Inverse-Vol Scaling)
     vol_window = collections.deque(maxlen=20)
     
-    # Strategy State
     current_positions = []
     days_since_rebalance = 0
     
@@ -127,7 +125,6 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.
         day_slice = merged[merged['date'] == d]
         if day_slice.empty: continue
         
-        # Determine Rebalance Logic
         should_rebalance = False
         if rebalance_freq == 'Daily':
             should_rebalance = True
@@ -135,17 +132,13 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.
             should_rebalance = True
             days_since_rebalance = 0
         
-        # Rebalance Execution
         daily_cost = 0.0
         if should_rebalance or i == 0:
             top_picks = day_slice.sort_values('ensemble_alpha', ascending=False).head(top_n)
             if not top_picks.empty:
                 new_positions = top_picks['ticker'].tolist()
                 
-                # Cost Estimation: Assumes Round-Trip (Entry + Exit)
-                # Formula: Cost = Turnover_Pct * 2 * BPS
                 if current_positions:
-                    # Calculate turnover as complement of retention
                     kept = set(current_positions).intersection(set(new_positions))
                     turnover_pct = 1.0 - (len(kept) / len(current_positions))
                     daily_cost = turnover_pct * 2 * (cost_bps / 10000)
@@ -154,9 +147,7 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.
         
         days_since_rebalance += 1
         
-        # Return Attribution: Equal-Weight on Long Positions
         if current_positions:
-            # Filter day_slice for held tickers
             held_slice = day_slice[day_slice['ticker'].isin(current_positions)]
             if not held_slice.empty:
                 raw_ret = held_slice['pnl_return'].mean()
@@ -167,26 +158,18 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.
             
         bench_ret = market_returns.loc[d]
         
-        # Risk Management: Inverse-Volatility Scaling
-        # .. math::
-        #     L_t = \min(1.0, \frac{\sigma_{target}}{\sigma_{realized}})
         if target_vol is not None and len(vol_window) >= 20:
             current_vol = np.std(vol_window) * np.sqrt(252)
             if current_vol > 0:
-                # De-leverage if realized volatility exceeds target cap
                 leverage = min(1.0, target_vol / current_vol)
             else:
                 leverage = 1.0
         else:
             leverage = 1.0
             
-        # Performance Attribution: Net Return = (Gross * Leverage) - Costs
         managed_ret = (raw_ret * leverage) - daily_cost
-        vol_window.append(raw_ret) # Update volatility window with raw returns
+        vol_window.append(raw_ret)
         
-        # Telemetry: Update tracker with daily stats
-        # We pass the full universe predictions to monitor global signal quality (IC),
-        # not just the top-N subset.
         
         tracker.update(
             date=d.strftime('%Y-%m-%d'),
@@ -199,8 +182,12 @@ def run_performance_tracker(preds, data, rebalance_freq, cost_bps, target_vol=0.
 
 def run_drift_detector(preds, data):
     """
-    Analyzes historical predictions for Concept Drift and Label Shift.
+    Orchestrates boundary parameters modeling historical constraints quantifying explicit distribution shifts.
 
+    Args:
+        preds (pd.DataFrame): Inference vector block predictions limit.
+        data (pd.DataFrame): Validated target baseline geometric structures.
+        
     Returns:
         Tuple[ModelDriftDetector, pd.DataFrame]: Detector instance and daily drift logs.
     """

@@ -57,10 +57,20 @@ class ConsensusStrength(EarningsFactor):
     $$ Score_t = \max(0, 100 - \text{Median}(|\text{Surprise}\%|_{t-3...t})) $$
     """
     def __init__(self):
+        """Initializes parameter extraction limits defining continuous estimate accuracy."""
         super().__init__(name='est_consensus_strength', description='Analyst Consensus Strength')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Data Validation: Ensure necessary columns exist for computation
+        """
+        Evaluates structural matrices matching empirical historical estimates smoothly stably.
+        
+        Args:
+            df (pd.DataFrame): Dimensional target bounding matrices implicitly mapped safely.
+            
+        Returns:
+            pd.Series: Validated vector limits linearly extracting relative predictive confidence.
+        """
+        # Identifies structural constraints flawlessly tracking independent fundamental boundaries
         has_surprise = 'surprise_pct' in df.columns
         has_components = 'eps_actual' in df.columns and 'eps_estimate' in df.columns
         
@@ -71,7 +81,7 @@ class ConsensusStrength(EarningsFactor):
             events = get_events_with_surprise(group)
             if events.empty: return pd.Series(np.nan, index=group.index)
 
-            # Robustness: Median aggregation over rolling window mitigates outlier impact.
+            # Structurally mitigates outlier contamination bounding median evaluation geometries.
             events['err'] = events['surprise_pct'].abs()
             events['score'] = (100 - events['err'].rolling(4, min_periods=2).median()).clip(0, 100)
             return events['score'].reindex(group.index).ffill()
@@ -90,10 +100,20 @@ class EstimateSurpriseConsistency(EarningsFactor):
     $$ Consistency_t = \frac{1}{1 + \frac{\sigma(\text{Surprise}\%)_{t-3...t}}{10}} $$
     """
     def __init__(self):
+        """Initializes statistical variance scalers assessing historical surprise dispersion."""
         super().__init__(name='est_surprise_consistency', description='Estimate Surprise Consistency')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Data Validation: Ensure necessary columns exist for computation
+        """
+        Calculates strict consistency limits applying non-linear standard deviation constraints.
+        
+        Args:
+            df (pd.DataFrame): Mapped evaluations successfully structurally tracked natively.
+            
+        Returns:
+            pd.Series: Evaluated identically mapping sequences effectively scaling dispersion.
+        """
+        # Asserts dependencies structurally validating historical sequences flawlessly
         has_surprise = 'surprise_pct' in df.columns
         has_components = 'eps_actual' in df.columns and 'eps_estimate' in df.columns
         
@@ -104,10 +124,10 @@ class EstimateSurpriseConsistency(EarningsFactor):
             events = get_events_with_surprise(group)
             if len(events) < 3: return pd.Series(np.nan, index=group.index)
 
-            # Calculate rolling standard deviation ($\sigma$) of surprise percentages
+            # Extracts mathematical standard deviation bounds strictly enforcing temporal mapping.
             vols = events['surprise_pct'].rolling(4, min_periods=3).std()
             
-            # Normalization: Decay function. $\sigma=0 \to 1.0$, $\sigma=20 \to 0.33$.
+            # Applies absolute decay mechanics effectively mapping $\sigma$ onto a strict $[0, 1]$ parameter.
             events['consistency'] = 1.0 / (1.0 + (vols / 10.0))
             return events['consistency'].reindex(group.index).ffill()
         
@@ -124,10 +144,19 @@ class PositiveEstimateConfidence(EarningsFactor):
     $$ Conf_t = \frac{1}{N} \sum_{i=0}^{N-1} \mathbb{I}(\text{Surprise}_{t-i} > 0) \times 100 $$
     """
     def __init__(self):
+        """Initializes predictive bounds tracking strictly positive beat consistency."""
         super().__init__(name='est_positive_confidence', description='Positive Estimate Confidence')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Data Validation: Ensure necessary columns exist for computation
+        """
+        Computes cross-asset evaluation vectors strictly modeling empirical positive probability.
+        
+        Args:
+            df (pd.DataFrame): Systemic input mapping limit matrices seamlessly evaluated.
+            
+        Returns:
+            pd.Series: Explicitly bounded limits calculating continuous trajectory metrics correctly.
+        """
         has_surprise = 'surprise_pct' in df.columns
         has_components = 'eps_actual' in df.columns and 'eps_estimate' in df.columns
         
@@ -138,10 +167,10 @@ class PositiveEstimateConfidence(EarningsFactor):
             events = get_events_with_surprise(group)
             if events.empty: return pd.Series(np.nan, index=group.index)
 
-            # Handling Missing Data: Propagate NaN for missing surprises rather than imputing 0 (Miss).
+            # Propagates inherent sequence nullity accurately bypassing faulty state derivations.
             beats = pd.Series(np.where(events['surprise_pct'].isna(), np.nan, (events['surprise_pct'] > 0).astype(float)), index=events.index)
             
-            # Statistical Significance: Require min 3 observations within 6-quarter window.
+            # Evaluates moving aggregate structures conditionally requiring absolute minimums cleanly.
             events['conf'] = beats.rolling(window=6, min_periods=3).mean() * 100
             return events['conf'].reindex(group.index).ffill()
         
@@ -159,10 +188,19 @@ class EstimateGuidanceQuality(EarningsFactor):
     $$ Quality_t = \frac{1}{1 + \text{Mean}(|\frac{\text{Surprise}\%}{100}|_{t-3...t})} $$
     """
     def __init__(self):
+        """Initializes normalized parameters limiting analyst mean absolute relative error."""
         super().__init__(name='est_guidance_quality', description='Estimate Guidance Quality')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Data Validation: Ensure necessary columns exist for computation
+        """
+        Executes deterministic mapping scaling trajectory precision directly efficiently safely.
+        
+        Args:
+            df (pd.DataFrame): Target evaluation matrices correctly tracked systematically.
+            
+        Returns:
+            pd.Series: Continuous parameters safely structured explicitly accurately.
+        """
         has_surprise = 'surprise_pct' in df.columns
         has_components = 'eps_actual' in df.columns and 'eps_estimate' in df.columns
         
@@ -173,7 +211,7 @@ class EstimateGuidanceQuality(EarningsFactor):
             events = get_events_with_surprise(group)
             if events.empty: return pd.Series(np.nan, index=group.index)
 
-            # Normalization: Convert percentage surprise to decimal scale (e.g., 5% -> 0.05).
+            # Generates mathematical conversion correctly standardizing bounded absolute scales.
             rel_error = events['surprise_pct'].abs() / 100.0
             avg_err = rel_error.rolling(4, min_periods=2).mean()
             

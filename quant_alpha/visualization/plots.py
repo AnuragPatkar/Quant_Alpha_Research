@@ -1,10 +1,28 @@
 """
-quant_alpha/visualization/plots.py
-=====================================
-Standard static plotting routines for the backtest tearsheet.
+Standardized Backtest Visualization Routines
+==========================================
 
-FIXED: `from .utils import set_style, format_currency` now correctly
-resolves within the quant_alpha/visualization/ package.
+Provides institutional-grade static plotting functions for strategy 
+performance evaluation and tearsheet generation.
+
+Purpose
+-------
+This module generates publication-ready visualizations of key quantitative 
+metrics, including continuous equity trajectories, underwater drawdown 
+profiles, and aggregate regime performance (monthly heatmaps). It enforces 
+consistent styling and normalizes benchmark comparisons.
+
+Role in Quantitative Workflow
+-----------------------------
+Acts as the primary graphical rendering engine for the backtesting pipeline. 
+It translates raw portfolio execution data (time-series NAV and returns) 
+into diagnostic charts used by researchers for alpha evaluation.
+
+Mathematical Dependencies
+-------------------------
+- **Matplotlib/Seaborn**: Core rendering backends for static plot generation.
+- **NumPy/Pandas**: Vectorized time-series compounding, alignment, and maximum 
+  drawdown boundary calculations.
 """
 
 import matplotlib
@@ -16,7 +34,6 @@ import numpy as np
 from matplotlib.ticker import FuncFormatter
 from typing import Optional
 
-# Correct relative import — utils.py is in the same visualization/ package
 from .utils import set_style, format_currency
 
 
@@ -26,13 +43,22 @@ def plot_equity_curve(
     save_path: Optional[str] = None,
 ) -> None:
     """
-    Plot the portfolio NAV trajectory, optionally vs a benchmark.
+    Plots the portfolio Net Asset Value (NAV) trajectory, optionally normalized against a benchmark.
 
-    Parameters
-    ----------
-    equity_df    : DataFrame with columns ['date', 'total_value'].
-    benchmark_df : Optional DataFrame with columns ['date', 'close'].
-    save_path    : Path to save PNG; if None, displays interactively.
+    Normalizes the benchmark to strictly align with the portfolio's initial 
+    starting capital, providing a direct comparative analysis of relative 
+    wealth generation over the backtest horizon.
+
+    Args:
+        equity_df (pd.DataFrame): Time-series dataframe containing at least 
+            'date' and 'total_value' columns mapping capital levels.
+        benchmark_df (Optional[pd.DataFrame]): Optional time-series dataframe 
+            containing 'date' and 'close' price columns for the benchmark asset.
+        save_path (Optional[str]): Filepath to save the generated figure. 
+            If None, the plot is rendered interactively.
+            
+    Returns:
+        None: Renders the plot via matplotlib backend or saves directly to disk.
     """
     set_style()
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -45,6 +71,8 @@ def plot_equity_curve(
     if benchmark_df is not None:
         initial_value = float(eq["total_value"].iloc[0])
         bench = benchmark_df.copy()
+        
+        # Maps time-series indices to standard datetime structures for continuous alignment
         bench["date"] = pd.to_datetime(bench["date"])
         merged = pd.merge(eq[["date"]], bench[["date", "close"]], on="date", how="left")
 
@@ -55,6 +83,8 @@ def plot_equity_curve(
                 else 1.0
             )
             if start_price > 0:
+                # Dynamically rebases the benchmark trajectory to the portfolio's inception capital
+                # to ensure strictly proportional geometric scaling on the comparative Y-axis.
                 bench_norm = merged["close"] / start_price * initial_value
                 ax.plot(merged["date"], bench_norm,
                         label="Benchmark", alpha=0.7, linestyle="--")
@@ -79,14 +109,27 @@ def plot_drawdown(
     save_path: Optional[str] = None,
 ) -> None:
     """
-    Generate an underwater drawdown chart.
+    Generates an underwater drawdown profile tracking capital peak-to-trough regressions.
 
-    DD_t = (NAV_t - HWM_t) / HWM_t
+    Calculates continuous drawdown from the High-Water Mark (HWM). 
+    Employs a safe-division scalar to prevent zero-division instability.
+
+    Args:
+        equity_df (pd.DataFrame): Time-series dataframe containing 'date' 
+            and 'total_value' columns.
+        save_path (Optional[str]): Filepath to save the generated figure. 
+            If None, the plot is rendered interactively.
+
+    Returns:
+        None: Renders the plot via matplotlib backend or saves directly to disk.
     """
     set_style()
     nav    = equity_df["total_value"].values.astype(float)
+    # Computes the High-Water Mark (HWM) via an expanding maximum array calculation
     hwm    = np.maximum.accumulate(nav)
+    # Injects a 1e-12 boundary floor to guarantee numerical stability during fraction division
     safe   = np.where(hwm > 1e-12, hwm, 1e-12)
+    # Solves empirical drawdown: $DD_t = \frac{NAV_t - HWM_t}{HWM_t}$
     dd     = (nav - hwm) / safe
     dates  = pd.to_datetime(equity_df["date"])
 
@@ -112,12 +155,22 @@ def plot_monthly_heatmap(
     save_path: Optional[str] = None,
 ) -> None:
     """
-    Plot a calendar monthly return heatmap.
+    Constructs a calendar-aligned heatmap mapping compounded monthly geometric returns.
 
-    Compounds daily returns to monthly geometric returns:
-        R_month = prod(1 + R_daily) - 1
+    Translates granular daily return vectors into structural monthly buckets, 
+    highlighting cyclicality, seasonality, or regime-specific strategy decay.
+
+    Args:
+        returns_series (pd.Series): A daily geometric returns series indexed by standard dates.
+        save_path (Optional[str]): Filepath to save the generated figure. 
+            If None, the plot is rendered interactively.
+            
+    Returns:
+        None: Renders the plot via matplotlib backend or saves directly to disk.
     """
     set_style()
+    # Compounds daily geometric returns ($R_{daily}$) into discrete monthly buckets
+    # Formula: $R_{month} = \prod (1 + R_{daily}) - 1$
     monthly = returns_series.resample("ME").apply(lambda x: (1 + x).prod() - 1)
 
     fig, ax = plt.subplots(figsize=(14, 6))

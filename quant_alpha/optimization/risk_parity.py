@@ -83,12 +83,11 @@ class RiskParityOptimizer:
         Initializes the optimizer with specific risk budgets.
 
         Args:
-            target_risk (Optional[Dict]): Target risk contribution per ticker (unnormalized).
-                If None, defaults to Equal Risk Contribution (ERC), i.e., $b_i = 1/N$.
+            target_risk (Optional[Dict[str, float]]): Target risk contribution mapped per ticker explicitly.
+                If None, inherently substitutes Equal Risk Contribution (ERC) boundaries, i.e., $b_i = 1/N$.
         """
         self.target_risk = target_risk
 
-    # ==================== PUBLIC API ====================
 
     def optimize(
         self,
@@ -96,16 +95,15 @@ class RiskParityOptimizer:
         tickers: List[str],
     ) -> Dict[str, float]:
         """
-        Executes the optimization routine to derive risk-balanced weights.
+        Initiates execution optimization bounded strictly to balance individual portfolio limits.
 
         Args:
-            covariance_matrix (pd.DataFrame): Asset covariance matrix ($\Sigma$).
-            tickers (List[str]): Universe of assets to optimize.
+            covariance_matrix (pd.DataFrame): Systemic covariance matrix mappings explicitly mapping cross-correlation boundaries ($\Sigma$).
+            tickers (List[str]): Absolute target universe sequence evaluated dynamically for boundary configurations.
 
         Returns:
-            Dict[str, float]: Normalized weight vector summing to 1.0.
+            Dict[str, float]: Terminal allocation normalized vector strictly bounding distribution structures identically summing to 1.0.
         """
-        # 1. Data Alignment: Intersect requested tickers with covariance data
         available_tickers = [t for t in tickers if t in covariance_matrix.index]
         if len(available_tickers) != len(tickers):
             missing = set(tickers) - set(available_tickers)
@@ -120,12 +118,11 @@ class RiskParityOptimizer:
         n = len(available_tickers)
         Sigma = covariance_matrix.loc[available_tickers, available_tickers].values
 
-        # 2. Risk Budget Construction
         if self.target_risk is None:
-            b = np.ones(n) / n  # Default: Equal Risk Contribution (ERC)
+            b = np.ones(n) / n
         else:
             b = np.array([self.target_risk.get(t, 1.0 / n) for t in available_tickers])
-            b = b / b.sum()  # Normalize budgets to sum to 1.0
+            b = b / b.sum()
 
         # 3. Spinu (2013) Optimization
         # Solver: L-BFGS-B (Bound-constrained Quasi-Newton)
@@ -145,8 +142,8 @@ class RiskParityOptimizer:
             """
             return -b / y + Sigma @ y
 
-        y0 = np.ones(n) / n          # Initial guess (Centroid)
-        bounds = [(1e-8, None)] * n  # Bounds: y_i >= epsilon
+        y0 = np.ones(n) / n
+        bounds = [(1e-8, None)] * n
 
         result = minimize(
             _objective,
@@ -157,25 +154,28 @@ class RiskParityOptimizer:
             options={'maxiter': 1000, 'ftol': 1e-15, 'gtol': 1e-10},
         )
 
-        # 4. Weight Recovery: w = y / sum(y)
         if result.success and result.x is not None and result.x.sum() > 0:
             return self._pack_weights(result.x / result.x.sum(), available_tickers)
 
-        # 5. Defensive Fallback: Inverse-Volatility
-        # Triggered only on numerical convergence failure.
         logger.warning(
             f"⚠️ Spinu optimisation did not converge ({result.message}). "
             "Using Inverse Volatility fallback."
         )
         return self._inverse_vol_fallback(Sigma, available_tickers)
 
-    # ==================== PRIVATE HELPERS ====================
 
     def _pack_weights(
         self, normalised_w: np.ndarray, tickers: List[str]
     ) -> Dict[str, float]:
         """
-        Formatting utility: filters numerical noise and maps array to ticker dict.
+        Formats and standardizes the allocation output array mapping back to discrete ticker keys.
+        
+        Args:
+            normalised_w (np.ndarray): The strictly bounded positive allocation vector.
+            tickers (List[str]): Sequence of evaluating universe constituents.
+            
+        Returns:
+            Dict[str, float]: Mapped portfolio weights stripped of systemic floating-point noise.
         """
         weight_dict = {
             tickers[i]: float(w)
@@ -193,9 +193,15 @@ class RiskParityOptimizer:
         self, Sigma: np.ndarray, tickers: List[str]
     ) -> Dict[str, float]:
         """
-        Heuristic Fallback: Weights proportional to inverse standard deviation.
+        Executes deterministic Inverse-Volatility heuristic bounding strictly absent gradient solver failure.
         .. math:: w_i \\propto \\frac{1}{\\sigma_i}
-        Used when the primary solver fails to converge.
+        
+        Args:
+            Sigma (np.ndarray): Extracted covariance constraints.
+            tickers (List[str]): Extracted target sequences.
+            
+        Returns:
+            Dict[str, float]: Bounding configuration mappings perfectly executing independent parameters.
         """
         variances = np.diag(Sigma)
         volatilities = np.sqrt(np.maximum(variances, 1e-8))

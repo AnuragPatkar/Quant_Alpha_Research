@@ -1,33 +1,26 @@
 """
-Composite Factors (15 Total)
+Composite Feature Engineering Subsystem
+=======================================
 
-Macro-Adjusted Factors (5):
-- MacroAdjustedMomentum: Momentum scaled by volatility regime
-- OilCorrectedValue: Value adjusted for commodity environment
-- RateEnvironmentScore: Quality performance in current rate regime
-- DollarAdjustedGrowth: Growth factors modulated by USD strength
-- RiskParityBlend: Equal risk weight momentum + sentiment
+Provides advanced composite alpha factors capturing non-linear cross-asset 
+interactions and macro-adjusted systematic regime indicators.
 
-System Health Factors (5):
-- MarketRegimeScore: Bull/Bear/Sideways classification
-- VolatilityRegime: Normal/Elevated/Crisis classification
-- CapitalFlowSignal: Oil + USD combined flow indicator
-- EconomicMomentumScore: Combined macro strength (0-100)
-- PortfolioHealthIndex: Overall system health (0-100)
+Purpose
+-------
+Aggregates technical, fundamental, and alternative datasets into high-level 
+regime classifiers and context-aware predictive signals. These factors adjust 
+their signal strength dynamically based on the broader macroeconomic environment.
 
-Smart Signals Factors (5):
-- MomentumVIXDivergence: Detect euphoria or capitulation
-- ValueYieldCombo: Value + rates + sentiment blend
-- QualityInDownturn: Quality performance during stress
-- EarningsMacroAlignment: Earnings vs macro alignment
-- MultiAssetOpportunity: Cross-asset opportunity scoring (0-100)
+Role in Quantitative Workflow
+-----------------------------
+Acts as the systemic overlay mapping local equity-specific alpha factors to 
+global market regimes (e.g., Risk-On/Risk-Off). Essential for training 
+regime-conditional decision trees.
 
-Total: 15 factors
-Inheritance: All inherit from AlternativeFactor
-Registration: All auto-registered via @FactorRegistry.register()
-Data Sources: Combines technical data with alternative data (5 macro/sentiment series)
-Frequency: Daily, aligned with price data
-Focus: Regime adaptation, multi-factor blending, cross-asset coordination
+Mathematical Dependencies
+-------------------------
+- **Pandas/NumPy**: Vectorized cross-asset condition tracking and multi-factor 
+  equal-weight scalar combinations.
 """
 
 from .macro_adjusted import (

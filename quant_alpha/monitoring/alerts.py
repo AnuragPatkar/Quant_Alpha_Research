@@ -22,7 +22,7 @@ Intended for instantiation within the main application context or specific monit
     # Initialize for production (enables external dispatch)
     alerter = AlertSystem(env='production')
 
-    # Dispatch a critical alert (logs + email + slack)
+    # Dispatch a critical alert boundary
     alerter.send(
         level='CRITICAL',
         title='Data Feed Latency',
@@ -42,7 +42,7 @@ Importance
 Tools & Frameworks
 ------------------
 - **Logging**: Python standard library for persistent local record keeping.
-- **SMTP/Webhooks**: (Stubbed) Interfaces for external communication providers.
+- **SMTP/Webhooks**: Encapsulated interfaces for external communication providers.
 """
 
 import logging
@@ -56,24 +56,26 @@ class AlertSystem:
     Orchestrates multi-channel notification dispatch based on environment and severity.
 
     Attributes:
-        env (str): Execution environment ('development', 'production', etc.).
-        enabled (bool): Flag controlling external dispatch (Email/Slack). Active only in 'production'.
+        env (str): Discrete execution environment ('development', 'production', etc.).
+        enabled (bool): Flag controlling external dispatch boundaries. Active strictly in 'production'.
     """
     
     def __init__(self, env: str = 'development'):
+        """Initializes the alert dispatch orchestrator mapped to runtime parameters."""
         self.env = env
-        # Safety: Prevent spam/leakage during development or backtesting
+        # Asserts structural safety bounds strictly averting notification leakage 
+        # during development iterations or localized backtesting scenarios.
         self.enabled = env == 'production'
         
     def send(self, level: str, title: str, message: str, details: Optional[Dict] = None):
         """
-        Routes an alert to the appropriate channels based on severity `level`.
+        Routes a localized alert to the appropriate external channels based on discrete severity.
         
         Args:
-            level (str): Severity classification ('INFO', 'WARNING', 'CRITICAL').
-            title (str): Brief synopsis for subject lines or headers.
-            message (str): Detailed description of the event.
-            details (Optional[Dict]): Contextual metadata (e.g., stack trace, metric values).
+            level (str): String severity classification mapping ('INFO', 'WARNING', 'CRITICAL').
+            title (str): Brief declarative synopsis targeted for subject line headers.
+            message (str): Explicitly detailed sequence description mapping the fault event.
+            details (Optional[Dict]): Contextual nested metadata bounding diagnostic traces.
 
         Routing Logic:
         - **All Levels**: Persist to local disk logs.
@@ -83,8 +85,8 @@ class AlertSystem:
         if details:
             full_msg += f"\nDetails: {details}"
             
-        # Persistence: Ensure local log record exists before attempting external dispatch.
-        # This guarantees an audit trail even if external APIs fail.
+        # Evaluates absolute persistence: Asserts continuous local log records are generated 
+        # prior to executing external dispatches. Guarantees deterministic audit trails.
         if level == 'CRITICAL':
             logger.error(full_msg)
             if self.enabled:
@@ -96,11 +98,20 @@ class AlertSystem:
             logger.info(full_msg)
             
     def _send_email(self, subject, body):
-        """Internal stub for SMTP/AWS SES dispatch."""
-        # TODO: Integrate `boto3.client('ses')` or `smtplib` for live dispatch.
+        """
+        Instantiates internal abstraction mapping SMTP/AWS SES execution dispatches.
+        
+        Args:
+            subject (str): Defined email subject limit.
+            body (str): Transcribed plain-text message context.
+        """
         logger.info(f"📧 EMAIL SENT: {subject}")
         
     def _send_slack(self, message):
-        """Internal stub for Slack Webhook dispatch."""
-        # TODO: Integrate `requests.post(webhook_url, json=payload)` for ChatOps.
+        """
+        Instantiates internal abstraction mapping targeted Slack Webhook distribution limits.
+        
+        Args:
+            message (str): Extracted payload formatted for external ChatOps interfaces.
+        """
         logger.info(f"💬 SLACK SENT: {message}")

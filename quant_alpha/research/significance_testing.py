@@ -1,18 +1,25 @@
 """
-quant_alpha/research/significance_testing.py
-==============================================
 Statistical Significance & Hypothesis Testing Engine.
+=====================================================
 
-FIXES:
-  BUG-084 (MEDIUM): bootstrap_sharpe() computed Sharpe as
-           mean(sample) / std(sample) × √252, omitting the risk-free rate.
-           The confirmed Sharpe formula is:
-           S = (mean(r) - rf/252) / std(r) × √252
-           Without subtracting rf/252, the bootstrap Sharpe overstates
-           the metric by ~rf/√252 × √252 = rf ≈ 0.04 at rf=4%.
-           Fixed: excess = sample - rf_daily before Sharpe computation.
-           A risk_free_rate parameter (default 0.04) has been added to
-           __init__ and bootstrap_sharpe() to allow customisation.
+Provides non-parametric and parametric boundaries to validate alpha signal efficacy.
+
+Purpose
+-------
+This module strictly evaluates whether generated strategy returns and Information 
+Coefficients (IC) diverge significantly from random noise, anchoring statistical 
+confidence prior to model deployment.
+
+Role in Quantitative Workflow
+-----------------------------
+Acts as the rigorous mathematical filter separating spurious over-fitted artifacts 
+from genuine structural alpha. Enforces stationarity bounds to confirm that predictive 
+power is theoretically persistent out-of-sample.
+
+Mathematical Dependencies
+-------------------------
+- **SciPy (stats)**: Calculates continuous sample T-tests bounding hypothesis distributions.
+- **Statsmodels**: Binds Augmented Dickey-Fuller (ADF) constraints testing for unit roots.
 """
 
 import pandas as pd
@@ -33,10 +40,12 @@ class SignificanceTester:
         risk_free_rate: float = 0.04,
     ):
         """
+        Initializes the structural inference evaluation map.
+        
         Args:
-            ic_series       : Time-series of daily Information Coefficients.
-            returns_series  : Time-series of daily strategy returns.
-            risk_free_rate  : Annual risk-free rate (default 4%).
+            ic_series (pd.Series, optional): Time-series array defining daily Information Coefficients.
+            returns_series (pd.Series, optional): Time-series array bounding daily geometric returns.
+            risk_free_rate (float): Standard annual systemic risk-free baseline. Defaults to 0.04.
         """
         self.ic_series      = ic_series
         self.returns_series = returns_series
@@ -44,13 +53,16 @@ class SignificanceTester:
 
     def t_test_ic(self) -> dict:
         """
-        One-sample t-test on the IC series.
+        Evaluates a standard one-sample t-test bound against the IC distribution.
 
-        H₀: μ_IC = 0  (no predictive power)
-        H₁: μ_IC ≠ 0
+        Null Hypothesis ($H_0$): $\mu_{IC} = 0$ (The signal exhibits zero structural predictive power).
+        Alternative Hypothesis ($H_1$): $\mu_{IC} \neq 0$.
 
         Returns:
-            Dict: t-stat, p-value, significance flag, mean IC, N.
+            dict: A mapping of the extracted t-statistic, p-value bounds, significance flag, and sample count.
+            
+        Raises:
+            ValueError: If the necessary continuous IC series was omitted during initialization.
         """
         if self.ic_series is None:
             raise ValueError("IC series not provided.")
@@ -73,20 +85,24 @@ class SignificanceTester:
         risk_free_rate: float = None,
     ) -> dict:
         """
-        Non-parametric bootstrap to estimate the Sharpe Ratio distribution.
+        Estimates the empirical Sharpe Ratio distribution via non-parametric bootstrapping.
 
-        Annualised Sharpe:
-            S = (mean(r - rf/252) / std(r - rf/252)) × √252
-
-        FIX BUG-084: subtract daily risk-free rate before computing mean/std.
+        Iteratively simulates $N$ resampling horizons mapping localized standard deviation 
+        and annualized excess boundaries to strictly bound the true population Sharpe parameters.
+        
+        Annualized Geometric Formula: $S = \frac{\mu(r - rf_{daily})}{\sigma(r - rf_{daily})} \times \sqrt{252}$
 
         Args:
-            n_samples        : Bootstrap iterations.
-            confidence_level : Width of CI (default 95%).
-            risk_free_rate   : Annual rf rate. Overrides instance value if supplied.
+            n_samples (int): Total bootstrap stochastic iterations. Defaults to 1000.
+            confidence_level (float): The targeted parametric width of the CI. Defaults to 0.95.
+            risk_free_rate (float, optional): The annual benchmark risk-free rate threshold. 
+                Dynamically overrides the instance configuration if supplied. Defaults to None.
 
         Returns:
-            Dict: Mean Sharpe, CI bounds, std error, P(SR > 0).
+            dict: The simulated distributional characteristics including Mean Sharpe, CI bounds, and probability bounds.
+            
+        Raises:
+            ValueError: If the continuous geometric returns series was omitted.
         """
         if self.returns_series is None:
             raise ValueError("Returns series not provided.")
@@ -100,7 +116,7 @@ class SignificanceTester:
         for _ in range(n_samples):
             sample = np.random.choice(rets, size=len(rets), replace=True)
 
-            # FIX BUG-084: compute excess returns before Sharpe
+            # Isolates pure excess returns strictly bounding standard mathematical Sharpe formulations.
             excess  = sample - rf_daily
             std_dev = np.std(excess)
 
@@ -135,14 +151,14 @@ class SignificanceTester:
 
     def check_stationarity(self) -> dict | None:
         """
-        Augmented Dickey-Fuller test for unit roots.
+        Conducts the Augmented Dickey-Fuller (ADF) bound testing checking for unit roots.
 
-        H₀: series has a unit root (non-stationary)
-        H₁: series is stationary (p < 0.05 → reject H₀)
+        Null Hypothesis ($H_0$): The executing matrix series contains a unit root (non-stationary).
+        Alternative Hypothesis ($H_1$): The series enforces strict stationarity.
 
         Returns:
-            Dict with adf_stat, p_value, stationary flag, or None if
-            statsmodels is not installed.
+            Optional[dict]: Explicit testing statistics mapping scalar outputs, or None if 
+            underlying math engines fail dependency resolutions.
         """
         try:
             from statsmodels.tsa.stattools import adfuller

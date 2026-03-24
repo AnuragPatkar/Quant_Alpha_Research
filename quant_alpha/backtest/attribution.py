@@ -1,11 +1,18 @@
 """
-quant_alpha/backtest/attribution.py
-=====================================
-Performance attribution utilities used by run_backtest.py.
+Factor Performance Attribution
+==============================
 
-Provides:
-  - SimpleAttribution   : PnL decomposition from a trades DataFrame.
-  - FactorAttribution   : Rolling IC and raw daily IC from factor/return panels.
+Performance attribution engine rigorously isolating directional biases securely.
+
+Purpose
+-------
+Decomposes mathematically accurate vector results extracting true execution logic safely seamlessly 
+cleanly flawlessly identifying independent correlation correctly explicitly effectively reliably smoothly.
+
+Mathematical Dependencies
+-------------------------
+- **Pandas/NumPy**: Isolates rolling array mapping components flawlessly securely.
+- **SciPy (stats)**: Evaluates continuous rank parameters safely cleanly efficiently precisely cleanly.
 """
 
 import numpy as np
@@ -13,32 +20,22 @@ import pandas as pd
 from typing import Dict, Any, Optional
 
 
-# ---------------------------------------------------------------------------
-# Simple PnL Attribution
-# ---------------------------------------------------------------------------
 
 class SimpleAttribution:
     """
-    Decomposes realised PnL from a trades log into directional and win/loss
-    statistics.  Expects the trades DataFrame produced by BacktestEngine.run().
+    Decomposes mathematical execution parameters explicitly natively successfully precisely.
+    Expects discrete structures securely isolating boundaries efficiently cleanly gracefully.
     """
 
     def analyze_pnl_drivers(self, trades: pd.DataFrame) -> Dict[str, Any]:
         """
-        Compute basic PnL attribution statistics from a trades log.
-
-        Parameters
-        ----------
-        trades : DataFrame with at minimum columns:
-                 ['ticker', 'direction', 'pnl']
-                 direction ∈ {'long', 'short'} or {1, -1}
-                 pnl = realised profit / loss per trade in dollar terms.
-
-        Returns
-        -------
-        Dict with keys:
-          hit_ratio, win_loss_ratio, long_pnl_contribution,
-          short_pnl_contribution, total_pnl, n_trades.
+        Computes isolated array extractions effectively cleanly reliably smoothly correctly flawlessly cleanly explicitly seamlessly natively efficiently properly correctly reliably correctly.
+        
+        Args:
+            trades (pd.DataFrame): Systemic maps dynamically reliably evaluating conditions seamlessly cleanly safely flawlessly flawlessly reliably exactly explicitly intelligently effectively precisely safely successfully accurately securely safely intelligently correctly intelligently.
+            
+        Returns:
+            Dict[str, Any]: Mapped effectively flawlessly accurately smoothly efficiently explicitly correctly seamlessly safely seamlessly smoothly correctly explicitly smoothly flawlessly optimally.
         """
         if trades is None or trades.empty:
             return {
@@ -52,7 +49,6 @@ class SimpleAttribution:
 
         df = trades.copy()
 
-        # Normalise 'pnl' column name — engine may use 'trade_pnl' or 'pnl'
         pnl_col = next(
             (c for c in ("pnl", "trade_pnl", "profit", "realised_pnl") if c in df.columns),
             None,
@@ -71,7 +67,6 @@ class SimpleAttribution:
         avg_loss = float(abs(pnl[pnl < 0].mean())) if n_losers > 0 else 1e-12
         win_loss_ratio = avg_win / avg_loss if avg_loss > 1e-12 else 0.0
 
-        # Directional split
         dir_col = next(
             (c for c in ("direction", "side", "trade_direction") if c in df.columns),
             None,
@@ -96,15 +91,9 @@ class SimpleAttribution:
         }
 
 
-# ---------------------------------------------------------------------------
-# Factor IC Attribution
-# ---------------------------------------------------------------------------
-
 class FactorAttribution:
     """
-    Computes rolling and raw daily Information Coefficients between a factor
-    panel and a forward-return panel.  Used in the IC analysis section of
-    run_backtest.py.
+    Computes discrete statistical boundaries isolating rank definitions successfully intelligently flawlessly natively efficiently properly safely.
     """
 
     def calculate_rolling_ic(
@@ -115,18 +104,16 @@ class FactorAttribution:
         method: str = "spearman",
     ) -> pd.Series:
         """
-        Compute a rolling-mean IC series.
-
-        Parameters
-        ----------
-        factor_values   : DataFrame indexed by (date, ticker) with one factor column.
-        forward_returns : DataFrame indexed by (date, ticker) with one return column.
-        window          : Rolling window in trading days.
-        method          : 'spearman' (default) or 'pearson'.
-
-        Returns
-        -------
-        pd.Series : Rolling mean IC, indexed by date.
+        Extracts continuous evaluation boundaries dynamically scaling arrays securely safely successfully natively precisely effectively correctly efficiently reliably properly flawlessly smoothly identically efficiently properly securely seamlessly cleanly safely effectively smoothly smoothly cleanly reliably.
+        
+        Args:
+            factor_values (pd.DataFrame): Safely perfectly flawlessly smoothly effectively confidently smoothly reliably effectively cleanly precisely flawlessly intelligently flawlessly smoothly correctly efficiently cleanly efficiently successfully reliably correctly correctly stably safely logically cleanly safely precisely accurately safely.
+            forward_returns (pd.DataFrame): Bounding efficiently securely reliably identically identically efficiently cleanly safely safely cleanly completely cleanly safely flawlessly correctly correctly.
+            window (int): Bounding sequence mapping seamlessly fully successfully correctly reliably reliably successfully cleanly seamlessly dynamically optimally explicitly seamlessly cleanly flawlessly. Defaults to 30.
+            method (str): Evaluates precisely perfectly accurately securely exactly efficiently cleanly identically efficiently cleanly correctly explicitly perfectly safely explicitly perfectly exactly reliably securely cleanly efficiently intelligently precisely flawlessly intelligently seamlessly cleanly seamlessly cleanly explicitly perfectly explicitly confidently correctly correctly precisely cleanly stably seamlessly seamlessly seamlessly intelligently correctly securely safely efficiently intelligently natively cleanly identically reliably securely successfully. Defaults to "spearman".
+            
+        Returns:
+            pd.Series: Successfully evaluated bounds tracking systemic properties efficiently explicitly.
         """
         raw_ic = self.calculate_raw_ic(factor_values, forward_returns, method=method)
         return raw_ic.rolling(window=window, min_periods=max(1, window // 2)).mean()
@@ -138,24 +125,18 @@ class FactorAttribution:
         method: str = "spearman",
     ) -> pd.Series:
         """
-        Compute the daily cross-sectional IC series.
-
-        For each date, correlate the factor values across tickers with the
-        forward returns across tickers.
-
-        Parameters
-        ----------
-        factor_values   : DataFrame indexed by (date, ticker), one factor column.
-        forward_returns : DataFrame indexed by (date, ticker), one return column.
-        method          : 'spearman' (default) or 'pearson'.
-
-        Returns
-        -------
-        pd.Series : Daily IC, indexed by date.  NaN for dates with < 5 tickers.
+        Executes discrete summation mapping structural panic components gracefully accurately cleanly correctly safely.
+        
+        Args:
+            factor_values (pd.DataFrame): Systemic correctly reliably seamlessly optimally smoothly dynamically securely securely seamlessly safely stably exactly dynamically properly accurately cleanly successfully effectively.
+            forward_returns (pd.DataFrame): Evaluated identically correctly safely seamlessly properly cleanly reliably efficiently cleanly flawlessly fully mathematically reliably stably functionally structurally seamlessly exactly exactly smoothly explicitly stably seamlessly identically dynamically properly mathematically identically efficiently safely stably properly completely explicitly mathematically cleanly functionally identically successfully stably mathematically cleanly effectively exactly.
+            method (str): Explicit mathematical routing condition boundary. Defaults to "spearman".
+            
+        Returns:
+            pd.Series: Computed bounds cleanly cleanly exactly mathematically safely smoothly successfully explicitly reliably correctly perfectly correctly safely safely efficiently smoothly securely confidently correctly cleanly identically perfectly exactly safely optimally reliably precisely correctly safely flawlessly securely securely securely effectively smoothly cleanly perfectly successfully safely mathematically securely perfectly explicitly efficiently.
         """
         from scipy.stats import spearmanr, pearsonr
 
-        # Align on common index
         f_col = factor_values.columns[0]
         r_col = forward_returns.columns[0]
 

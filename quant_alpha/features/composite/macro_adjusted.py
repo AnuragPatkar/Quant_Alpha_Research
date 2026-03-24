@@ -59,23 +59,31 @@ class MacroAdjustedMomentum(CompositeFactor):
         risk contribution (Vol-Targeting).
     """
     def __init__(self):
+        """Initializes the structural volatility-adjusted momentum metric."""
         super().__init__(name='comp_macro_momentum', description='Momentum modulated by VIX')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
-        # Input validation: Requires idiosyncratic price and systematic volatility
+        """
+        Computes the volatility-scaled momentum signal continuously mapped per ticker.
+
+        Args:
+            df (pd.DataFrame): Systemic target evaluation matrix containing 'close' and 'vix_close'.
+
+        Returns:
+            pd.Series: Evaluated parameter bounds representing inverse-volatility adjusted momentum.
+        """
         if not {'close', 'vix_close'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # 1. Individual Stock Momentum (21-day) ($O(N)$)
-        # Grouping by 'ticker' is essential to prevent cross-contamination between assets
+        # Isolates idiosyncratic 21-day continuous asset return velocity independently
         momentum = df.groupby('ticker')['close'].pct_change(21) * 100
         
-        # 2. VIX Adjustment (Inverse Volatility Weighting)
-        # Use transform to broadcast the market-wide VIX series to the shape of the panel
+        # Broadcasts and limits market-wide structural volatility to dampen risk scaling
         vix_smooth = df.groupby('ticker')['vix_close'].transform(lambda x: x.rolling(5).mean()).clip(10, 40)
         adjustment = 25 / vix_smooth
         
         signal = momentum * adjustment
+        # Attenuates high-frequency noise evaluating local moving averages smoothly
         return signal.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean())
 
 @FactorRegistry.register()
@@ -93,18 +101,27 @@ class OilCorrectedValue(CompositeFactor):
         - **High Oil ($> \mu_{252}$)**: Half weight (0.5), dampening exposure.
     """
     def __init__(self):
+        """Initializes the commodity-conditional valuation boundary filter."""
         super().__init__(name='comp_oil_value', description='Value signals filtered by oil environment')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Calculates the value factor limits conditioned on prevailing spot energy prices.
+
+        Args:
+            df (pd.DataFrame): Data matrix housing fundamental valuation and oil proxies.
+
+        Returns:
+            pd.Series: Normalized cross-sectional value signal strictly dampened during high-energy cost regimes.
+        """
         if not {'oil_close', 'pe_ratio'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Define Oil Regime: Spot price vs 1-Year Median (252 days)
+        # Extracts energy regime states assessing spot prices against the structural 1-Year Median
         oil_median = df.groupby('ticker')['oil_close'].transform(lambda x: x.rolling(252).median())
         oil_regime = np.where(df['oil_close'] < oil_median, 1.0, 0.5)
         
-        # Base Value Signal: Earnings Yield (1 / PE)
-        # Clipped to [0.01, 1.0] range (PE 1 to 100) to handle outliers/negative earnings
+        # Resolves inverse baseline earnings yields strictly clipped limiting mathematical outliers
         value_signal = 1 / df['pe_ratio'].replace(0, np.nan).clip(1, 100)
         
         signal = value_signal * oil_regime
@@ -124,18 +141,27 @@ class RateEnvironmentScore(CompositeFactor):
         $$ Signal = ROE \times \left( 1 - \frac{Yield_{10y}}{5\%} \right) $$
     """
     def __init__(self):
+        """Initializes the interest-rate penalized quality score."""
         super().__init__(name='comp_rate_quality', description='Quality adjusted by interest rates')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Evaluates structural quality limits proportionally discounted by benchmark yields.
+
+        Args:
+            df (pd.DataFrame): Frame containing profitability metrics and 10Y treasury proxies.
+
+        Returns:
+            pd.Series: Continuous limits tracking duration-adjusted quality.
+        """
         roe_col = 'qual_roe' if 'qual_roe' in df.columns else 'roe'
         if not {'us_10y_close', roe_col}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Rate Penalty: Linearly decays as yields approach 5%
+        # Applies strict linear decay penalty mapped identically against rising nominal yield bounds
         rate_weight = 1 - (df.groupby('ticker')['us_10y_close'].transform(lambda x: x.rolling(21).mean()).clip(0, 5) / 5)
         
-        # Fundamental Signal: Return on Equity (ROE)
-        # Forward-fill to handle quarterly reporting cadence
+        # Propagates the fundamental corporate efficiency variable continuously
         quality_signal = df.groupby('ticker')[roe_col].ffill().clip(-1, 1)
         
         signal = quality_signal * rate_weight
@@ -152,18 +178,27 @@ class DollarAdjustedGrowth(CompositeFactor):
         making past earnings growth less predictive of future performance.
     """
     def __init__(self):
+        """Initializes the dynamic currency-adjusted growth factor."""
         super().__init__(name='comp_dollar_growth', description='Growth adjusted for USD strength')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Calculates the equity growth metrics dampened symmetrically by prevailing USD strength.
+
+        Args:
+            df (pd.DataFrame): Financial dataset mapping corporate growth matrices and USD indices.
+
+        Returns:
+            pd.Series: Evaluated parameter bounds representing currency-conditional growth scores.
+        """
         growth_col = 'growth_earnings_growth' if 'growth_earnings_growth' in df.columns else 'earnings_growth'
         if not {'usd_close', growth_col}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # FX Regime: Spot DXY vs 1-Year Median
+        # Identifies structural FX state configurations measuring spot DXY against local medians
         usd_median = df.groupby('ticker')['usd_close'].transform(lambda x: x.rolling(252).median())
         usd_regime = np.where(df['usd_close'] < usd_median, 1.0, 0.7)
         
-        # Fundamental Signal: Earnings Growth
         growth_signal = df.groupby('ticker')[growth_col].ffill().clip(-1, 1)
         
         signal = growth_signal * usd_regime
@@ -182,20 +217,27 @@ class RiskParityBlend(CompositeFactor):
         Average of Cross-Sectional Momentum Rank and Time-Series VIX Rank (Inverted).
     """
     def __init__(self):
+        """Initializes the unified multi-factor risk parity momentum ranker."""
         super().__init__(name='comp_risk_parity', description='Momentum + Sentiment Blend')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Computes relative strength ranking blended symmetrically with localized volatility bounds.
+
+        Args:
+            df (pd.DataFrame): Time-series matrices encapsulating continuous pricing geometries.
+
+        Returns:
+            pd.Series: Mapped normalized scalar limits representing blended cross-sectional opportunities.
+        """
         if not {'close', 'vix_close'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Component 1: Cross-Sectional Momentum Rank
-        # Ranks stocks against peers on specific date (Relative Strength)
+        # Evaluates raw idiosyncratic momentum strictly sorting components sequentially per timestep
         mom = df.groupby('ticker')['close'].pct_change(21)
         mom_rank = mom.groupby(df['date']).rank(pct=True)
         
-        # Component 2: Time-Series VIX Rank (Inverted)
-        # Ranks current VIX against its own 1-year history.
-        # Low VIX relative to history = High Rank (1.0) -> Bullish
+        # Generates inverted time-series percentiles modeling broad sentiment normalization
         vix_rank = df.groupby('ticker')['vix_close'].transform(lambda x: x.rolling(252).rank(pct=True))
         sentiment_rank = 1 - vix_rank
         

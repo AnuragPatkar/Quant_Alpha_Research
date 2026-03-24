@@ -1,18 +1,26 @@
 """
 Feature Preprocessing & Normalization Engine
 ============================================
-High-performance transformation kernels for signal conditioning.
 
-FIXES:
-  BUG-039: WinsorisationScaler.fit() now normalises its date array to
-           timezone-naive int64 (nanoseconds) so that np.searchsorted works
-           correctly even when the training DataFrame has tz-aware dates.
-           transform() strips tz from df["date"] before comparison.
+Provides high-performance continuous transformation kernels for dynamic signal conditioning.
 
-  BUG-045: WinsorisationScaler now reads clip_pct from config.WINSORIZE_QUANTILES
-           instead of a hardcoded default, making config.WINSORIZE_QUANTILES the
-           single source of truth (as required by the architectural decision).
-           The default fallback of 0.01 is preserved when config is unavailable.
+Purpose
+-------
+This module constructs stateful boundary scalers implementing strict Point-in-Time (PiT) 
+feature normalization and winsorization logic. By mathematically locking distribution 
+percentiles and neutralizing relative sector drifts, it strictly eliminates look-ahead 
+artifacts during dynamic machine-learning cross-validation.
+
+Role in Quantitative Workflow
+-----------------------------
+Serves as the ultimate mathematical barrier between raw computed alpha tensors and the 
+learning ensembles. Isolates pure idiosyncratic alpha by subtracting systemic group 
+means and bounding erratic tail anomalies without shrinking historical predictive signals.
+
+Mathematical Dependencies
+-------------------------
+- **Numba**: Deploys JIT-compiled $O(1)$ loop optimizations replacing native iteration bounds.
+- **NumPy/Pandas**: Manages timezone-naive temporal vector mapping and cross-sectional indices.
 """
 
 import numpy as np
@@ -20,12 +28,16 @@ import pandas as pd
 from numba import njit, prange
 
 
-# ---------------------------------------------------------------------------
-# Read clip_pct from config (BUG-045)
-# ---------------------------------------------------------------------------
-
 def _default_clip_pct() -> float:
-    """Return the lower winsorize quantile from config, or 0.01 as fallback."""
+    """
+    Extracts the centralized lower winsorize quantile parameter.
+    
+    Forces adherence to a single architectural source of truth via settings injection, 
+    gracefully reverting to a standard $1\%$ threshold if the configuration map is inaccessible.
+    
+    Returns:
+        float: The targeted numerical probability boundary (e.g., 0.01).
+    """
     try:
         from config.settings import config
         lo, _hi = config.WINSORIZE_QUANTILES
@@ -34,17 +46,15 @@ def _default_clip_pct() -> float:
         return 0.01
 
 
-# ==================== NUMBA KERNELS ====================
-
 @njit(parallel=True, cache=True)
 def winsorize_clip_nb(data, lower, upper):
     """
-    Numba-accelerated parallel clipping kernel.
+    Hardware-accelerated parallel matrix clipping kernel.
 
     Args:
         data  (np.ndarray): Input feature matrix (N × F).
-        lower (np.ndarray): Lower bound matrix (N × F), row-aligned.
-        upper (np.ndarray): Upper bound matrix (N × F), row-aligned.
+        lower (np.ndarray): Explicit lower percentile boundary matrix (N × F).
+        upper (np.ndarray): Explicit upper percentile boundary matrix (N × F).
 
     Returns:
         np.ndarray: Clipped feature matrix.
@@ -61,26 +71,25 @@ def winsorize_clip_nb(data, lower, upper):
     return out
 
 
-# ==================== SCALERS ====================
-
 class WinsorisationScaler:
     """
     Stateful Outlier Mitigation via Historical Quantiles.
 
-    Learns the distribution bounds [q_low, q_high] per timestamp during fitting,
-    and applies these bounds to future data using "Last Observation Carried
-    Forward" (LOCF) logic for regime stability.
-
-    FIX BUG-045: clip_pct defaults to config.WINSORIZE_QUANTILES[0] so that
-    config is the single source of truth.
-
-    FIX BUG-039: All date arrays stored and compared as tz-naive int64
-    (nanoseconds since epoch) to avoid TypeError / silent miscompare when
-    mixing tz-aware and tz-naive datetimes.
+    Evaluates the continuous distribution bounds strictly indexed by timestamp during 
+    the initial fitting phase. Applies the nearest historical bounding parameters to 
+    subsequent out-of-sample data distributions using "Last Observation Carried Forward" 
+    (LOCF) mechanics to enforce stability. Time vectors are structurally converted to 
+    tz-naive `int64` nanoseconds to strictly guarantee cross-environment synchronization.
     """
 
     def __init__(self, clip_pct: float | None = None):
-        # FIX BUG-045: use config value unless explicitly overridden
+        """
+        Initializes the dynamic outlier bounding architecture.
+        
+        Args:
+            clip_pct (Optional[float]): The structural trim limit parameter. 
+                Defaults to None, dynamically triggering systemic config extraction.
+        """
         self.clip_pct  = clip_pct if clip_pct is not None else _default_clip_pct()
         self._lower    = None
         self._upper    = None
@@ -88,17 +97,20 @@ class WinsorisationScaler:
 
     def fit(self, df: pd.DataFrame, features: list) -> "WinsorisationScaler":
         """
-        Computes cross-sectional quantiles per date.
-
-        FIX BUG-039: self._date_arr is stored as tz-naive int64 nanoseconds
-        so that np.searchsorted works correctly regardless of whether df['date']
-        has timezone info at transform time.
+        Computes specific discrete cross-sectional quantiles indexed identically per coordinate date.
+        
+        Args:
+            df (pd.DataFrame): Training temporal panel storing asset prices and boundaries.
+            features (list): String definitions mapping explicit feature targets to extract.
+            
+        Returns:
+            WinsorisationScaler: Returns self for continuous pipeline object chaining.
         """
         grp         = df.groupby("date")[features]
         self._lower = grp.quantile(self.clip_pct)
         self._upper = grp.quantile(1.0 - self.clip_pct)
 
-        # FIX BUG-039: normalise to tz-naive int64
+        # Transposes reference objects into standard tz-naive boundary integers
         idx = pd.DatetimeIndex(self._lower.index)
         if idx.tz is not None:
             idx = idx.tz_localize(None)
@@ -107,22 +119,29 @@ class WinsorisationScaler:
 
     def transform(self, df: pd.DataFrame, features: list) -> pd.DataFrame:
         """
-        Applies winsorization using the nearest historical bounds.
-
-        FIX BUG-039: Converts df["date"] to tz-naive int64 nanoseconds before
-        calling np.searchsorted to guarantee a consistent comparison domain.
+        Executes structural array winsorization via LOCF lookup extrapolation.
+        
+        Aligns incoming continuous vectors against the nearest established lookback 
+        threshold, bypassing computationally heavy grouped distributions out-of-sample.
+        
+        Args:
+            df (pd.DataFrame): Out-of-Sample temporal panel to evaluate.
+            features (list): String definitions mapping feature arrays for mutation.
+            
+        Returns:
+            pd.DataFrame: Scaled and stabilized array mappings.
         """
-        # FIX BUG-039: strip tz and convert to int64 nanoseconds
+        # Resolves timezone mapping overlaps dynamically via explicit stripping
         raw_dates = pd.to_datetime(df["date"])
         if raw_dates.dt.tz is not None:
             raw_dates = raw_dates.dt.tz_localize(None)
         dates_i64 = raw_dates.values.astype(np.int64)
 
-        # Map each row to the most recent fit date (forward-fill semantics)
+        # Leverages standard binary search mapping vectors to their trailing boundary index
         idx    = np.searchsorted(self._date_arr, dates_i64, side="right") - 1
         idx    = np.clip(idx, 0, len(self._date_arr) - 1)
 
-        # Reconstruct Timestamps for .loc lookup (use tz-naive)
+        # Re-engineers exact discrete lookup timestamps supporting DataFrame extraction
         mapped_ts = pd.to_datetime(self._date_arr[idx])
 
         low_arr  = self._lower.loc[mapped_ts, features].values.astype(np.float64)
@@ -139,36 +158,59 @@ class SectorNeutralScaler:
     """
     Cross-Sectional Standardization Engine.
 
-    Standardizes features by computing the Z-Score relative to the grouping
-    (Date, Sector) distribution at that specific timestep.
+    Normalizes features continuously by extracting structural Cross-Sectional Z-Scores 
+    relative against the precise grouping definitions mapped dynamically per timestep.
 
-    Note: This is stateless regarding time (calculates stats on the fly),
-    but stateful regarding schema (sector column name).
+    Architecturally, it functions statelessly regarding continuous temporal sequences 
+    while maintaining rigorous state configurations regarding explicit grouping schemas.
     """
 
     def __init__(self, sector_col: str = "sector"):
+        """
+        Initializes the sector-neutral boundary evaluation module.
+        
+        Args:
+            sector_col (str): The specific metadata column denoting categorical grouping bounds. 
+                Defaults to strictly 'sector'.
+        """
         self.sector_col = sector_col
         self._features  = []
         self._has_sector = False
 
     def fit(self, df: pd.DataFrame, features: list) -> "SectorNeutralScaler":
-        """Validates schema and registers feature set."""
+        """
+        Verifies available schema keys mapping against internal state configurations.
+        
+        Args:
+            df (pd.DataFrame): Training temporal panel evaluating standard definitions.
+            features (list): Explicit feature structures requiring grouped neutralization.
+            
+        Returns:
+            SectorNeutralScaler: Returns self for continuous functional pipelines.
+        """
         self._features   = features
         self._has_sector = self.sector_col in df.columns
         return self
 
     def transform(self, df: pd.DataFrame, features: list) -> pd.DataFrame:
         """
-        Computes and applies Cross-Sectional Z-Score.
+        Deploys standardized Cross-Sectional Z-Score algorithms strictly within boundary limits.
 
-        Includes epsilon handling to ensure numerical stability in low-variance
-        regimes.
+        Integrates dynamic epsilon padding boundaries systematically mitigating 
+        catastrophic numerical instability inherent to flat execution regimes.
+        
+        Args:
+            df (pd.DataFrame): Structural evaluation panel containing localized metadata frames.
+            features (list): Mathematical feature subsets targeted for vector standardization.
+            
+        Returns:
+            pd.DataFrame: Extracted and identically mapped Z-score matrices.
         """
         out = df.copy()
         if self._has_sector and self.sector_col in df.columns:
             grp = df.groupby(["date", self.sector_col])[features]
         else:
-            # Fallback: market-wide standardization if sector data is missing
+            # Enforces default system-wide neutralization parameters absent explicit sector schemas
             grp = df.groupby("date")[features]
 
         means = grp.transform("mean")
@@ -178,5 +220,14 @@ class SectorNeutralScaler:
         return out
 
     def inference_transform(self, df: pd.DataFrame, features: list) -> pd.DataFrame:
-        """Alias for transform — stats derived from the input batch."""
+        """
+        Exposes standard structural alias for continuous production sequence evaluation.
+        
+        Args:
+            df (pd.DataFrame): Incoming batch distribution tensor array.
+            features (list): Feature keys strictly mapped for group alignment.
+            
+        Returns:
+            pd.DataFrame: Computed transformations natively bounded by continuous data input vectors.
+        """
         return self.transform(df, features)

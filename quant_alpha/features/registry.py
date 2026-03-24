@@ -39,9 +39,9 @@ class FactorRegistry:
     Registry Singleton for managing Factor lifecycles.
 
     Attributes:
-        _registered_classes (Dict): Class-level storage for registered types.
-        factors (Dict): Instance-level storage for initialized factor objects.
-        factor_config (Dict): Hyperparameters injected during initialization.
+        _registered_classes (Dict[str, Type[BaseFactor]]): Class-level storage for registered types.
+        factors (Dict[str, BaseFactor]): Instance-level storage for initialized factor objects.
+        factor_config (Dict[str, Any]): Hyperparameters injected during initialization.
     """
 
     _registered_classes: Dict[str, Type[BaseFactor]] = {}
@@ -77,7 +77,7 @@ class FactorRegistry:
 
     def _initialize_factors(self):
         """
-        Factory Method: Instantiates all registered factor blueprints.
+        Instantiates all registered factor blueprints mapping internal parameters.
 
         Iterates through the globally registered class blueprints, injects
         their respective configurations, and provisions them into the active
@@ -193,7 +193,8 @@ class FactorRegistry:
             logger.info("🔗 Merging features...")
             features_df = pd.concat(new_features, axis=1)
 
-            # Isolate and drop overlapping columns so new computations implicitly overwrite cached values
+            # Identifies overlapping keys explicitly tracking prior artifacts, dropping arrays 
+            # seamlessly to ensure identical parameters securely overwrite legacy extractions.
             overlap_cols = [c for c in features_df.columns if c in df.columns]
             if overlap_cols:
                 df = df.drop(columns=overlap_cols)
@@ -208,10 +209,10 @@ class FactorRegistry:
 
     def select_features(self, df: pd.DataFrame, threshold: float = 0.95) -> List[str]:
         """
-        Multicollinearity Filter: Prunes highly correlated features.
+        Filters highly correlated feature structures explicitly minimizing linear matrix redundancies.
 
-        Implements year-stratified sampling to prevent temporal contamination 
-        in correlation estimates across multi-year longitudinal panels.
+        Implements standard mathematical year-stratified sampling routines strictly bounded to prevent 
+        non-stationary temporal contamination explicitly bridging longitudinal parameters.
 
         Args:
             df (pd.DataFrame): The aggregated feature matrix.
@@ -228,7 +229,6 @@ class FactorRegistry:
 
         logger.info("🔍 Analyzing Feature Correlations...")
 
-        # Year-stratified sampling prevents temporal distribution bias during correlation estimation
         if len(df) > 100_000:
             if 'date' in df.columns:
                 years = df['date'].dt.year.unique()
@@ -248,7 +248,6 @@ class FactorRegistry:
                 )
                 corr_matrix = sample.corr().abs()
             else:
-                # Fallback purely to randomized structural boundaries for legacy frames
                 corr_matrix = (
                     df[factor_cols]
                     .sample(100_000, random_state=42)
@@ -258,7 +257,8 @@ class FactorRegistry:
         else:
             corr_matrix = df[factor_cols].corr().abs()
 
-        # Isolate the upper triangle to bypass strictly diagonal or duplicative pairings
+        # Isolates diagonal structures mapped directly extracting mathematical bounds bypassing 
+        # computationally repetitive overlapping arrays securely.
         upper = corr_matrix.where(
             np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
         )

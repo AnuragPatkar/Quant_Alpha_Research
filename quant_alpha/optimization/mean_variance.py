@@ -51,7 +51,12 @@ logger = logging.getLogger(__name__)
 
 
 def _get_available_solvers() -> List[str]:
-    """Return CVXPY solvers available in the current environment."""
+    """
+    Evaluates mathematical boundaries dynamically mapping internal CVXPY compiler dependencies.
+    
+    Returns:
+        List[str]: Sequence of directly accessible convex optimization backends.
+    """
     return cp.installed_solvers()
 
 
@@ -59,8 +64,11 @@ class MeanVarianceOptimizer:
     """Implementation of Markowitz portfolio optimization via convex programming."""
     def __init__(self, risk_aversion: float = 1.0):
         """
-        Initializes the optimizer. Market variables like risk_free_rate
-        are passed directly to the optimization methods to ensure dynamic fetching.
+        Initializes the explicit Mean-Variance limits mapped natively to CVXPY optimization logic.
+        
+        Args:
+            risk_aversion (float): Structural parameter ($\lambda$) weighting portfolio variance against gross returns. 
+                Defaults to 1.0.
         """
         self.risk_aversion = risk_aversion
 
@@ -70,8 +78,19 @@ class MeanVarianceOptimizer:
         covariance_matrix: pd.DataFrame
     ) -> Tuple[List[str], np.ndarray, np.ndarray, int]:
         """
-        Aligns and vectorizes input maps for linear algebra operations.
-        Pre-condition: Covariance matrix must be positive semi-definite (PSD).
+        Structurally aligns and standardizes internal tensors bridging covariance limits to returns.
+        
+        Constraint bound: Output covariance evaluation matrix must theoretically be positive semi-definite (PSD).
+        
+        Args:
+            expected_returns (Dict[str, float]): Forecast return map matching independent asset configurations.
+            covariance_matrix (pd.DataFrame): Primary dimensional constraint space matrix.
+            
+        Returns:
+            Tuple[List[str], np.ndarray, np.ndarray, int]: Sequenced tickers, extracted array vectors ($\mu, \Sigma$), and count bounds.
+            
+        Raises:
+            ValueError: If intersecting parameters result natively in empty dimension limits.
         """
         available_tickers = set(covariance_matrix.index) & set(covariance_matrix.columns)
         tickers = [t for t in expected_returns.keys() if t in available_tickers]
@@ -89,8 +108,19 @@ class MeanVarianceOptimizer:
 
     def _safe_normalize(self, optimized_w: np.ndarray, tickers: List[str]) -> Dict[str, float]:
         """
-        Extracts weights and enforces the simplex constraint $\sum w_i = 1$.
-        Filters numerical noise ($\epsilon < 1e-6$) and validates solver feasibility.
+        Filters continuous mathematical noise resolving rigid standard simplex limits ($\sum w_i = 1$).
+        
+        Systematically prunes allocation coordinates bound below standard epsilon numerical floors ($\epsilon < 1e-6$).
+        
+        Args:
+            optimized_w (np.ndarray): Direct structural optimization continuous mapping result.
+            tickers (List[str]): Sequence of dimensional target identities.
+            
+        Returns:
+            Dict[str, float]: Strictly validated positive limits correctly representing execution limits.
+            
+        Raises:
+            ValueError: When non-convergent structural gaps trigger mass scale infeasibility failures.
         """
         n = len(tickers)
         weight_dict = {
@@ -109,12 +139,17 @@ class MeanVarianceOptimizer:
 
     def _resolve_max_weight(self, n: int, constraints: Optional[Dict]) -> float:
         """
-        Dynamic Constraint Relaxation: Ensures the feasible set $\mathcal{F}$ is non-empty.
+        Executes dynamic mathematical constraint scaling guaranteeing structural continuous states $\mathcal{F}$ remain active.
         
-        Logic:
-        If $N \cdot w_{max} < 1$, the budget constraint $\sum w_i = 1$ strictly cannot be satisfied.
-        We enforce $w_i \le \max(w_{req}, 1/N)$ to guarantee solvability in small/concentrated
-        universes while respecting user intent where possible.
+        If $N \cdot w_{max} < 1$, the continuous matrix budget strictly prohibits optimal solutions.
+        This function mathematically extracts bounds $w_i \le \max(w_{req}, 1/N)$ enforcing optimization bounds.
+        
+        Args:
+            n (int): Cardinality vector defining absolute allocation states.
+            constraints (Optional[Dict]): Structural limit override mapping target constraints.
+            
+        Returns:
+            float: Valid upper limit boundary preserving simplex integrity calculations.
         """
         if constraints is None:
             requested = 1.0  # unconstrained: let optimizer decide freely
@@ -131,11 +166,19 @@ class MeanVarianceOptimizer:
         constraints: Optional[Dict] = None
     ) -> Dict[str, float]:
         """
-        Solves the Standard Mean-Variance Quadratic Program (QP).
+        Solves explicitly bounded Standard Mean-Variance configurations structurally evaluating a continuous Quadratic Program.
 
         .. math::
             \text{maximize} \quad \mu^T w - \lambda w^T \Sigma w \\
             \text{subject to} \quad \mathbf{1}^T w = 1, \quad w \ge 0, \quad w \le w_{max}
+            
+        Args:
+            expected_returns (Dict[str, float]): Targeted alpha boundary vectors ($\mu$).
+            covariance_matrix (pd.DataFrame): Systemic boundary limits mapping variance ($\Sigma$).
+            constraints (Optional[Dict]): Hard structural restrictions limiting algorithmic cardinality.
+            
+        Returns:
+            Dict[str, float]: Mapped portfolio definitions normalized across strict matrix constraints.
         """
         try:
             tickers, mu, Sigma, n = self._prepare_data(expected_returns, covariance_matrix)
@@ -154,7 +197,6 @@ class MeanVarianceOptimizer:
         if not constraints or not constraints.get('allow_short', False):
             constraints_list.append(w >= 0)
 
-        # Feasibility Guard: Ensure max_weight doesn't break sum(w)=1
         effective_max_w = self._resolve_max_weight(n, constraints)
         constraints_list.append(w <= effective_max_w)
 
@@ -184,7 +226,7 @@ class MeanVarianceOptimizer:
         """
         Direct Sharpe Ratio Maximization via Second-Order Cone Programming (SOCP).
 
-        Utilizes the **Charnes-Cooper transformation** to linearize the fractional objective:
+        Utilizes the structural Charnes-Cooper transformation to linearize fractional objective domains:
         Let $y = \kappa w$ where $\kappa > 0$.
 
         .. math::
@@ -192,7 +234,16 @@ class MeanVarianceOptimizer:
             \text{subject to} \quad y^T \Sigma y \le 1 \\
             \quad \mathbf{1}^T y = \kappa, \quad y \ge 0, \quad \kappa \ge 0
             
-        Recovered Weights: $w^* = y^* / \kappa^*$.
+        Final Result: $w^* = y^* / \kappa^*$.
+        
+        Args:
+            expected_returns (Dict[str, float]): Targeted execution vectors ($\mu$).
+            covariance_matrix (pd.DataFrame): Evaluated structural covariance definitions ($\Sigma$).
+            risk_free_rate (float): Absolute mathematical barrier for ratio limits ($r_f$).
+            constraints (Optional[Dict]): Internal overrides enforcing weight cardinality.
+            
+        Returns:
+            Dict[str, float]: The maximal distribution structure fully invested against strict probability limits.
         """
         try:
             tickers, mu, Sigma, n = self._prepare_data(expected_returns, covariance_matrix)
@@ -205,7 +256,6 @@ class MeanVarianceOptimizer:
 
         objective = cp.Maximize((mu - risk_free_rate) @ y)
 
-        # Feasibility Guard: Scale constraints by variable kappa
         effective_max_w = self._resolve_max_weight(n, constraints)
 
         constraints_list = [
@@ -218,11 +268,9 @@ class MeanVarianceOptimizer:
 
         prob = cp.Problem(objective, constraints_list)
 
-        # Solver Cascade Strategy:
-        # QCQP/SOCP problems require conic solvers. We attempt dispatch in order of reliability:
-        # 1. ECOS: Best for SOCP.
-        # 2. SCS: Robust first-order solver.
-        # 3. CLARABEL: Modern interior-point solver (CVXPY default).
+        # Initiates hierarchical Solver Cascade Strategy prioritizing precise QCQP/SOCP solutions.
+        # Attempts ordered structural dispatch (ECOS -> SCS -> CLARABEL) gracefully falling back 
+        # upon localized interior-point or cone numerical convergence failures.
         qcqp_solvers = ["ECOS", "SCS", "CLARABEL"]
         installed = _get_available_solvers()
         solver_chain = [s for s in qcqp_solvers if s in installed]

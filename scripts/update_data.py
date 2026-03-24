@@ -1,48 +1,27 @@
 """
-Incremental Data Ingestion Engine
-=================================
-Orchestrates the delta-update of the Data Lake, ensuring all financial datasets
-(Prices, Fundamentals, Earnings, Macro) remain synchronized with the latest
-market information.
+Data Ingestion & Maintenance Engine
+===================================
+
+Orchestrates the delta-update of the Data Lake, systematically ensuring all 
+financial datasets (Prices, Fundamentals, Earnings, Macro) remain synchronized 
+with the latest point-in-time market information.
 
 Purpose
 -------
-This module serves as the **Maintenance Layer** of the quantitative pipeline.
-It implements an "Update-in-Place" strategy to minimize bandwidth and processing
-overhead. Instead of full-reloads, it identifies stale or incomplete records
-and patches them incrementally, preserving existing history while appending
-new observations.
+This module serves as the quantitative pipeline's ingestion tier. It implements 
+an "Update-in-Place" strategy to minimize bandwidth overhead. Instead of full 
+reloads, it identifies stale records and patches them incrementally, preserving 
+historical persistence while appending forward-looking observations.
 
-Usage:
-------
-Executed via CLI as a scheduled cron job or ad-hoc update.
+Role in Quantitative Workflow
+-----------------------------
+Ensures strictly monotonic time-series data without gaps, which is critical 
+for accurate look-back window calculations (e.g., historical volatility).
 
-.. code-block:: bash
-
-    # 1. Full Synchronization (All Data Types)
-    python scripts/update_data.py
-
-    # 2. Specific Domain Update (e.g., Prices only)
-    python scripts/update_data.py --mode prices --workers 12
-
-    # 3. Deep Refresh of Fundamentals (Force check > 30 days)
-    python scripts/update_data.py --mode fundamentals --fund-days 30
-
-Importance
-----------
-- **Data Continuity**: Ensures strictly monotonic time-series data without gaps,
-  critical for accurate look-back window calculations (e.g., Volatility$_{60d}$).
-- **Bandwidth Optimization**: Reduces API load by $O(1)$ (fetching only delta)
-  rather than $O(T)$ (fetching full history).
-- **Error Resilience**: Implements granular error handling to prevent a single
-  failed ticker from aborting the entire batch process.
-
-Tools & Frameworks
-------------------
-- **Pandas**: Time-series alignment, deduplication, and Parquet/CSV I/O.
-- **YFinance**: Upstream data provider interface.
-- **ThreadPoolExecutor**: Parallel concurrency for I/O-bound network requests.
-- **Pathlib**: Object-oriented filesystem manipulation.
+Mathematical Dependencies
+-------------------------
+- **Pandas**: Time-series alignment, chronological deduplication, and 
+  cross-sectional merging.
 """
 
 import sys
@@ -66,10 +45,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config.settings import config
 from quant_alpha.utils import setup_logging
-# FIX BUG-093: bare "import download_data" only resolves when CWD=scripts/.
-# When run_pipeline.py invokes this as a subprocess, CWD is the project root
-# and "download_data" is not on sys.path -> ModuleNotFoundError.
-# Fix: explicitly add the scripts/ directory to sys.path before importing.
 
 # Explicit path injection required for subprocess execution where CWD defaults to project root
 _SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -116,7 +91,6 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
         
         df = df[pd.notna(df["date"])]
 
-        # Zero-Price Hygiene: Remove bankrupt/OTC artifacts (0.0 prices)
         # Stability Guard: Cleanses structural zeros indicative of OTC trading or bankrupt regimes to prevent downstream mathematical exceptions
         for col in ["close", "adj close"]:
             if col in df.columns:
@@ -131,7 +105,6 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
 
         # Temporal Gap Detection: Isolates historical deficiency bounds prior to requesting delta updates
         need_history = earliest_date > (required_start + timedelta(days=7))
-        # 2. Forward-fill: Missing recent data up to T-0.
         need_update = last_date < today
 
         if not need_history and not need_update:
@@ -140,7 +113,6 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
         dfs_to_merge = [df]
         data_added = False
 
-        # --- 1. Fetch Missing History ---
         if need_history:
             hist_data = yf.download(
                 ticker,
@@ -167,7 +139,6 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
                         dfs_to_merge.append(hist_data[common])
                         data_added = True
 
-        # --- 2. Fetch Recent Data ---
         if need_update:
             # Corporate Action Detection: Evaluates overlapping temporal windows to proactively detect unadjusted splits or dividends, forcing complete historical rebuilds if deviation thresholds are breached.
             fetch_start = last_date - timedelta(days=5)
@@ -192,7 +163,6 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
                         if col in new_data.columns:
                             new_data = new_data[new_data[col] > 0.0]
                     
-                    # Overlap validation
                     corporate_action = False
                     if "close" in df.columns and "close" in new_data.columns:
                         shared = pd.merge(df[["date", "close"]], new_data[["date", "close"]], on="date")
@@ -214,7 +184,6 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
                             dfs_to_merge.append(new_data[common])
                             data_added = True
                         
-        # Ensure full history is re-fetched if corporate action triggered a purge
         # Fallback Strategy: Executes an absolute historical reconstruction if the temporal overlap exposes unadjusted pricing drifts.
         if need_history and df.empty:
             hist_data = yf.download(ticker, start=str(required_start), end=str(today + timedelta(days=1)), auto_adjust=True, progress=False, threads=False)
@@ -232,7 +201,6 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
         if not data_added:
             return "uptodate"
 
-        # Merge Strategy: Concatenate -> Deduplicate on Date (keep new) -> Sort
         # Persistence Strategy: Concatenates, deduplicates preserving the latest payload, and forces strict chronological ordering
         full_df = (
             pd.concat(dfs_to_merge, ignore_index=True)
@@ -244,7 +212,6 @@ def _update_price_ticker(file_path: Path, today: date) -> str:
         return "updated"
 
     except Exception as e:
-        # Rate Limit Handling: Exponential backoff/jitter simulation if 429 encountered
         # Upstream Vendor Throttling: Employs stochastic backoff intervals dynamically triggered by 429 Rate Limit responses
         if "Rate limited" in str(e):
             time.sleep(random.uniform(2.0, 5.0))
@@ -323,15 +290,14 @@ def _fund_data_incomplete(ticker: str) -> bool:
             df = pd.read_csv(path, index_col=0)
             if df.empty:
                 return True
-            # Date Parsing: Columns represent fiscal period ends (e.g., "2019-09-28")
             
+            # Extracts sequential discrete temporal boundaries parsing fiscal period coordinates explicitly
             col_dates = pd.to_datetime(df.columns, errors="coerce").dropna()
             if col_dates.empty:
                 return True
             earliest = col_dates.min().date()
             
-            # Vendor Constraint: Yahoo Finance typically provides ~4 years of history.
-            # Heuristic: Consider data 'complete' if it extends back at least 3 years.
+            # Enforces standard temporal completeness heuristics strictly requiring a 3-year historical depth
             three_years_ago = datetime.now().date() - timedelta(days=365*3)
             if earliest > three_years_ago:
                 return True
@@ -342,11 +308,6 @@ def _fund_data_incomplete(ticker: str) -> bool:
 
 def update_fundamentals(workers: int = 4, stale_days: int = DEFAULT_FUND_DAYS) -> None:
     """
-    Orchestrator: Refresh fundamental data based on staleness criteria.
-    
-    Concurrency Note:
-        Worker count is intentionally throttled (default=4) to mitigate
-        HTTP 429/401 errors from the upstream provider.
     Orchestrates fundamental data refreshes based on dynamic staleness thresholds.
 
     Applies explicit concurrency throttling to prevent upstream session invalidation 
@@ -416,13 +377,12 @@ def _fetch_earnings_safe(ticker: str) -> str:
     """
     save_path = EARNINGS_DIR / f"{ticker}.csv"
     try:
-        # Direct property access (no retry wrapper)
         earnings = yf.Ticker(ticker).earnings_dates
 
         if earnings is None or earnings.empty:
             return f"⚠️  {ticker} (no data)"
 
-        # Normalization: Promote index to column, standardize naming conventions
+        # Promotes index to column and standardizes naming conventions
         earnings = earnings.reset_index()
         earnings = earnings.rename(columns={
             "Earnings Date": "date",
@@ -431,13 +391,13 @@ def _fetch_earnings_safe(ticker: str) -> str:
             "Surprise(%)":   "surprise_pct",
         })
 
-        # Timezone: Remove offsets for compatibility
+        # Removes timezone offsets ensuring mathematical compatibility
         earnings["date"] = pd.to_datetime(earnings["date"]).dt.tz_localize(None)
         earnings.to_csv(save_path, index=False)
         return f"✅ {ticker}"
 
     except KeyError:
-        # Vendor Quirk: yfinance raises KeyError for tickers with no earnings history
+        # Catches explicit KeyError raised natively for tickers devoid of earnings history
         return f"⚠️  {ticker} (no earnings data)"
     except Exception as e:
         log.debug(f"Earnings failed for {ticker}: {e}")
@@ -446,12 +406,6 @@ def _fetch_earnings_safe(ticker: str) -> str:
 
 def _earnings_needs_update(ticker: str) -> bool:
     """
-    Audit: Determines if the local earnings cache is actionable.
-    
-    Criteria:
-    1. File existence / integrity (size > 50 bytes).
-    2. Staleness: Contains future dates (upcoming earnings).
-    3. History: Contains at least 1 year of past data.
     Evaluates the temporal relevance of the local earnings event cache.
 
     Args:
@@ -471,11 +425,11 @@ def _earnings_needs_update(ticker: str) -> bool:
         dates = pd.to_datetime(df["date"]).dt.normalize().dt.tz_localize(None)
         today = pd.Timestamp.today().normalize()
 
-        # Check for future dates (if none, we need an update)
+        # Validates future projection coordinates to ensure upcoming fundamental events are cached.
         if dates[dates >= today].empty:
             return True
 
-        # Check for historical completeness
+        # Asserts historical dataset length strictly satisfies a minimum 1-year lookback boundary.
         if (today - dates.min()).days < 365:
             return True
 
@@ -485,7 +439,6 @@ def _earnings_needs_update(ticker: str) -> bool:
 
 
 def update_earnings(workers: int = 8) -> None:
-    """Orchestrator: Updates earnings records for tickers with missing or stale data."""
     """
     Orchestrates targeted retrieval of earnings distributions for stale universe components.
 
@@ -534,22 +487,14 @@ def update_earnings(workers: int = 8) -> None:
 # =========================================================
 def _update_macro_series(name: str, ticker: str, today: Optional[date] = None) -> str:
     """
-    Worker Task: Updates global macro-economic indicators.
-    Handles distinct data schema and source idiosyncrasies compared to equity tickers.
-    
     Retrieves and aligns global macroeconomic regime indicators.
 
     Args:
-        name: Canonical internal name (e.g., 'sp500', 'vix')
-        ticker: Yahoo Finance ticker (e.g., 'SPY', '^VIX')
-        today: Reference date for staleness check
-    
         name (str): Canonical internal name mapped to the indicator (e.g., 'sp500').
         ticker (str): Upstream symbol identifier (e.g., '^GSPC').
         today (Optional[date], optional): Reference threshold for staleness computation.
 
     Returns:
-        Status: 'updated', 'uptodate', or 'error'
         str: Status flag mapping to execution outcomes ('updated', 'uptodate', or 'error').
     """
     if today is None:
@@ -558,13 +503,12 @@ def _update_macro_series(name: str, ticker: str, today: Optional[date] = None) -
     try:
         csv_path = ALT_DIR / f"{name}.csv"
         
-        # Staleness Check
+        # Evaluates coordinate persistence determining structural staleness boundaries.
         if csv_path.exists() and csv_path.stat().st_size > 0:
             try:
                 df = pd.read_csv(csv_path)
                 
                 if len(df) > 0:
-                    # Parse the date column
                     date_col = 'date' if 'date' in df.columns else df.columns[0]
                     valid_dates = pd.to_datetime(df[date_col], errors='coerce').dropna()
                     
@@ -573,15 +517,13 @@ def _update_macro_series(name: str, ticker: str, today: Optional[date] = None) -
                         
                     last_date = valid_dates.max().date()
                     
-                    # Short-circuit if data is already current
+                    # Truncates execution instantly if local matrices satisfy current temporal boundaries.
                     if last_date >= today:
                         return "uptodate"
             except Exception as e:
                 log.warning(f"Could not parse {csv_path}: {e}")
         
-        # Fetch Strategy:
-        # 1. Try 'download_data' module (with retry logic).
-        # 2. Fallback to direct yfinance call.
+        # Dispatches prioritized retrieval mechanisms falling back gracefully to direct upstream queries.
         new_data = None
         
         if dd is not None:
@@ -607,7 +549,7 @@ def _update_macro_series(name: str, ticker: str, today: Optional[date] = None) -
             log.warning(f"No data received for {name}")
             return "error"
         
-        # Normalization
+        # Enforces normalized columnar architectures preventing downstream alignment failures.
         new_data = new_data.reset_index()
         new_data.columns = [str(col).lower().replace(' ', '_') for col in new_data.columns]
         
@@ -621,11 +563,11 @@ def _update_macro_series(name: str, ticker: str, today: Optional[date] = None) -
         if rename_map:
             new_data.rename(columns=rename_map, inplace=True)
             
-        # Timezone: Force naive
+        # Normalizes localized timezones enforcing naive limits for strict sequence merges.
         if 'date' in new_data.columns:
              new_data['date'] = pd.to_datetime(new_data['date']).dt.tz_localize(None)
         
-        # Persistence: Merge -> Deduplicate -> Save
+        # Concatenates historical and current data systematically eliminating duplicative boundaries.
         if csv_path.exists() and csv_path.stat().st_size > 0:
             try:
                 existing = pd.read_csv(csv_path)
@@ -638,7 +580,6 @@ def _update_macro_series(name: str, ticker: str, today: Optional[date] = None) -
             except Exception as e:
                 log.warning(f"Could not merge {name} data: {e}")
         
-        # Save to CSV
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         new_data.to_csv(csv_path, index=False)
         
@@ -650,7 +591,6 @@ def _update_macro_series(name: str, ticker: str, today: Optional[date] = None) -
 
 
 def update_macro() -> None:
-    """Orchestrator: Sequentially updates all defined macro-economic indicators."""
     """
     Sequentially updates systemic macroeconomic regime indicators.
 

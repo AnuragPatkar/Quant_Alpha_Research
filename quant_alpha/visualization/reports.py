@@ -1,15 +1,26 @@
 """
-quant_alpha/visualization/reports.py
-=======================================
 Backtest Reporting & Tearsheet Generation.
+=========================================
 
-This is the CORRECT location for reports.py per the project structure.
-The file at the project root (reports.py) was placed in the wrong directory
-and had a broken `from .utils import ...` relative import.
+Provides institutional-grade PDF tearsheet compilation for quantitative backtest results.
 
-Provides:
-  - generate_tearsheet()    : multi-page PDF tearsheet
-  - print_metrics_report()  : re-exported from backtest.metrics for convenience
+Purpose
+-------
+This module aggregates continuous equity trajectories, rolling drawdown profiles, 
+monthly regime heatmaps, and discrete performance metrics into a standardized, 
+publication-ready multi-page PDF report.
+
+Role in Quantitative Workflow
+-----------------------------
+Serves as the primary ex-post diagnostic output for the research and simulation 
+pipeline. Standardized tearsheets ensure objective evaluation and comparison 
+across diverse alpha strategies and parameter configurations.
+
+Mathematical Dependencies
+-------------------------
+- **Pandas/NumPy**: Vectorized time-series manipulations, expanding maximum arrays, 
+  and geometric return compounding.
+- **Matplotlib/Seaborn**: Static backend rendering for multi-axis PDF page assembly.
 """
 
 import numpy as np
@@ -22,7 +33,6 @@ from typing import Dict, Any, Optional
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.ticker import FuncFormatter
 
-# FIX: correct relative import — utils.py lives in the same visualization/ package
 from .utils import set_style, format_currency
 
 
@@ -31,19 +41,26 @@ def generate_tearsheet(
     save_path: str = "tearsheet.pdf",
 ) -> None:
     """
-    Compile a multi-page PDF tearsheet from backtest results.
+    Compiles a multi-page PDF performance tearsheet from simulation outputs.
 
-    Pages:
-    1. Equity Curve
-    2. Drawdown Profile
-    3. Monthly Returns Heatmap
-    4. Performance Metrics Summary
+    Constructs four standardized diagnostic visualizations:
+    1. Continuous Equity Curve tracking the geometric accumulation of capital.
+    2. Underwater Drawdown Profile mapping capital peak-to-trough regressions.
+    3. Calendar Heatmap mapping compounded monthly geometric returns.
+    4. Text-based Performance Metrics Summary table.
 
-    Parameters
-    ----------
-    results   : Dict returned by BacktestEngine.run().
-                Must contain 'equity_curve' and 'metrics'.
-    save_path : Output path (.pdf or .png).
+    Args:
+        results (Dict[str, Any]): The primary simulation output dictionary. Must contain:
+            - 'equity_curve': A pd.DataFrame with 'date' and 'total_value' columns.
+            - 'metrics': A dictionary mapping metric names to calculated scalar values.
+        save_path (str, optional): The filepath destination for the rendered PDF report. 
+            Defaults to "tearsheet.pdf".
+            
+    Returns:
+        None: Directly saves the generated PDF report to disk via the Matplotlib backend.
+        
+    Raises:
+        KeyError: If the 'equity_curve' matrix is missing from the results mapping.
     """
     set_style()
 
@@ -71,7 +88,10 @@ def generate_tearsheet(
         # --- Page 2: Drawdown ---
         fig, ax = plt.subplots(figsize=(10, 4))
         nav     = equity_df["total_value"]
+        # Computes the expanding High-Water Mark (HWM) boundary
         hwm     = nav.cummax()
+        # Resolves empirical drawdown fraction, injecting NaN substitution to strictly 
+        # prevent zero-division instability during potential initialization states
         dd      = (nav - hwm) / hwm.replace(0, np.nan)
         ax.fill_between(equity_df["date"], dd, 0, color="red", alpha=0.3)
         ax.plot(equity_df["date"], dd, color="red", linewidth=1)
@@ -84,6 +104,8 @@ def generate_tearsheet(
 
         # --- Page 3: Monthly Heatmap ---
         fig, ax = plt.subplots(figsize=(12, 6))
+        # Compounds granular daily geometric returns into discrete monthly buckets
+        # Formula: $R_{month} = \prod (1 + R_{daily}) - 1$
         monthly = returns_series.resample("ME").apply(
             lambda x: (1 + x).prod() - 1
         )

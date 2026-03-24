@@ -1,30 +1,26 @@
 """
-Alternative Data Factors (12 Total)
+Alternative Feature Engineering Subsystem
+=========================================
 
-Macro Factors (4):
-- OilMomentum: Oil price momentum (commodity cycle indicator)
-- USDStrength: USD index normalized strength (currency sentiment)
-- YieldTrend: 10Y yield trend (growth expectations)
-- MacroEconomicScore: Composite macro health (0-100)
+Provides structural extraction algorithms mapping non-equity macroeconomic, 
+sentiment, and inflationary signals into continuous cross-sectional alpha metrics.
 
-Sentiment Factors (4):
-- VIXLevel: Implied volatility absolute level (fear gauge)
-- VIXMomentum: Change in VIX (fear direction)
-- RiskOnOffSignal: Binary risk appetite signal
-- VolatilityStressIndex: Combined fear+stress (0-100)
+Purpose
+-------
+Aggregates exogenous data structures (Commodities, Treasuries, VIX, FX) 
+into mathematically normalized predictors, enabling regime-conditional modeling 
+and systematic risk overlay adjustments.
 
-Inflation Factors (4):
-- OilUSDRatio: Oil-USD ratio (inflation vs currency)
-- YieldMomentum: Rate of change in 10Y yields
-- InflationProxyScore: Combined oil+rates inflation signal (0-100)
-- GrowthInflationMix: Growth vs inflation balance
+Role in Quantitative Workflow
+-----------------------------
+Acts as the primary systematic overlay, injecting macroeconomic orthogonality 
+into traditional equity-centric factor ensembles. These signals help identify 
+structural regime shifts (e.g., Stagflation, Risk-Off capitulation).
 
-Total: 12 factors
-Inheritance: All inherit from AlternativeFactor
-Registration: All auto-registered via @FactorRegistry.register()
-Data Sources: OIL.csv, SP500.csv, VIX.csv, USD.csv, US_10Y.csv (5 macro/sentiment series)
-Frequency: Daily, 2000+ records each
-Focus: Macro momentum, sentiment extremes, inflation expectations
+Mathematical Dependencies
+-------------------------
+- **Pandas/NumPy**: Vectorized signal normalization, cross-asset correlations, 
+  and distributional Z-scoring.
 """
 
 from .macro import (

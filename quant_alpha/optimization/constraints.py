@@ -82,11 +82,13 @@ class PortfolioConstraints:
         sector_map: Optional[Dict[str, str]] = None,
     ):
         """
+        Initializes structural limits for dynamic boundary verification.
+        
         Args:
-            max_weight (float): Maximum allowed weight $w_{max}$ per asset ($0 < w_{max} \le 1$).
-            min_weight (float): Minimum weight threshold $w_{min}$; assets with $w_i < w_{min}$ are truncated to 0.
-            sector_limits (Optional[Dict]): Aggregate sector caps {sector: $L_{sector}$}.
-            sector_map (Optional[Dict]): Mapping from ticker to sector label.
+            max_weight (float): Maximum continuous allowed weight mapped per distinct independent asset. Defaults to 1.0.
+            min_weight (float): Discrete minimum weight threshold dictating explicit cardinality bounds. Defaults to 0.0.
+            sector_limits (Optional[Dict[str, float]]): Aggregate structural limit limits mapping sectors to exposure boundaries.
+            sector_map (Optional[Dict[str, str]]): Dimensional dictionary directly bounding independent sequences to structural sector bounds.
         """
         if not (0 < max_weight <= 1.0):
             raise ValueError(f"max_weight must be in (0, 1], got {max_weight}")
@@ -100,39 +102,43 @@ class PortfolioConstraints:
         self.sector_limits = sector_limits or {}
         self.sector_map = sector_map or {}
 
-    # ── Instance post-processing API ────────────────────────────────────── #
 
     def apply(self, weights: Dict[str, float]) -> Dict[str, float]:
         """
-        Sequentially enforces constraints on a weight vector via iterative projection.
+        Sequentially enforces bounding evaluation constraints mapping directly onto vector matrices utilizing discrete iterative projection.
 
         Args:
-            weights (Dict[str, float]): Input portfolio weights. Input need not sum to 1.0.
+            weights (Dict[str, float]): The absolute input distribution mappings dynamically processed.
 
         Returns:
-            Dict[str, float]: Normalized weights ($\sum w_i = 1.0$) adhering to all limits.
+            Dict[str, float]: Extracted allocation configurations bounding strictly normalized execution constraints.
         """
         if not weights:
             return {}
 
         w = dict(weights)
 
-        # Step 1: Cardinality Constraint (Min Weight Floor)
         if self.min_weight > 0:
             w = self._apply_min_weight(w)
 
-        # Step 2: Concentration Constraint (Max Weight Cap)
         if self.max_weight < 1.0:
             w = self._apply_max_weight(w)
 
-        # Step 3: Risk Bucket Constraint (Sector Limits)
         if self.sector_limits:
             w = self._apply_sector_limits(w)
 
         return w
 
     def _normalise(self, w: Dict[str, float]) -> Dict[str, float]:
-        """Renormalizes weights to satisfy the budget constraint $\sum w_i = 1.0$."""
+        """
+        Renormalizes evaluated weights dynamically strictly validating matrix execution probabilities sum identically to unified bounds.
+        
+        Args:
+            w (Dict[str, float]): Current array state map boundaries evaluated mathematically.
+            
+        Returns:
+            Dict[str, float]: Standardized proportional representation mappings.
+        """
         total = sum(w.values())
         if total <= 0:
             return w
@@ -140,12 +146,16 @@ class PortfolioConstraints:
 
     def _apply_min_weight(self, w: Dict[str, float]) -> Dict[str, float]:
         """
-        Truncates positions below `min_weight` and renormalizes.
-        Functions as a soft cardinality constraint.
+        Applies explicit dimensional restrictions mapping systemic truncation against standard discrete evaluation targets.
+        
+        Args:
+            w (Dict[str, float]): Evaluating proportional allocation structural values.
+            
+        Returns:
+            Dict[str, float]: Correctly mapped array filtered explicitly defining strictly valid probabilities.
         """
         filtered = {k: v for k, v in w.items() if v >= self.min_weight}
         if not filtered:
-            # Fallback: Retain the largest position if all are below floor to verify solvability.
             logger.warning(
                 "All assets below min_weight floor. Retaining the largest position."
             )
@@ -155,37 +165,34 @@ class PortfolioConstraints:
 
     def _apply_max_weight(self, w: Dict[str, float]) -> Dict[str, float]:
         """
-        Enforces upper bounds via Iterative Proportional Fitting.
+        Limits mathematical configurations mapping excessive relative weight metrics strictly applying Iterative Proportional Fitting.
         
-        Algorithm:
-        1. Identify assets exceeding $w_{max}$.
-        2. Clip to $w_{max}$.
-        3. Distribute excess weight proportionally to assets below $w_{max}$.
-        4. Repeat until convergence or max iterations.
+        Args:
+            w (Dict[str, float]): Structural array sequence configuration definitions.
+            
+        Returns:
+            Dict[str, float]: Rebalanced limits distributing parameters uniformly explicitly satisfying strict parameters.
         """
         cap = self.max_weight
         w = self._normalise(w)
 
-        for _ in range(200):           # max iterations (converges in O(n) in practice)
+        for _ in range(200):
             over  = {k: v for k, v in w.items() if v > cap + 1e-9}
             under = {k: v for k, v in w.items() if v <= cap + 1e-9}
 
             if not over:
-                break                   # Convergence reached
+                break
 
-            # Compute excess to redistribute
             excess = sum(v - cap for v in over.values())
             under_total = sum(under.values())
 
-            # Clamp over-weight assets
             for k in over:
                 w[k] = cap
 
-            # Redistribute excess proportionally
             if under_total > 1e-12:
                 scale = 1.0 + excess / under_total
                 for k in under:
-                    w[k] = min(w[k] * scale, cap)   # re-cap in same pass
+                    w[k] = min(w[k] * scale, cap)
 
             w = self._normalise(w)
 
@@ -193,12 +200,16 @@ class PortfolioConstraints:
 
     def _apply_sector_limits(self, w: Dict[str, float]) -> Dict[str, float]:
         """
-        Enforces aggregate sector caps via Iterative Redistribution.
-        Excess weight from sector $S$ is flowed to assets $\notin S$.
+        Extracts sector distribution mappings bounding relative overexposure strictly redistributing systemic probabilities identically.
+        
+        Args:
+            w (Dict[str, float]): Evaluated array dictionary sequences bounding current distributions.
+            
+        Returns:
+            Dict[str, float]: Systemic constraints mathematically conforming explicitly to configured matrices boundaries.
         """
         for _ in range(200):
             changed = False
-            # Compute current sector weights
             sector_totals: Dict[str, float] = {}
             for ticker, weight in w.items():
                 sector = self.sector_map.get(ticker, "__other__")
@@ -207,12 +218,11 @@ class PortfolioConstraints:
             for sector, limit in self.sector_limits.items():
                 total = sector_totals.get(sector, 0.0)
                 if total <= limit + 1e-9:
-                    continue  # already within limit
+                    continue
 
                 changed = True
                 excess = total - limit
 
-                # Scale down assets in this sector proportionally
                 sector_tickers = [
                     k for k in w if self.sector_map.get(k, "__other__") == sector
                 ]
@@ -220,7 +230,6 @@ class PortfolioConstraints:
                 for k in sector_tickers:
                     w[k] *= scale_down
 
-                # Redistribute excess to the rest of the universe
                 other_tickers = [
                     k for k in w if self.sector_map.get(k, "__other__") != sector
                 ]
@@ -236,26 +245,43 @@ class PortfolioConstraints:
 
         return w
 
-    # ── Static CVXPY factory API (original, fully preserved) ────────────── #
 
     @staticmethod
     def long_only(w: cp.Variable) -> List[cp.Constraint]:
         """
-        Constraint: $w_i \ge 0, \forall i$.
+        Constructs constraint boundary generating strictly non-negative variable mapping limits ($w_i \ge 0$).
+        
+        Args:
+            w (cp.Variable): Dynamic object target defining allocation variables mathematically.
+            
+        Returns:
+            List[cp.Constraint]: Strictly structured list array bounding explicit bounds execution parameters.
         """
         return [w >= 0]
 
     @staticmethod
     def fully_invested(w: cp.Variable) -> List[cp.Constraint]:
         """
-        Constraint: $\sum w_i = 1.0$.
+        Defines the fully invested probability constraint evaluating simplex mapping ($\sum w_i = 1.0$).
+        
+        Args:
+            w (cp.Variable): CVXPY mathematical assignment bounds dynamically tracking structural probabilities.
+            
+        Returns:
+            List[cp.Constraint]: Formulated list array strictly mapping parameters limits boundaries.
         """
         return [cp.sum(w) == 1.0]
 
     @staticmethod
     def dollar_neutral(w: cp.Variable) -> List[cp.Constraint]:
         """
-        Constraint: $\sum w_i = 0.0$ (Market Neutral).
+        Enforces Dollar Neutral parameter constraint ($\sum w_i = 0.0$).
+        
+        Args:
+            w (cp.Variable): Convex mapped continuous execution states strictly bounding internal variables.
+            
+        Returns:
+            List[cp.Constraint]: Resulting structural list mathematically executing precise continuous logic parameters.
         """
         return [cp.sum(w) == 0.0]
 

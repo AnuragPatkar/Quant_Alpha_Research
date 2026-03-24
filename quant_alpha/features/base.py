@@ -1,25 +1,19 @@
 """
 Base Factor Architecture
 ========================
-Abstract base classes defining the contract and lifecycle for all alpha factors.
+
+Abstract base classes defining the contract and strict lifecycle evaluation bounds for all alpha factors.
 
 Purpose
 -------
-This module establishes the **Template Method** design pattern for the feature engineering
-pipeline. It provides a robust, standardized execution flow for factor computation.
+This module establishes the mathematical **Template Method** design pattern mapping 
+the feature engineering pipeline. It guarantees robust, standardized execution 
+flows explicitly shielding mathematical states against out-of-sample leakage and 
+index misalignment.
 
-FIXES:
-  BUG-026: Removed full-panel winsorize() and cross_sectional_normalize() from
-           BaseFactor.calculate(). These create data leakage when called on the full
-           panel that includes test dates. Per-fold preprocessing is handled in
-           trainer.py via WinsorisationScaler (confirmed architectural decision).
-           Defaults changed to normalize=False, winsorize_flag=False.
-
-  BUG-029: Fixed mixed time.time() / time.perf_counter() — now uses perf_counter
-           consistently for accurate sub-second timing.
-
-  BUG-044: Fixed .values assignment that strips index. Now uses .reindex(data.index)
-           before .values to ensure correct row alignment when groupby re-orders.
+Mathematical Dependencies
+-------------------------
+- **Pandas/NumPy**: Index alignment manipulation and absolute NaN normalization vectors.
 """
 
 from abc import ABC, abstractmethod
@@ -39,14 +33,11 @@ class BaseFactor(ABC):
     Abstract base class implementing the Factor Lifecycle.
 
     This class dictates the skeleton of the algorithm (Template Method), delegating
-    the specific `compute` logic to subclasses.
-
-    NOTE on winsorize / normalize defaults:
-        Both default to False. Full-panel normalization creates data leakage when
-        compute_all() is called on the entire dataset (including test dates).
-        Per-fold preprocessing is handled by WinsorisationScaler in trainer.py.
-        If you explicitly set normalize=True / winsorize=True on a subclass, you
-        are responsible for ensuring only in-sample data is passed to compute_all().
+    the specific continuous `compute` logic mapping directly to subclasses.
+    
+    Forces default scaling bypass configurations (`normalize=False`, `winsorize=False`) 
+    strictly limiting full-panel distributional leakage. Downstream scalers inherently 
+    process these state thresholds distinctly.
     """
 
     def __init__(
@@ -55,11 +46,22 @@ class BaseFactor(ABC):
         category: str,
         description: str,
         lookback_period: Optional[int] = None,
-        # FIX BUG-026: Default both to False to prevent full-panel leakage.
         normalize: bool = False,
         winsorize: bool = False,
         fill_na: bool = True,
     ):
+        """
+        Initializes the abstract factor boundary states.
+        
+        Args:
+            name (str): Strict string identifier for the explicit factor parameter.
+            category (str): Topological grouping category (e.g., 'technical', 'fundamental').
+            description (str): Verbose documentation bounding exact mathematical extraction.
+            lookback_period (Optional[int]): Sequential tracking evaluation lengths. Defaults to None.
+            normalize (bool): Execution flag bounding standard cross-sectional Z-scoring. Defaults to False.
+            winsorize (bool): Execution flag triggering structural distribution trims. Defaults to False.
+            fill_na (bool): Limits null vectors casting natively back to 0. Defaults to True.
+        """
         self.name = name
         self.category = category
         self.description = description
@@ -81,30 +83,33 @@ class BaseFactor(ABC):
 
     def calculate(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Orchestrates the factor computation pipeline.
+        Orchestrates the rigid sequential factor computation pipeline limits.
 
         Pipeline Steps:
-        1. Validate: Check input schema integrity.
-        2. Compute: Execute subclass-specific logic via compute().
-        3. Align: Ensure output dimensions match input via reindex (not .values).
-        4. Sanitize: Clean infinite values; apply optional statistical transforms.
+        1. Validate: Asserts input matrix strict schema integrity.
+        2. Compute: Executes specialized subclass topology via compute().
+        3. Align: Enforces output sequence structural matches bypassing vector collisions.
+        4. Sanitize: Binds numeric boundaries eliminating infinite numerical evaluations.
+        
+        Args:
+            data (pd.DataFrame): Systemic raw market historical dataframe.
+            
+        Returns:
+            pd.DataFrame: Computed boundaries integrated cleanly with isolated factor limits.
         """
-        # FIX BUG-029: Use perf_counter consistently throughout.
+        # Records explicit fractional latency metrics evaluating processing optimizations
         start_time = time.perf_counter()
 
         try:
-            # Step 1: Validate input
             self._validate_input(data)
 
-            # Step 2: Compute raw factor
             factor_values = self.compute(data)
 
-            # Lightweight result container (avoid deep-copying full input DF)
             meta_cols = [c for c in ['date', 'ticker'] if c in data.columns]
             result = data[meta_cols].copy()
 
-            # FIX BUG-044: Use .reindex(data.index) before .values to maintain
-            # correct row alignment after groupby operations that may re-order rows.
+            # Enforces absolute dimensional alignment resolving potential index permutations 
+            # inherently shifted dynamically during cross-sectional dataframe grouping operators.
             if isinstance(factor_values, pd.Series):
                 result[self.name] = factor_values.reindex(data.index).values
             elif isinstance(factor_values, pd.DataFrame):
@@ -117,17 +122,13 @@ class BaseFactor(ABC):
                         factor_values.iloc[:, 0].reindex(data.index).values
                     )
             else:
-                # Numpy array — assume aligned to data.index (caller's responsibility)
                 result[self.name] = factor_values
 
-            # Step 3: Sanitize (Inf → NaN) BEFORE any statistical processing
+            # Systematically captures implicit zero-division remnants scaling inf values natively down to NaN limits
             col = result[self.name]
             if np.isinf(col).any():
                 result.loc[np.isinf(col), self.name] = np.nan
 
-            # Step 4: Optional transforms (only if explicitly enabled on subclass).
-            # NOTE: Both are False by default (BUG-026). Do not enable unless you
-            # are certain only in-sample data is flowing through this path.
             if self.winsorize_flag:
                 result = winsorize(result, [self.name])
 
@@ -137,11 +138,9 @@ class BaseFactor(ABC):
             if self.fill_na:
                 result[self.name] = result[self.name].fillna(0)
 
-            # Step 5: Validate output
             self._validate_output(result)
 
-            # Update statistics
-            self.computation_time = time.perf_counter() - start_time  # FIX BUG-029
+            self.computation_time = time.perf_counter() - start_time
             self.last_computed = datetime.now()
             self.num_computations += 1
 
@@ -154,14 +153,28 @@ class BaseFactor(ABC):
     @abstractmethod
     def compute(self, data: pd.DataFrame) -> pd.Series:
         """
-        Abstract method for factor logic. Subclasses implement the signal generation.
-        Must return a pd.Series with the same index as data.index.
+        Abstract topological mathematical interface bounding signal generation parameters.
+        
+        Args:
+            data (pd.DataFrame): Foundational executing variables mapping limits.
+            
+        Returns:
+            pd.Series: Extracted structural definitions strictly indexed symmetrically mapping limits.
         """
         pass
 
     # ==================== VALIDATION ====================
 
     def _validate_input(self, data: pd.DataFrame):
+        """
+        Strictly validates temporal intersection mapping execution boundaries.
+        
+        Args:
+            data (pd.DataFrame): Systemic input map bounds.
+            
+        Raises:
+            ValueError: If target schema permutations intrinsically omit date sequences.
+        """
         required_cols = ['date', 'ticker']
         missing_cols = [col for col in required_cols if col not in data.columns]
 
@@ -172,6 +185,15 @@ class BaseFactor(ABC):
             raise ValueError(f"Empty DataFrame provided to {self.name}")
 
     def _validate_output(self, result: pd.DataFrame):
+        """
+        Strictly verifies output dimensional arrays binding evaluated sequence lengths.
+        
+        Args:
+            result (pd.DataFrame): Symmetrically projected factor distribution sequences.
+            
+        Raises:
+            ValueError: If internal variable matrices failed explicit derivation rendering limits.
+        """
         if self.name not in result.columns:
             raise ValueError(f"Factor {self.name} failed to generate output column")
 
@@ -185,11 +207,13 @@ class BaseFactor(ABC):
 # ==================== SPECIALIZED SUBCLASSES ====================
 
 class TechnicalFactor(BaseFactor):
+    """Base subclass strictly targeting price-derived quantitative geometric extraction parameters."""
     def __init__(self, name: str, description: str, lookback_period: int, **kwargs):
         super().__init__(name, 'technical', description, lookback_period, **kwargs)
 
 
 class FundamentalFactor(BaseFactor):
+    """Base subclass mapping sparse quarterly and annual accounting metrics to structured time-series."""
     def __init__(self, name: str, description: str, **kwargs):
         super().__init__(
             name, 'fundamental', description,
@@ -202,16 +226,15 @@ class FundamentalFactor(BaseFactor):
 
     def _validate_input(self, data: pd.DataFrame):
         """
-        Override: Fundamental datasets often use wide formats or sparse indexing,
-        relaxing the strict (date, ticker) requirement found in time-series data.
+        Relaxes validation strictness supporting unstructured or categorical broad data bounds explicitly.
         """
         if data.empty:
             raise ValueError(f"Empty DataFrame provided to {self.name}")
 
 
 class EarningsFactor(BaseFactor):
+    """Base subclass explicitly mapping trailing structural consensus parameters and surprise beats."""
     def __init__(self, name: str, description: str, **kwargs):
-        # FIX BUG-026: normalize=False, winsorize=False (default) — per-fold only.
         super().__init__(
             name, 'earnings', description,
             lookback_period=None,
@@ -222,9 +245,8 @@ class EarningsFactor(BaseFactor):
 
 
 class AlternativeFactor(BaseFactor):
+    """Base subclass accommodating unstructured exogenous metric limits bridging non-standard datasets."""
     def __init__(self, name: str, description: str, **kwargs):
-        # Alternative/Macro data is often absolute (VIX, Sentiment) and does not
-        # require cross-sectional normalization.
         kwargs.setdefault('normalize', False)
         kwargs.setdefault('winsorize', False)
         super().__init__(name, 'alternative', description, lookback_period=None, **kwargs)
@@ -235,7 +257,7 @@ class AlternativeFactor(BaseFactor):
 
 
 class CompositeFactor(BaseFactor):
-    """Composite factors blend multiple signal types for regime-aware ranking strategies."""
+    """Base subclass structurally integrating distinct primitive limits enforcing conditional bounds."""
 
     def __init__(self, name: str, description: str, **kwargs):
         kwargs.setdefault('normalize', False)
@@ -244,8 +266,7 @@ class CompositeFactor(BaseFactor):
 
     def _validate_input(self, data: pd.DataFrame):
         """
-        Override: Composite calculations may involve heterogeneous data sources
-        (Macro + Ticker-level), requiring flexible validation.
+        Accommodates complex heterogeneous temporal bounds bounding integrated limits efficiently.
         """
         if data.empty:
             raise ValueError(f"Empty DataFrame provided to {self.name}")

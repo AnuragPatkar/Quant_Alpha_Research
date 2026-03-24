@@ -1,6 +1,7 @@
 """
 Mean Reversion Factors
 ======================
+
 Quantitative signals identifying "Overbought" and "Oversold" conditions relative to statistical central tendencies.
 
 Purpose
@@ -44,11 +45,7 @@ from ..registry import FactorRegistry
 from ..base import TechnicalFactor
 from quant_alpha.utils.column_helpers import safe_col
 
-EPS = 1e-9  # Machine epsilon for numerical stability
-
-# ==================== 1. DISTANCE FROM MOVING AVERAGES ====================
-# Metric: Percentage deviation from the trend line.
-# Formula: $$ D_t = \frac{P_t - MA_t}{MA_t} $$
+EPS = 1e-9
 
 @FactorRegistry.register()
 class DistSMA21D(TechnicalFactor):
@@ -58,11 +55,26 @@ class DistSMA21D(TechnicalFactor):
     Captures short-term mean reversion potential via percentage deviation.
     Formula: $$ D_t = \frac{P_t - \text{SMA}_{21}}{\text{SMA}_{21}} $$
     """
-    def __init__(self, period=21):
+    def __init__(self, period: int = 21):
+        """
+        Initializes the short-term deviation boundary matrix.
+        
+        Args:
+            period (int): Lookback parameter bounding the moving average. Defaults to 21.
+        """
         super().__init__(name='dist_sma_21d', description='Distance from 21D SMA', lookback_period=period + 5)
         self.period = period
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Calculates discrete spatial variations bounding historical prices relative to the structural trend.
+        
+        Args:
+            df (pd.DataFrame): Systemic raw historical execution limits.
+            
+        Returns:
+            pd.Series: Continuous distribution mapped identically across explicit execution targets.
+        """
         ma = df.groupby('ticker')['close'].transform(lambda x: x.rolling(window=self.period).mean())
         return (df['close'] - ma) / (ma + EPS)
 
@@ -74,11 +86,26 @@ class DistSMA50D(TechnicalFactor):
     Intermediate-term trend deviation.
     Formula: $$ D_t = \frac{P_t - \text{SMA}_{50}}{\text{SMA}_{50}} $$
     """
-    def __init__(self, period=50):
+    def __init__(self, period: int = 50):
+        """
+        Initializes the intermediate deviation limits.
+        
+        Args:
+            period (int): Lookback evaluation horizon. Defaults to 50.
+        """
         super().__init__(name='dist_sma_50d', description='Distance from 50D SMA', lookback_period=period + 5)
         self.period = period
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Computes strictly normalized mean-reversion potentials bounding historical trends.
+        
+        Args:
+            df (pd.DataFrame): Foundational evaluating bounds.
+            
+        Returns:
+            pd.Series: Evaluated parameter mapping sequence deviations.
+        """
         ma = df.groupby('ticker')['close'].transform(lambda x: x.rolling(window=self.period).mean())
         return (df['close'] - ma) / (ma + EPS)
     
@@ -93,17 +120,29 @@ class DistSMA200D(TechnicalFactor):
     
     Formula: $$ D_t = \frac{P_t - \text{SMA}_{200}}{\text{SMA}_{200}} $$
     """
-    def __init__(self, period=200):
+    def __init__(self, period: int = 200):
+        """
+        Initializes the institutional macro baseline.
+        
+        Args:
+            period (int): Structural baseline configuration limit. Defaults to 200.
+        """
         super().__init__(name='dist_sma_200d', description='Distance from 200D SMA', lookback_period=period + 5)
         self.period = period
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Quantifies macroscopic euphoric constraints bounded strictly by structural parameters.
+        
+        Args:
+            df (pd.DataFrame): Time-series matrix extraction limits.
+            
+        Returns:
+            pd.Series: Extracted structural deviation coordinates.
+        """
         ma = df.groupby('ticker')['close'].transform(lambda x: x.rolling(window=self.period).mean())
         return (df['close'] - ma) / (ma + EPS)
     
-# ================================ 2. Price Z-Scores ==============================
-# Metric: Standardized statistical deviation.
-# Formula: $$ Z_t = \frac{P_t - \mu_t}{\sigma_t} $$
 
 @FactorRegistry.register()
 class ZScore21D(TechnicalFactor):
@@ -113,13 +152,27 @@ class ZScore21D(TechnicalFactor):
     Measures how many standard deviations the current price is from its 21-day mean.
     Assumption: Short-term returns are normally distributed.
     """
-    def __init__(self, period=21):
+    def __init__(self, period: int = 21):
+        """
+        Initializes parametric standard score boundaries.
+        
+        Args:
+            period (int): Structural temporal extraction sequence. Defaults to 21.
+        """
         super().__init__(name='zscore_21d', description='Price Z-Score 21D', lookback_period=period + 5)
         self.period = period
 
-    def compute(self, df:pd.DataFrame) -> pd.Series:
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Extracts statistical variance evaluating bounded spatial limits continuously.
+        
+        Args:
+            df (pd.DataFrame): Bounding evaluation limits.
+            
+        Returns:
+            pd.Series: Cross-sectional spatial variances extracted safely.
+        """
         def calc_z(x):
-            # Z = (Value - Mean) / StdDev
             return (x - x.rolling(self.period).mean()) / (x.rolling(self.period).std() + EPS)
         return df.groupby('ticker')['close'].transform(calc_z)
     
@@ -130,16 +183,30 @@ class ZScore63D(TechnicalFactor):
     
     Measures quarterly mean reversion tendencies.
     """
-    def __init__(self, period=63):
+    def __init__(self, period: int = 63):
+        """
+        Initializes explicit long-term deviation matrices limits.
+        
+        Args:
+            period (int): The trailing lookback execution parameter. Defaults to 63.
+        """
         super().__init__(name='zscore_63d', description='Price Z-Score 63D', lookback_period=period + 5)
         self.period = period
  
-    def compute(self, df:pd.DataFrame) -> pd.Series:
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Calculates structurally bound normal limits assessing trailing parameters identically.
+        
+        Args:
+            df (pd.DataFrame): Matrix bounding limit structures.
+            
+        Returns:
+            pd.Series: Strictly distributed deviation sequences.
+        """
         def calc_z(x):
             return (x - x.rolling(self.period).mean()) / (x.rolling(self.period).std() + EPS)
         return df.groupby('ticker')['close'].transform(calc_z)      
 
-# ==================== 3. BOLLINGER BANDS (Mean Reversion Specific) ====================
 
 @FactorRegistry.register()
 class MeanRevBBPosition(TechnicalFactor):
@@ -153,19 +220,35 @@ class MeanRevBBPosition(TechnicalFactor):
     Formula:
     $$ \%B = \frac{Price - Lower}{Upper - Lower} $$
     """
-    def __init__(self, period=20,std=2):
+    def __init__(self, period: int = 20, std: float = 2.0):
+        """
+        Initializes geometric bounded bandwidth mapping configuration.
+        
+        Args:
+            period (int): Bounding simple moving average baseline length. Defaults to 20.
+            std (float): Boundary constraint weighting empirical distributions. Defaults to 2.0.
+        """
         super().__init__(name='mr_bb_pos', description='BB Position %B', lookback_period=period + 5)
         self.period = period
         self.std = std
     
-    def compute(self, df:pd.DataFrame)->pd.Series:
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Extracts absolute statistical boundary representations strictly projecting parameters structurally.
+        
+        Args:
+            df (pd.DataFrame): Evaluation spatial coordinates.
+            
+        Returns:
+            pd.Series: Scaled continuous representation of local bandwidth probabilities.
+        """
         def calc_bb(x):
             mean = x.rolling(self.period).mean()
             std = x.rolling(self.period).std()
             upper = mean + (self.std * std)
             lower = mean - (self.std * std)
             
-            # Scaling: Position within the bandwidth
+            # Systematically scales positional coordinates evaluating structural bandwidth boundaries
             return (x - lower) / ((upper - lower) + EPS)
         return df.groupby('ticker')['close'].transform(calc_bb)
 
@@ -179,23 +262,37 @@ class MeanRevBBWidth(TechnicalFactor):
     Formula:
     $$ Width = \frac{Upper - Lower}{Middle} $$
     """
-    def __init__(self, period=20, std=2):
+    def __init__(self, period: int = 20, std: float = 2.0):
+        """
+        Initializes the dynamic absolute variance scaler limit bounds.
+        
+        Args:
+            period (int): Length parameter defining structural standard distribution length. Defaults to 20.
+            std (float): Discrete multiplier isolating trailing spatial coordinates. Defaults to 2.0.
+        """
         super().__init__(name='mr_bb_width', description='BB Width', lookback_period=period + 5)
         self.period = period
         self.std = std
     
-    def compute(self, df:pd.DataFrame)->pd.Series:
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Evaluates raw standard deviations scaled linearly against median trend vectors securely.
+        
+        Args:
+            df (pd.DataFrame): Explicitly evaluating array parameter definitions.
+            
+        Returns:
+            pd.Series: Mapped strictly bounding variance limits mathematically.
+        """
         def calc_width(x):
             mean = x.rolling(self.period).mean()
             std = x.rolling(self.period).std()
             upper = mean + (self.std * std)
             lower = mean - (self.std * std)
             
-            # Normalized width relative to price level
             return (upper - lower) / (mean + EPS)
         return df.groupby('ticker')['close'].transform(calc_width)
 
-# ==================== 4. MA CROSSOVERS ====================
 
 @FactorRegistry.register()
 class MACrossover5_21(TechnicalFactor):
@@ -208,12 +305,28 @@ class MACrossover5_21(TechnicalFactor):
     Formula:
     $$ Spread = \frac{MA_{fast} - MA_{slow}}{MA_{slow}} $$
     """
-    def __init__(self, fast=5, slow=21):
+    def __init__(self, fast: int = 5, slow: int = 21):
+        """
+        Initializes dual sequence convergence tracking arrays.
+        
+        Args:
+            fast (int): The aggressive front-running sequence configuration length. Defaults to 5.
+            slow (int): The trailing structural baseline limit sequence. Defaults to 21.
+        """
         super().__init__(name='ma_cross_5_21', description='MA 5-21 Spread', lookback_period=slow + 5)
         self.fast = fast
         self.slow = slow
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Calculates temporal crossover variations measuring momentum decay dynamically.
+        
+        Args:
+            df (pd.DataFrame): Source matrices enforcing historical limits.
+            
+        Returns:
+            pd.Series: Divergence mappings cleanly extracted.
+        """
         ma_fast = df.groupby('ticker')['close'].transform(lambda x: x.rolling(window=self.fast).mean())        
         ma_slow = df.groupby('ticker')['close'].transform(lambda x: x.rolling(window=self.slow).mean())
         return (ma_fast - ma_slow) / (ma_slow + EPS)
@@ -226,17 +339,32 @@ class MACrossover21_63(TechnicalFactor):
     Intermediate-term divergence signal.
     Formula: $$ Spread = \frac{MA_{21} - MA_{63}}{MA_{63}} $$
     """
-    def __init__(self, fast=21, slow=63):
+    def __init__(self, fast: int = 21, slow: int = 63):
+        """
+        Initializes structural trailing macro crossover limits.
+        
+        Args:
+            fast (int): Lead moving execution bounds. Defaults to 21.
+            slow (int): Lag boundary mapping execution targets. Defaults to 63.
+        """
         super().__init__(name='ma_cross_21_63', description='MA 21-63 Spread', lookback_period=slow + 5)
         self.fast = fast
         self.slow = slow
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Extracts scaled differential structures tracking temporal macro overlaps.
+        
+        Args:
+            df (pd.DataFrame): Mathematical bounding arrays scaling sequences natively.
+            
+        Returns:
+            pd.Series: Linear distributions mapped identically.
+        """
         ma_fast = df.groupby('ticker')['close'].transform(lambda x: x.rolling(self.fast).mean())
         ma_slow = df.groupby('ticker')['close'].transform(lambda x: x.rolling(self.slow).mean())
         return (ma_fast - ma_slow) / (ma_slow + EPS)
 
-# ==================== 5. PRICE POSITION IN 52-WEEK RANGE ====================
 
 @FactorRegistry.register()
 class PriceToHighLow52W(TechnicalFactor):
@@ -252,11 +380,26 @@ class PriceToHighLow52W(TechnicalFactor):
     - 1.0: Trading at 52-Week High.
     - 0.0: Trading at 52-Week Low.
     """
-    def __init__(self, period=252):
+    def __init__(self, period: int = 252):
+        """
+        Initializes the spatial limits binding global statistical price arrays.
+        
+        Args:
+            period (int): Defines temporal bounds encapsulating empirical trading years. Defaults to 252.
+        """
         super().__init__(name='price_pos_52w', description='Position in 52W Range', lookback_period=period + 5)
         self.period = period
     
-    def compute(self, df:pd.DataFrame) -> pd.Series:
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Evaluates bounded percentage limits standardizing sequence price coordinates precisely.
+        
+        Args:
+            df (pd.DataFrame): Evaluating limits modeling execution targets natively.
+            
+        Returns:
+            pd.Series: Continuously mapped limits isolating distribution parameters cleanly.
+        """
         def calc_pos(group):
             high = safe_col(group, "high")
             low = safe_col(group, "low")
@@ -273,7 +416,6 @@ class PriceToHighLow52W(TechnicalFactor):
         pos_series = df.groupby('ticker', group_keys=False).apply(calc_pos, include_groups=False)
         return pos_series.fillna(0)
     
-# ==================== 6. CCI (Commodity Channel Index) ====================    
 
 @FactorRegistry.register()
 class CCI(TechnicalFactor):
@@ -286,35 +428,44 @@ class CCI(TechnicalFactor):
     Formula:
     $$ CCI = \frac{TP - SMA_{TP}}{0.015 \times \text{MeanDev}} $$
     """
-    def __init__(self, period=20):
+    def __init__(self, period: int = 20):
+        """
+        Initializes dynamic channel extraction algorithms.
+        
+        Args:
+            period (int): Length parameter limiting standard moving deviations. Defaults to 20.
+        """
         super().__init__(name='cci_20', description='Commodity Channel Index', lookback_period=period + 5)
         self.period = period
     
-    def compute(self, df:pd.DataFrame) -> pd.Series:
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Calculates strict oscillator boundaries explicitly evaluating statistical channel geometries.
+        
+        Args:
+            df (pd.DataFrame): Fundamental pricing frames structuring arrays strictly.
+            
+        Returns:
+            pd.Series: Continuous vector limits bounding dynamic variations uniformly.
+        """
         def calc_cci(x):
             high = safe_col(x, "high")
             low = safe_col(x, "low")
             if high.isna().all():
                 return pd.Series(np.nan, index=x.index)
 
-            # 1. Typical Price
             tp = (high + low + x['close']) / 3
             
-            # 2. SMA of Typical Price
             sma_tp = tp.rolling(self.period).mean()
 
-            # 3. Mean Deviation (MAD)
-            # MAD = Mean(|Price - SMA|)
-            # Note: apply() is O(N * W) which is slower than vectorized operations, but required for MAD.
+            # Extracts Mean Absolute Deviation utilizing localized applying mapping loops natively.
             def mad(a):
                 return np.mean(np.abs(a - np.mean(a)))
             
             mean_dev = tp.rolling(window=self.period).apply(mad, raw=True)
 
-            # 4. CCI Calculation (0.015 is Lambert's Constant)
             cci = (tp - sma_tp) / (mean_dev * 0.015 + EPS)
             return cci
-        # FutureWarning fix: Add include_groups=False to avoid including grouping columns
         return df.groupby('ticker', group_keys=False).apply(calc_cci, include_groups=False)
     
 

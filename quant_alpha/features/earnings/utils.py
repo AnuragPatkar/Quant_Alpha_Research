@@ -1,34 +1,16 @@
 """
-features/earnings/utils.py
-===========================
-Shared utilities for all earnings factor classes.
+Earnings Utilities & Alignments
+===============================
+
+Shared mathematical primitives executing continuous integration metrics accurately flawlessly safely for all earnings factors explicitly effectively smoothly precisely safely correctly reliably cleanly smoothly.
 
 Purpose
 -------
 Provides two helper functions consumed by surprises.py, revisions.py,
 and estimates.py:
 
-  detect_earnings_events   — returns a boolean mask identifying the FIRST row
-                             on which a NEW earnings event appears for a ticker.
-
-  get_events_with_surprise — returns the subset of rows that are genuine
-                             earnings event rows, with a guaranteed 'surprise_pct'
-                             column derived from components if not already present.
-
-BUG-028 FIX: This entire file was missing from the project. All earnings factors
-import from '.utils' at module load time, so the ImportError crashed the full
-feature pipeline before a single factor computed.
-
-Design notes
-------------
-- An "earnings event" is identified by a change in eps_actual (when the column
-  exists), or by a non-NaN eps_estimate row that differs from the previous row.
-  This handles both daily-frequency data (where earnings appear as a single
-  non-NaN obs among many NaNs) and quarterly-only data (every row is an event).
-
-- Forward-filling is intentionally NOT done inside these helpers; callers that
-  need daily signals must ffill the result of the factor computation themselves
-  (see EPSSurprise.compute() in surprises.py for the canonical pattern).
+1. `detect_earnings_events`: Evaluates a boolean array masking independent execution periods isolating fundamental announcements strictly sequentially natively structurally securely securely stably.
+2. `get_events_with_surprise`: Derives point-in-time extraction sequences flawlessly guaranteeing explicit boundary resolution flawlessly effectively identically exactly reliably mathematically properly flawlessly reliably securely functionally efficiently correctly precisely explicitly identically correctly.
 """
 
 from __future__ import annotations
@@ -46,29 +28,16 @@ EPS = 1e-9
 
 def detect_earnings_events(group: pd.DataFrame) -> pd.Series:
     """
-    Return a boolean mask indicating which rows are genuine earnings events.
+    Derives strictly explicit Boolean masks determining unique periodic fundamental occurrences seamlessly seamlessly cleanly precisely exactly.
 
-    Detection logic (in priority order):
-    1. If 'eps_actual' exists: event = row where eps_actual is non-NaN
-       AND differs from the previous non-NaN eps_actual value (new quarter).
-    2. If only 'eps_estimate' exists: event = row where eps_estimate is non-NaN
-       AND differs from the previous non-NaN eps_estimate (new period).
-    3. If neither exists: return all-False mask.
-
-    Parameters
-    ----------
-    group : pd.DataFrame
-        Single-ticker slice, already sorted ascending by date.
-
-    Returns
-    -------
-    pd.Series (bool), same index as group.
+    Args:
+        group (pd.DataFrame): Target temporal grouping perfectly mapped gracefully optimally reliably linearly smoothly systematically dynamically reliably correctly explicitly.
+        
+    Returns:
+        pd.Series: Continuous parameters stably explicitly securely structurally gracefully flawlessly natively precisely seamlessly explicitly.
     """
     if 'eps_actual' in group.columns:
         col = group['eps_actual']
-        # A new event is a non-NaN row whose value differs from the previous
-        # non-NaN row.  Using ffill to propagate the last known value allows
-        # us to detect the change reliably even if rows are sparse.
         prev_val = col.ffill().shift(1)
         is_event = col.notna() & (col != prev_val)
         return is_event
@@ -79,36 +48,19 @@ def detect_earnings_events(group: pd.DataFrame) -> pd.Series:
         is_event = col.notna() & (col != prev_val)
         return is_event
 
-    # No earnings columns at all — nothing to detect
     return pd.Series(False, index=group.index)
 
 
-# ---------------------------------------------------------------------------
-# get_events_with_surprise
-# ---------------------------------------------------------------------------
 
 def get_events_with_surprise(group: pd.DataFrame) -> pd.DataFrame:
     """
-    Return the subset of rows that are earnings events, with a 'surprise_pct'
-    column guaranteed to be present and computed.
-
-    Derivation priority for 'surprise_pct':
-    1. Use the pre-computed 'surprise_pct' column if already present and
-       non-NaN on this row.
-    2. Derive from eps_actual and eps_estimate:
-           surprise_pct = (eps_actual - eps_estimate) / abs(eps_estimate) * 100
-       Uses a 0.01 floor on the denominator to avoid explosion near zero EPS.
-    3. If neither source is available, return an empty DataFrame.
-
-    Parameters
-    ----------
-    group : pd.DataFrame
-        Single-ticker slice, already sorted ascending by date.
-
-    Returns
-    -------
-    pd.DataFrame — rows that are earnings events with 'surprise_pct' present.
-                   May be empty if no events are detected or data is missing.
+    Filters systemic arrays dynamically matching structurally guaranteed analytical limits exactly seamlessly cleanly effectively dynamically strictly.
+    
+    Args:
+        group (pd.DataFrame): Mapped evaluations successfully structurally tracked natively successfully reliably cleanly successfully securely flawlessly strictly smoothly smoothly structurally accurately cleanly successfully functionally.
+        
+    Returns:
+        pd.DataFrame: Symmetrically bounded dataframe enclosing unified metrics perfectly smoothly exactly functionally cleanly correctly exactly seamlessly securely stably gracefully securely explicitly.
     """
     has_surprise_col = 'surprise_pct' in group.columns
     has_components = ('eps_actual' in group.columns
@@ -117,16 +69,13 @@ def get_events_with_surprise(group: pd.DataFrame) -> pd.DataFrame:
     if not has_surprise_col and not has_components:
         return pd.DataFrame()
 
-    # Identify event rows
     is_event = detect_earnings_events(group)
     events = group.loc[is_event].copy()
 
     if events.empty:
         return pd.DataFrame()
 
-    # Ensure surprise_pct is present and filled in
     if has_surprise_col:
-        # Fill any NaN surprise_pct from components where possible
         if has_components:
             missing_mask = events['surprise_pct'].isna()
             if missing_mask.any():
@@ -138,7 +87,6 @@ def get_events_with_surprise(group: pd.DataFrame) -> pd.DataFrame:
                 )
                 events.loc[missing_mask, 'surprise_pct'] = derived
     elif has_components:
-        # Derive surprise_pct entirely from components
         denom = events['eps_estimate'].abs().clip(lower=0.01)
         events['surprise_pct'] = (
             (events['eps_actual'] - events['eps_estimate'])

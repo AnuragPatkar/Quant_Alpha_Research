@@ -3,6 +3,8 @@ Feature Engineering Validation Suite
 ====================================
 Comprehensive unit testing for the alpha factor library.
 
+Comprehensive unit testing framework for the quantitative alpha factor library.
+
 Purpose
 -------
 This module validates the mathematical correctness, numerical stability, and 
@@ -29,6 +31,10 @@ Tools & Frameworks
 ------------------
 - **Pytest**: Test runner and fixture management.
 - **Pandas/NumPy**: Vectorized calculation validation and synthetic data generation.
+Mathematical Dependencies
+-------------------------
+- **Pandas/NumPy**: Vectorized cross-sectional grouping and matrix transformations.
+- **SciPy**: Required for rolling statistical bounds and Z-score normalizations.
 """
 
 import pytest
@@ -81,9 +87,11 @@ def registry():
 
     Args:
         None
+        None: Executed implicitly by the Pytest test runner framework.
 
     Returns:
         FactorRegistry: The globally populated factor registry instance.
+        FactorRegistry: The globally populated factor registry instance containing all derived signals.
     """
     reg = FactorRegistry()
     assert len(reg.factors) > 0, (
@@ -100,6 +108,7 @@ def sample_market_data():
     Generates a deterministic Geometric Brownian Motion (GBM) dataset for 2 tickers.
     
     Ensures OHLC consistency:
+    Establishes strict cross-sectional boundaries and ensures OHLC consistency:
     $High \ge \max(Open, Close)$ and $Low \le \min(Open, Close)$.
     
     Used to validate cross-sectional logic and rolling window calculations.
@@ -173,6 +182,7 @@ class TestFeatures:
     def test_registry_discovery(self, registry):
         """
         Verifies that factors successfully self-register upon import.
+        Verifies that factors successfully self-register upon pipeline initialization.
         
         The registry must contain entries for all core factor categories 
         (Momentum, Volatility, Value).
@@ -182,6 +192,7 @@ class TestFeatures:
 
         Returns:
             None
+            None: Yields control back to the test runner via assertion boundaries.
         """
         registered = list(registry.factors.keys())
         assert len(registered) > 0, "Registry should not be empty after imports"
@@ -282,6 +293,7 @@ class TestFeatures:
     def test_robustness_to_missing_columns(self, registry):
         """
         Ensures graceful degradation or explicit failure when input data is malformed.
+        Ensures mathematical degradation or explicit failure when input matrices lack required schemas.
         
         The system should raise a `KeyError` or return `None`/Empty, but never silent failure.
 
@@ -310,6 +322,7 @@ class TestFeatures:
             result = factor.calculate(bad_data)
         except (KeyError, ValueError, AttributeError) as e:
             raised = True  # expected: factor detected missing column
+            raised = True
             raised = True  
 
         # Accept either: exception raised, OR result is None/empty

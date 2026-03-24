@@ -1,16 +1,17 @@
 """
 Kelly Criterion Portfolio Optimization
 ======================================
+
 Derives optimal position sizes to maximize the geometric growth rate of capital
 (Log-Utility Maximization).
 
 Purpose
 -------
-The `KellyCriterion` module implements a covariance-aware formulation of the
-Kelly Criterion. Unlike the simple "Edge/Odds" formula, this implementation
-solves a Quadratic Program (QP) to handle correlation structure between assets.
-It effectively maps to a Mean-Variance optimization problem where the risk
-aversion coefficient is the reciprocal of the Kelly fraction.
+This module implements a covariance-aware formulation of the Kelly Criterion. 
+Unlike the simple "Edge/Odds" formula, this implementation solves a Quadratic 
+Program (QP) to handle the correlation structure between assets. It effectively 
+maps to a Mean-Variance optimization problem where the risk aversion coefficient 
+is the reciprocal of the Kelly fraction.
 
 Usage
 -----
@@ -33,31 +34,10 @@ Importance
 -   **Edge Case Resilience**: Includes defensive fallbacks for non-positive
     excess return regimes (where the theoretical Kelly weight is zero).
 
-Tools & Frameworks
-------------------
+Mathematical Dependencies
+-------------------------
 -   **CVXPY**: Solves the constrained Quadratic Program (QP) for portfolio weights.
 -   **NumPy/Pandas**: Linear algebra for the heuristic fallback and data alignment.
-
-FIXES
------
-  BUG-078 (HIGH): calculate_portfolio() returned un-normalised weights in the
-           normal code path. The QP solver returns weights that sum to at most
-           max_leverage (e.g. 1.5), not to 1.0. The comment in the original
-           code said "remainder is cash" — but PortfolioAllocator and
-           BacktestEngine both expect weights summing to 1.0 (fully invested).
-           A portfolio summing to 0.7 was silently 30% in cash with no
-           indication to the caller.
-
-           Fix: after solving, normalise the weight vector so sum(w) == 1.0.
-           The Kelly fraction already controls aggressiveness via the QP
-           objective (risk_aversion = 1/fraction). Normalisation preserves
-           relative sizing while satisfying the contract.
-
-           If the caller genuinely wants a cash allocation, they must handle
-           it explicitly downstream — the weight dict contract is sum == 1.0.
-
-           The equal-weight fallback (line ~120) already returned sum == 1.0;
-           now the normal path matches.
 """
 
 import numpy as np
@@ -97,14 +77,18 @@ class KellyCriterion:
         use_solver: bool = True,
     ):
         """
+        Initializes the Kelly Criterion optimization module.
+
         Args:
-            fraction (float)   : Kelly multiplier f. Recommended: 0.25 <= f <= 0.5.
-                                 Controls aggressiveness of the QP objective.
-            max_leverage (float): Gross leverage constraint (sum of weights <= L)
-                                 used INSIDE the QP. Output weights are always
-                                 normalised to sum=1.0 after solving.
-            use_solver (bool)  : If True, uses CVXPY (QP). If False, uses the
-                                 unconstrained closed-form heuristic.
+            fraction (float): The fractional Kelly multiplier (f). Recommended range is 
+                between 0.1 and 0.5 to mitigate drawdown risks associated with "Full Kelly".
+            max_leverage (float): The gross leverage constraint (sum of weights <= L) 
+                enforced internally within the QP bounds.
+            use_solver (bool): If True, utilizes CVXPY to enforce constraints via QP. 
+                If False, applies an unconstrained closed-form optimization heuristic.
+                
+        Raises:
+            ValueError: If the provided Kelly fraction is less than or equal to zero.
         """
         if fraction <= 0:
             raise ValueError(
@@ -121,7 +105,20 @@ class KellyCriterion:
         expected_returns: Dict[str, float],
         covariance_matrix: pd.DataFrame,
     ) -> Tuple[List[str], np.ndarray, np.ndarray, int]:
-        """Aligns inputs to the intersection of tickers in returns and covariance."""
+        """
+        Aligns the expected returns vector and covariance matrix intersection.
+        
+        Args:
+            expected_returns (Dict[str, float]): Expected annualized returns mapped by ticker.
+            covariance_matrix (pd.DataFrame): Annualized asset covariance matrix.
+            
+        Returns:
+            Tuple[List[str], np.ndarray, np.ndarray, int]: The intersection of tickers, 
+                the returns array (mu), the covariance array (Sigma), and the asset count (n).
+                
+        Raises:
+            ValueError: If no common identifiers exist between expected returns and the covariance frame.
+        """
         available = set(covariance_matrix.index) & set(covariance_matrix.columns)
         tickers   = [t for t in expected_returns if t in available]
         n         = len(tickers)
@@ -138,10 +135,16 @@ class KellyCriterion:
 
     def _equal_weight_fallback(self, tickers: List[str]) -> Dict[str, float]:
         """
-        Maximum Entropy Fallback: used when the theoretical optimal allocation
-        is zero (all excess returns <= 0, i.e. full-cash regime).
-
-        Returns weights that sum to 1.0.
+        Generates a maximum entropy (equal weight) fallback allocation.
+        
+        Employed when the theoretical optimal allocation collapses to zero 
+        (e.g., during regimes where all forecasted excess returns are <= 0).
+        
+        Args:
+            tickers (List[str]): List of asset tickers to allocate.
+            
+        Returns:
+            Dict[str, float]: Equal-weighted allocation dictionary summing exactly to 1.0.
         """
         n = len(tickers)
         logger.warning(
@@ -156,17 +159,18 @@ class KellyCriterion:
         tickers: List[str],
     ) -> Dict[str, float]:
         """
-        Normalise raw QP / heuristic weights so they sum to 1.0.
-
-        FIX BUG-078: Kelly QP returns weights in [0, max_leverage]. Callers
-        (PortfolioAllocator, BacktestEngine) expect sum(w) == 1.0.
-        Zero-weight positions are dropped from the result dict.
-
-        Steps:
-        1. Clip to >= 0 (QP with non-negativity constraint should already do this,
-           but floating-point can produce tiny negatives).
-        2. If total weight is negligible, return equal-weight fallback.
-        3. Divide by sum to normalise.
+        Normalizes raw optimization output vectors to guarantee full investment.
+        
+        Mitigates floating-point inaccuracies introduced by the solver's 
+        non-negativity constraints, ensuring that downstream portfolio management 
+        modules map to a strictly fully invested assumption.
+        
+        Args:
+            raw_weights (np.ndarray): The unnormalized allocation vector from the optimizer.
+            tickers (List[str]): The corresponding list of asset tickers.
+            
+        Returns:
+            Dict[str, float]: A mapped dictionary of tickers to normalized, positive weights.
         """
         clipped = np.maximum(raw_weights, 0.0)
         total   = float(clipped.sum())
@@ -191,16 +195,12 @@ class KellyCriterion:
         Calculates the covariance-aware optimal Kelly allocation vector.
 
         Args:
-            expected_returns (Dict) : Expected annualized returns vector mu.
-            covariance_matrix (df)  : Annualized covariance matrix Sigma.
-            risk_free_rate (float)  : Annualized risk-free rate rf.
+            expected_returns (Dict[str, float]): Expected annualized returns mapped by asset.
+            covariance_matrix (pd.DataFrame): Annualized asset covariance matrix.
+            risk_free_rate (float): Annualized baseline risk-free rate mapping (rf).
 
-        Returns
-        -------
-        Dict[str, float]
-            Position weights that always sum to 1.0 (fully invested).
-
-        FIX BUG-078: Weights are normalised before returning so sum(w) == 1.0.
+        Returns:
+            Dict[str, float]: Optimal target position weights scaled out to sum to 1.0.
         """
         try:
             tickers, mu, Sigma, n = self._prepare_data(
@@ -214,9 +214,9 @@ class KellyCriterion:
 
         try:
             if self.use_solver:
-                # ---- Quadratic Programming Formulation ----
-                # maximize  w @ excess - 0.5 * (1/fraction) * w' * Sigma * w
-                # subject to  w >= 0,  sum(w) <= max_leverage
+                # Maps the Log-Utility maximization to a constrained Mean-Variance QP objective
+                # by assigning the risk aversion coefficient to the inverse of the Kelly fraction.
+                # Subject constraints: Weights must be >= 0 and capped by maximum strategy leverage.
                 w              = cp.Variable(n)
                 risk_aversion  = 1.0 / self.fraction
 
@@ -235,19 +235,18 @@ class KellyCriterion:
                 raw_weights = w.value
 
             else:
-                # ---- Heuristic Closed-Form ----
-                # w* = fraction * Sigma^{-1} * (mu - rf)
+                # Computes the unconstrained closed-form Kelly vector directly via the 
+                # Moore-Penrose pseudo-inverse, ensuring matrix stability under collinearity.
                 inv_sigma   = np.linalg.pinv(Sigma)
                 full_kelly  = inv_sigma @ excess_returns
                 raw_weights = full_kelly * self.fraction
-                # Apply leverage cap
+                
                 total = float(np.sum(np.maximum(raw_weights, 0.0)))
                 if total > self.max_leverage:
                     raw_weights = raw_weights * (self.max_leverage / total)
 
-            # FIX BUG-078: Normalise so sum(w) == 1.0.
-            # The Kelly fraction controls aggressiveness via the QP objective;
-            # normalisation preserves relative sizing.
+            # Translates relative position sizing dynamically computed by the Kelly bounds 
+            # to standard 1.0 normalization to satisfy capital execution assumptions.
             weight_dict = self._normalise_weights(raw_weights, tickers)
 
             logger.info(

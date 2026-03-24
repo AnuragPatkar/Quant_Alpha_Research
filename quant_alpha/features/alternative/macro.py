@@ -61,15 +61,23 @@ class OilMomentum(AlternativeFactor):
         - **Negative**: Weak demand (Recession) or Supply Glut (Deflation).
     """
     def __init__(self):
+        """Initializes continuous cross-asset fundamental velocity measurements safely."""
         super().__init__(name='alt_oil_momentum', description='Oil Price Momentum (21D)')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Calculates strict localized execution boundaries scaling sequential difference reliably.
+        
+        Args:
+            df (pd.DataFrame): Systemic target evaluation matrix encapsulating commodity derivatives.
+            
+        Returns:
+            pd.Series: Vectorized sequences structurally defining momentum perfectly efficiently.
+        """
         if 'oil_close' not in df.columns:
             return pd.Series(0, index=df.index)
         
-        # Calculate 21-day momentum (1 trading month).
-        # Smoothing: 5-day rolling mean to mitigate impact of spot price microstructure noise.
-        # FutureWarning fix: Use ffill() before pct_change() to handle NaN values properly.
+        # Evaluates 21-day continuous geometric change bounded safely by 5-day variance smoothing
         if 'ticker' in df.columns:
             momentum = df.groupby('ticker')['oil_close'].ffill().groupby(df['ticker']).pct_change(21) * 100
             return momentum.groupby(df['ticker']).transform(lambda x: x.rolling(window=5, min_periods=1).mean()).fillna(0)
@@ -92,19 +100,27 @@ class USDStrength(AlternativeFactor):
         - **Risk-Off Proxy**: USD often strengthens during global liquidity crunches.
     """
     def __init__(self):
+        """Initializes the spatial limits binding global statistical currency arrays."""
         super().__init__(name='alt_usd_strength', description='USD Index Strength (Normalized)')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Evaluates geometric bounds isolating fractional deviation from local macro centroids.
+        
+        Args:
+            df (pd.DataFrame): The base multi-asset execution matrix.
+            
+        Returns:
+            pd.Series: Continuous sequence cleanly mapping spatial divergence precisely.
+        """
         if 'usd_close' not in df.columns:
             return pd.Series(0, index=df.index)
         
-        # Mean-reversion signal: % Distance from 20-day Moving Average.
         if 'ticker' in df.columns:
             ma_20 = df.groupby('ticker')['usd_close'].transform(lambda x: x.rolling(window=20, min_periods=5).mean())
         else:
             ma_20 = df['usd_close'].rolling(window=20, min_periods=5).mean()
         
-        # Prevent division by zero with epsilon ($10^{-6}$)
         strength = ((df['usd_close'] - ma_20) / (ma_20.replace(0, np.nan) + 1e-6)) * 100
         return strength.fillna(0)
 
@@ -123,15 +139,22 @@ class YieldTrend(AlternativeFactor):
           Often implies flight-to-safety or economic cooling.
     """
     def __init__(self):
+        """Initializes dynamic interest-rate momentum mapping structures."""
         super().__init__(name='alt_yield_trend', description='10Y Yield Momentum (63D)')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Extracts structurally bounded normal limit trends assessing quarterly rate shifts.
+        
+        Args:
+            df (pd.DataFrame): Systemic raw historical execution matrices tracking benchmark bonds.
+            
+        Returns:
+            pd.Series: Extracted quarterly momentum vectors explicitly correctly.
+        """
         if 'us_10y_close' not in df.columns:
             return pd.Series(0, index=df.index)
         
-        # 63-day (approx. 1 quarter) percentage change in yields.
-        # This captures medium-term structural repricing of the bond market.
-        # FutureWarning fix: Use ffill() before pct_change() to handle NaN values properly.
         if 'ticker' in df.columns:
             yield_momentum = df.groupby('ticker')['us_10y_close'].ffill().groupby(df['ticker']).pct_change(63) * 100
         else:
@@ -153,22 +176,28 @@ class MacroEconomicScore(AlternativeFactor):
         - **Rising Yields ($+Z_{Yields}$)**: Indicative of "Risk-On" rotation from Bonds to Equities.
     """
     def __init__(self):
+        """Initializes multidimensional aggregation scoring macro velocity states safely."""
         super().__init__(name='alt_macro_score', description='Macroeconomic Health Score (0-100)')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Computes standardized structural index mappings bridging independent macro vectors uniformly.
+        
+        Args:
+            df (pd.DataFrame): Cross-asset matrix strictly containing energy, rates, and FX bases.
+            
+        Returns:
+            pd.Series: Continuous bounded limits tracking composite index structures explicitly.
+        """
         required = ['oil_close', 'usd_close', 'us_10y_close']
         if not all(col in df.columns for col in required):
             return pd.Series(50, index=df.index)
         
-        # --- Helper: Rolling Z-Score ---
-        # Normalizes inputs to standard deviations from a 1-year (252D) mean.
         def z_score(series, window):
-            # Added epsilon to standard deviation to prevent singularity in flat markets
             return (series - series.rolling(window, min_periods=21).mean()) / (series.rolling(window, min_periods=21).std() + 1e-6)
         
         if 'ticker' in df.columns:
             usd_z = df.groupby('ticker')['usd_close'].transform(lambda x: z_score(x, 252))
-            # FutureWarning fix: Use ffill() before pct_change() in transform lambdas.
             yield_z = df.groupby('ticker')['us_10y_close'].transform(lambda x: z_score(x.ffill().pct_change(63), 252))
             oil_z = df.groupby('ticker')['oil_close'].transform(lambda x: z_score(x.ffill().pct_change(21), 252))
         else:
@@ -176,14 +205,8 @@ class MacroEconomicScore(AlternativeFactor):
             yield_z = z_score(df['us_10y_close'].ffill().pct_change(63), 252)
             oil_z = z_score(df['oil_close'].ffill().pct_change(21), 252)
 
-        # --- Composite Calculation ---
-        # Logic: (Oil Z-Score) - (USD Z-Score) + (Yield Momentum Z-Score)
-        # Interpretation: Positive score implies a "Risk-On" / Reflationary environment.
         composite = (oil_z - usd_z + yield_z) / 3
         
-        # --- Scaling ---
-        # Transform Z-score to 0-100 scale.
-        # Center: 50. Slope: 15 (i.e., +1 Sigma ≈ 65, +2 Sigma ≈ 80).
         score = 50 + (composite * 15)
         
         return score.clip(lower=0, upper=100).fillna(50)

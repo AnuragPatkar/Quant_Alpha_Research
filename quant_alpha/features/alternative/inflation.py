@@ -59,18 +59,25 @@ class OilUSDRatio(AlternativeFactor):
         - **Negative**: Strengthening currency or falling energy costs (Deflationary Tailwind).
     """
     def __init__(self):
+        """Initializes continuous cross-asset limits modeling purchasing power dynamically."""
         super().__init__(name='alt_oil_usd_ratio', description='Oil-USD Ratio Inflation Signal')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Extracts absolute statistical boundary representations strictly evaluating real energy burdens.
+        
+        Args:
+            df (pd.DataFrame): Data matrix housing structural commodity and currency limits cleanly.
+            
+        Returns:
+            pd.Series: Normalized sequences bounding localized deviations smoothly efficiently.
+        """
         if not {'oil_close', 'usd_close'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Vectorized ratio calculation (Oil price in USD terms relative to DXY)
-        # Replace 0s to prevent DivisionByZero errors ($O(N)$)
+        # Calculates real energy cost vectors adjusting for local currency purchasing power explicitly
         ratio = df['oil_close'] / df['usd_close'].replace(0, np.nan)
         
-        # Normalization: Mean-reversion relative to a 1-year baseline (252 days).
-        # This identifies acute dislocations rather than long-term trends.
         if 'ticker' in df.columns:
             ratio_ma = ratio.groupby(df['ticker']).transform(lambda x: x.rolling(window=252, min_periods=63).mean())
             signal = (ratio / ratio_ma - 1) * 100
@@ -90,14 +97,22 @@ class YieldMomentum(AlternativeFactor):
         violent re-ratings in long-duration growth equities.
     """
     def __init__(self):
+        """Initializes parameters safely analyzing second-order derivative trajectories securely."""
         super().__init__(name='alt_yield_momentum', description='Yield Momentum (Growth Expectations)')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Computes localized temporal dependencies strictly mapping treasury yield shifts explicitly.
+        
+        Args:
+            df (pd.DataFrame): Evaluation dimensional limits exactly mapped strictly.
+            
+        Returns:
+            pd.Series: Vector parameters extracting exact macroeconomic expectation forces smoothly.
+        """
         if 'us_10y_close' not in df.columns:
             return pd.Series(np.nan, index=df.index)
         
-        # Calculate 21-day (approx. 1 trading month) percentage change in yields.
-        # FutureWarning fix: Use ffill() before pct_change() to handle NaN values properly.
         if 'ticker' in df.columns:
             momentum = df.groupby('ticker')['us_10y_close'].ffill().groupby(df['ticker']).pct_change(21) * 100
             return momentum.groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean()).fillna(0)
@@ -119,15 +134,23 @@ class InflationProxyScore(AlternativeFactor):
     Scale: 0-100 (50 = Neutral)
     """
     def __init__(self):
+        """Initializes composite weighting limits mathematically indexing inflation proxy variables safely."""
         super().__init__(name='alt_inflation_proxy', description='Inflation Proxy (0-100)')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Formulates weighted evaluation boundaries standardizing multi-variable inflation matrices natively.
+        
+        Args:
+            df (pd.DataFrame): Structural evaluating matrices mapping explicit boundaries efficiently.
+            
+        Returns:
+            pd.Series: Computed cleanly explicitly mapping scaled indices precisely securely.
+        """
         if not {'oil_close', 'us_10y_close'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # --- Component 1: Oil Momentum (Realized Cost Shock) ---
         if 'ticker' in df.columns:
-            # FutureWarning fix: Use ffill() before pct_change() to handle NaN values properly.
             oil_mom = df.groupby('ticker')['oil_close'].ffill().groupby(df['ticker']).pct_change(21).groupby(df['ticker']).transform(lambda x: x.rolling(5, min_periods=1).mean())
             y_min = df.groupby('ticker')['us_10y_close'].transform(lambda x: x.rolling(252, min_periods=63).min())
             y_max = df.groupby('ticker')['us_10y_close'].transform(lambda x: x.rolling(252, min_periods=63).max())
@@ -136,14 +159,10 @@ class InflationProxyScore(AlternativeFactor):
             y_min = df['us_10y_close'].rolling(252, min_periods=63).min()
             y_max = df['us_10y_close'].rolling(252, min_periods=63).max()
             
-        # Clip momentum to prevent outliers from dominating the score
         oil_score = (oil_mom * 100).clip(-50, 50) + 50 
         
-        # --- Component 2: Yield Range Position (Structural Expectations) ---
-        # Min-Max Scaling to [0, 100]
         yield_score = ((df['us_10y_close'] - y_min) / (y_max - y_min + 1e-6)) * 100
         
-        # Weighted Average: Heavy weight on Oil (0.6) as it impacts margins directly
         combined = (oil_score * 0.6 + yield_score * 0.4).clip(0, 100)
         return combined.fillna(np.nan)
 
@@ -160,14 +179,22 @@ class GrowthInflationMix(AlternativeFactor):
           implying margin compression and stubborn inflation.
     """
     def __init__(self):
+        """Initializes continuous structural spread normalization evaluating core correlations."""
         super().__init__(name='alt_growth_inflation_mix', description='Growth vs Inflation Balance')
     
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Calculates standardized statistical boundaries comparing independent rate-of-change maps structurally.
+        
+        Args:
+            df (pd.DataFrame): Target evaluation sequences mapping fundamental market assumptions natively.
+            
+        Returns:
+            pd.Series: Evaluated parameter representations precisely mapped cleanly securely correctly.
+        """
         if not {'us_10y_close', 'oil_close'}.issubset(df.columns):
             return pd.Series(np.nan, index=df.index)
         
-        # Calculate the rate of change spread: $\Delta Yields - \Delta Oil$
-        # FutureWarning fix: Use ffill() before pct_change() to handle NaN values properly.
         if 'ticker' in df.columns:
             growth_sig = df.groupby('ticker')['us_10y_close'].ffill().groupby(df['ticker']).pct_change(21)
             infl_sig = df.groupby('ticker')['oil_close'].ffill().groupby(df['ticker']).pct_change(21)
@@ -181,7 +208,6 @@ class GrowthInflationMix(AlternativeFactor):
             spread_mean = spread.rolling(63, min_periods=21).mean()
             spread_std = spread.rolling(63, min_periods=21).std()
         
-        # Standardization: Z-Score normalization to identify statistical extremes
         z_mix = (spread - spread_mean) / (spread_std + 1e-6)
         
         if 'ticker' in df.columns:

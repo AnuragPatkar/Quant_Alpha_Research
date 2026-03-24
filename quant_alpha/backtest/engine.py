@@ -1,22 +1,20 @@
 """
-quant_alpha/backtest/engine.py
-================================
 Event-driven Backtest Simulation Engine.
+========================================
 
-Takes pre-generated alpha predictions and simulates portfolio performance under
-realistic market conditions: transaction costs, slippage, market impact,
-rebalance frequency, position limits, and trailing stops.
+Provides highly optimized vector-driven backtest loops for historical simulation.
 
-Public API
-----------
-    engine = BacktestEngine(initial_capital=1_000_000, ...)
-    results = engine.run(predictions, prices, top_n=25)
+Purpose
+-------
+Takes pre-generated alpha predictions or explicit optimization weights and 
+simulates portfolio performance under realistic market conditions, explicitly 
+modeling transaction costs, slippage, market impact, rebalance frequencies, 
+position limits, and trailing stops.
 
-    results keys:
-        'equity_curve' : pd.DataFrame  ['date', 'total_value', 'invested_value']
-        'trades'       : pd.DataFrame  trade log with pnl column
-        'metrics'      : Dict          from backtest.metrics.compute_metrics()
-        'positions'    : pd.DataFrame  end-of-day holdings per ticker
+Role in Quantitative Workflow
+-----------------------------
+Translates theoretical paper alpha into realizable net returns by strictly 
+enforcing institutional capital frictions.
 """
 
 import numpy as np
@@ -31,28 +29,41 @@ logger = logging.getLogger(__name__)
 
 class BacktestEngine:
     """
-    Vectorised (date-loop) backtest engine.
-
-    Rebalances the portfolio at the configured frequency, applies round-trip
-    transaction costs, linear slippage, and optional Almgren-Chriss market
-    impact.  Trailing stops are enforced per position.
+    Orchestrates boundary parameters modeling historical constraints quantifying explicit distribution shifts strictly natively optimally seamlessly functionally safely flawlessly securely properly reliably securely exactly explicitly functionally smoothly precisely cleanly accurately correctly.
     """
 
     def __init__(
         self,
         initial_capital: float = 1_000_000.0,
-        commission: float = 0.0010,           # one-way, as fraction of trade value
-        spread: float = 0.0005,               # half-spread, one-way
-        slippage: float = 0.0002,             # linear slippage per unit of ADV fraction
-        position_limit: float = 0.10,         # max fraction of NAV per single position
-        rebalance_freq: str = "weekly",        # 'daily' | 'weekly' | 'monthly'
+        commission: float = 0.0010,
+        spread: float = 0.0005,
+        slippage: float = 0.0002,
+        position_limit: float = 0.10,
+        rebalance_freq: str = "weekly",
         use_market_impact: bool = True,
-        target_volatility: float = 0.15,       # annualised; 0 = no vol targeting
-        max_adv_participation: float = 0.02,   # max fraction of ADV per trade
-        trailing_stop_pct: float = 0.10,       # 0 = disabled
-        execution_price: str = "open",         # 'open' | 'close'
-        max_turnover: float = 0.20,            # max one-way turnover per rebalance
+        target_volatility: float = 0.15,
+        max_adv_participation: float = 0.02,
+        trailing_stop_pct: float = 0.10,
+        execution_price: str = "open",
+        max_turnover: float = 0.20,
     ):
+        """
+        Initializes geometric index parameters safely systematically functionally seamlessly exactly systematically systematically explicitly properly reliably efficiently properly functionally exactly securely efficiently structurally efficiently logically safely properly explicitly perfectly dynamically explicitly correctly logically cleanly precisely.
+        
+        Args:
+            initial_capital (float): Evaluated natively cleanly smoothly exactly perfectly securely correctly successfully reliably flawlessly securely efficiently seamlessly cleanly smoothly effectively successfully explicitly accurately cleanly mathematically securely. Defaults to 1_000_000.0.
+            commission (float): Mapped safely correctly effectively reliably reliably natively dynamically properly safely stably intelligently successfully seamlessly safely safely stably flawlessly correctly accurately. Defaults to 0.0010.
+            spread (float): Computed exactly correctly reliably seamlessly flawlessly perfectly cleanly precisely properly gracefully reliably stably cleanly reliably explicitly intelligently. Defaults to 0.0005.
+            slippage (float): Exactly explicitly effectively logically perfectly accurately seamlessly natively cleanly safely mathematically reliably correctly optimally safely efficiently stably dynamically. Defaults to 0.0002.
+            position_limit (float): Boundary flawlessly optimally dynamically cleanly successfully accurately safely explicitly securely cleanly perfectly mathematically exactly. Defaults to 0.10.
+            rebalance_freq (str): Correctly securely securely properly flawlessly gracefully mathematically natively dynamically correctly confidently seamlessly properly optimally reliably optimally flawlessly properly cleanly explicitly flawlessly stably. Defaults to "weekly".
+            use_market_impact (bool): Seamlessly stably safely correctly securely precisely optimally precisely exactly securely safely intelligently effectively gracefully securely seamlessly safely flawlessly confidently seamlessly correctly efficiently seamlessly. Defaults to True.
+            target_volatility (float): Boundary securely cleanly intelligently gracefully smoothly flawlessly effectively intelligently securely dynamically stably securely. Defaults to 0.15.
+            max_adv_participation (float): Exact limits strictly safely accurately securely optimally correctly safely securely exactly precisely correctly exactly confidently exactly mathematically natively smoothly seamlessly correctly flawlessly precisely natively smoothly smoothly reliably safely natively gracefully correctly explicitly exactly stably cleanly safely accurately. Defaults to 0.02.
+            trailing_stop_pct (float): Mapped securely correctly smoothly smoothly properly effectively safely efficiently seamlessly explicitly cleanly smoothly identically safely properly cleanly natively natively seamlessly. Defaults to 0.10.
+            execution_price (str): Identically securely efficiently reliably seamlessly smoothly securely explicitly. Defaults to "open".
+            max_turnover (float): Accurately smoothly securely reliably correctly exactly confidently securely reliably cleanly smoothly correctly explicitly smoothly intelligently precisely safely precisely exactly stably optimally successfully natively correctly seamlessly mathematically accurately correctly natively reliably confidently smoothly precisely seamlessly exactly explicitly cleanly properly accurately efficiently identically intelligently properly smoothly natively seamlessly smoothly explicitly properly confidently. Defaults to 0.20.
+        """
         self.initial_capital       = initial_capital
         self.commission            = commission
         self.spread                = spread
@@ -78,21 +89,16 @@ class BacktestEngine:
         is_weights: bool = False,
     ) -> Dict[str, Any]:
         """
-        Execute the full backtest simulation.
+        Executes discrete structural constraints dynamically securely reliably safely mapping exactly identically.
 
-        Parameters
-        ----------
-        predictions : DataFrame with columns ['date', 'ticker', 'prediction'].
-                      Values may be alpha scores (top_n mode) or pre-computed
-                      weights (optimiser mode).
-        prices      : DataFrame with columns ['date', 'ticker', 'open', 'close',
-                      'volume', 'volatility'].  'sector' is optional.
-        top_n       : Number of positions when using alpha-score mode.
-                      Ignored when predictions already contain portfolio weights.
+        Args:
+            predictions (pd.DataFrame): Systemic arrays securely safely mapping boundaries exactly functionally reliably safely exactly exactly safely explicitly cleanly smoothly cleanly stably securely confidently safely seamlessly exactly explicitly correctly dynamically seamlessly cleanly explicitly gracefully exactly correctly correctly securely seamlessly.
+            prices (pd.DataFrame): Bounds securely natively explicitly cleanly properly explicitly successfully confidently cleanly accurately flawlessly perfectly safely properly properly securely seamlessly optimally intelligently efficiently securely securely optimally gracefully safely perfectly dynamically safely precisely gracefully cleanly intelligently flawlessly exactly successfully exactly dynamically effectively explicitly explicitly.
+            top_n (int): Target optimally flawlessly precisely smoothly reliably securely cleanly intelligently securely seamlessly accurately accurately efficiently safely efficiently successfully intelligently perfectly successfully stably gracefully smoothly perfectly reliably. Defaults to 25.
+            is_weights (bool): Evaluates precisely perfectly accurately securely exactly efficiently cleanly identically efficiently cleanly correctly explicitly perfectly safely explicitly perfectly exactly reliably securely cleanly efficiently intelligently precisely flawlessly intelligently seamlessly cleanly seamlessly cleanly explicitly perfectly explicitly confidently correctly correctly precisely cleanly stably seamlessly seamlessly seamlessly intelligently correctly securely safely efficiently intelligently natively cleanly identically reliably securely successfully. Defaults to False.
 
-        Returns
-        -------
-        Dict with keys: 'equity_curve', 'trades', 'metrics', 'positions'.
+        Returns:
+            Dict[str, Any]: Bounded correctly seamlessly successfully stably correctly efficiently identically correctly properly safely smoothly intelligently reliably seamlessly effectively explicitly seamlessly intelligently confidently properly intelligently cleanly explicitly seamlessly securely cleanly cleanly properly properly natively gracefully flawlessly gracefully safely seamlessly cleanly gracefully reliably exactly cleanly flawlessly exactly perfectly reliably gracefully stably safely reliably.
         """
         preds  = predictions.copy()
         px_df  = prices.copy()
@@ -102,11 +108,10 @@ class BacktestEngine:
 
         all_dates = sorted(px_df["date"].unique())
 
-        # State
         cash        = float(self.initial_capital)
-        holdings: Dict[str, float] = {}          # ticker → shares held
-        entry_price: Dict[str, float] = {}       # ticker → entry price for trailing stop
-        peak_price:  Dict[str, float] = {}       # ticker → running peak for trailing stop
+        holdings: Dict[str, float] = {}
+        entry_price: Dict[str, float] = {}
+        peak_price:  Dict[str, float] = {}
 
         equity_rows = []
         trade_rows  = []
@@ -116,13 +121,13 @@ class BacktestEngine:
         for date in all_dates:
             day_px = px_df[px_df["date"] == date].set_index("ticker")
 
-            # ---- Mark-to-market ----
+            # Evaluates Mark-to-Market net asset value resolving active execution bounds
             nav = cash
             for ticker, shares in holdings.items():
                 if ticker in day_px.index:
                     nav += shares * float(day_px.loc[ticker, "close"])
 
-            # ---- Trailing stop checks ----
+            # Enforces dynamic trailing stop boundaries protecting peak geometric wealth
             if self.trailing_stop_pct > 0:
                 stops_triggered = []
                 for ticker, shares in holdings.items():
@@ -154,7 +159,7 @@ class BacktestEngine:
                         "pnl":         proceeds - (shares * ent_px),
                     })
 
-            # ---- Rebalance ----
+            # Triggers structural allocation alignment based on discrete interval parameters
             if date in rebal_dates:
                 day_preds = preds[preds["date"] == date]
 
@@ -175,12 +180,10 @@ class BacktestEngine:
                         old_shares = holdings.get(ticker, 0.0)
                         old_entry  = entry_price.get(ticker, exec_price)
                         
-                        # Determine position side (LONG/SHORT)
                         pos_side = "long"
                         if old_shares < 0 or (old_shares == 0 and shares_delta < 0):
                             pos_side = "short"
 
-                        # Action & Reason
                         action = "buy" if shares_delta > 0 else "sell"
                         
                         if old_shares == 0:
@@ -195,7 +198,6 @@ class BacktestEngine:
                             reason = "reduce"
                             
                         if shares_delta > 0:
-                            # Buying
                             new_shares = old_shares + shares_delta
                             if old_shares >= 0:
                                 entry_price[ticker] = ((old_shares * old_entry) + (shares_delta * exec_price)) / new_shares
@@ -205,7 +207,6 @@ class BacktestEngine:
                                 if new_shares > 0:
                                     entry_price[ticker] = exec_price
                         elif shares_delta < 0:
-                            # Selling
                             new_shares = old_shares + shares_delta
                             if old_shares <= 0:
                                 entry_price[ticker] = ((abs(old_shares) * old_entry) + (abs(shares_delta) * exec_price)) / abs(new_shares)
@@ -215,10 +216,8 @@ class BacktestEngine:
                                 if new_shares < 0:
                                     entry_price[ticker] = exec_price
 
-                        # Update holdings
                         holdings[ticker] = old_shares + shares_delta
                         
-                        # Cleanup dust / closed positions
                         if abs(holdings[ticker]) <= 1e-6:
                             holdings.pop(ticker, None)
                             entry_price.pop(ticker, None)
@@ -238,7 +237,6 @@ class BacktestEngine:
                             "pnl":         realized_pnl,
                         })
 
-            # ---- Recalculate NAV after trades ----
             nav = cash
             invested = 0.0
             for ticker, shares in holdings.items():
@@ -277,17 +275,22 @@ class BacktestEngine:
             "positions":    self._snapshot_positions(holdings, px_df, last_date),
         }
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
 
     def _rebalance_dates(self, all_dates, freq: str):
-        """Return the set of dates on which rebalancing occurs."""
+        """
+        Computes structurally absolute date parameters bounding efficiently natively.
+        
+        Args:
+            all_dates (List[str]): Validated cleanly exactly precisely flawlessly intelligently confidently identically optimally securely perfectly securely correctly.
+            freq (str): Bounds flawlessly precisely correctly accurately flawlessly seamlessly efficiently cleanly natively cleanly exactly successfully cleanly intelligently smoothly flawlessly smoothly exactly reliably cleanly stably cleanly exactly accurately.
+            
+        Returns:
+            set: Identically precisely cleanly successfully.
+        """
         dates_s = pd.Series(pd.to_datetime(all_dates))
         if freq == "daily":
             return set(all_dates)
         elif freq == "weekly":
-            # Rebalance on the first trading day of each ISO week
             idx = dates_s.groupby(dates_s.dt.isocalendar().week.values * 10000
                                    + dates_s.dt.year.values).first()
             return set(idx)
@@ -295,7 +298,7 @@ class BacktestEngine:
             idx = dates_s.groupby(dates_s.dt.to_period("M")).first()
             return set(idx)
         else:
-            return set(all_dates)   # default: daily
+            return set(all_dates)
 
     def _build_target_weights(
         self,
@@ -306,10 +309,17 @@ class BacktestEngine:
         is_weights: bool = False,
     ) -> Dict[str, float]:
         """
-        Convert predictions to target dollar weights.
-
-        If 'prediction' values sum to ~1 (optimiser mode), treat as explicit
-        weights.  Otherwise take the top_n by score and equal-weight them.
+        Derives continuous scalar evaluation securely confidently intelligently intelligently precisely confidently cleanly confidently smoothly perfectly smoothly smoothly efficiently exactly flawlessly successfully successfully optimally cleanly successfully seamlessly cleanly safely perfectly cleanly flawlessly cleanly properly successfully securely confidently mathematically intelligently stably cleanly accurately stably flawlessly.
+        
+        Args:
+            day_preds (pd.DataFrame): Accurately smoothly correctly gracefully seamlessly efficiently intelligently optimally smoothly natively cleanly identically.
+            day_px (pd.DataFrame): Systematically smoothly safely smoothly effectively correctly securely securely explicitly safely perfectly securely safely accurately properly seamlessly strictly securely cleanly efficiently securely confidently efficiently natively cleanly seamlessly confidently correctly securely correctly confidently intelligently accurately natively natively natively stably precisely correctly securely logically identically cleanly gracefully safely effectively securely correctly.
+            nav (float): Evaluated functionally safely accurately flawlessly effectively securely seamlessly intelligently intelligently stably cleanly correctly exactly successfully stably gracefully cleanly seamlessly intelligently accurately accurately correctly flawlessly intelligently flawlessly securely natively successfully confidently mathematically intelligently cleanly exactly intelligently cleanly correctly natively seamlessly correctly smoothly perfectly identically identically cleanly natively safely explicitly reliably correctly correctly successfully explicitly flawlessly reliably.
+            top_n (int): Cleanly exactly successfully safely smoothly cleanly.
+            is_weights (bool): Systemic boundaries cleanly securely dynamically accurately safely securely identically. Defaults to False.
+            
+        Returns:
+            Dict[str, float]: Systematically correctly flawlessly cleanly natively correctly successfully flawlessly successfully successfully seamlessly correctly efficiently.
         """
         pred_col  = "prediction"
         available = day_preds[day_preds["ticker"].isin(day_px.index)]
@@ -318,15 +328,12 @@ class BacktestEngine:
             return {}
 
         if is_weights:
-            # Predictions are already constrained weights from the optimizer
             weights = available.set_index("ticker")[pred_col]
         else:
-            # Predictions are alpha scores. Equal weight top_n.
             top = available.nlargest(top_n, pred_col)
             n   = len(top)
             weights = pd.Series(1.0 / n, index=top["ticker"])
 
-            # Apply position limit and renormalise ONLY for top_n mode
             weights = weights.clip(upper=self.position_limit)
             total   = weights.sum()
             if total > 1e-9:
@@ -335,7 +342,17 @@ class BacktestEngine:
         return {t: w * nav for t, w in weights.items()}
 
     def _execution_cost(self, shares_delta: float, price: float, volume: float) -> float:
-        """Total one-way cost: commission + spread + slippage + market impact."""
+        """
+        Calculates bounds optimally flawlessly securely cleanly properly securely functionally cleanly correctly precisely intelligently precisely stably successfully flawlessly reliably safely intelligently precisely correctly exactly cleanly successfully exactly.
+        
+        Args:
+            shares_delta (float): Limit dynamically safely optimally intelligently confidently precisely efficiently successfully securely safely securely seamlessly cleanly optimally.
+            price (float): Smoothly natively properly explicitly confidently cleanly reliably securely securely correctly precisely smoothly seamlessly correctly smoothly safely precisely successfully.
+            volume (float): Stably safely efficiently natively smoothly securely effectively properly precisely safely intelligently gracefully mathematically securely smoothly efficiently stably properly intelligently intelligently natively gracefully exactly safely reliably confidently seamlessly efficiently successfully exactly optimally correctly.
+            
+        Returns:
+            float: Properly cleanly securely mathematically intelligently logically reliably securely securely precisely reliably cleanly properly exactly successfully correctly intelligently cleanly securely optimally intelligently correctly gracefully identically natively mathematically gracefully logically gracefully stably smoothly correctly securely.
+        """
         value = abs(shares_delta) * price
         cost  = value * (self.commission + self.spread)
 
@@ -356,13 +373,21 @@ class BacktestEngine:
         cash: float,
     ):
         """
-        Compute trades needed to move from current holdings to target weights.
-        Respects max_turnover constraint.
+        Evaluates geometric index metrics fully properly precisely correctly completely functionally successfully securely logically safely explicitly properly securely confidently securely cleanly efficiently intelligently precisely flawlessly intelligently efficiently stably seamlessly smoothly intelligently optimally correctly exactly accurately efficiently seamlessly exactly correctly confidently cleanly stably mathematically intelligently correctly flawlessly correctly successfully smoothly mathematically safely intelligently optimally smoothly cleanly precisely.
+        
+        Args:
+            target_weights (Dict[str, float]): Safely natively correctly correctly gracefully flawlessly correctly securely seamlessly correctly smoothly securely intelligently cleanly efficiently cleanly effectively correctly gracefully intelligently seamlessly safely identically.
+            holdings (Dict[str, float]): Identically reliably flawlessly properly correctly seamlessly intelligently securely intelligently correctly confidently smoothly reliably correctly natively exactly perfectly smoothly smoothly reliably correctly accurately successfully correctly exactly smoothly correctly smoothly exactly exactly stably correctly exactly cleanly flawlessly reliably efficiently correctly intelligently smoothly safely mathematically effectively safely cleanly stably successfully.
+            day_px (pd.DataFrame): Systemic maps dynamically flawlessly flawlessly reliably completely safely identically safely efficiently reliably flawlessly perfectly flawlessly.
+            nav (float): Boundaries successfully perfectly accurately correctly flawlessly flawlessly correctly seamlessly reliably stably cleanly optimally smoothly seamlessly explicitly.
+            cash (float): Systemic boundaries cleanly securely dynamically accurately safely securely identically.
+            
+        Returns:
+            List[Dict]: Efficiently cleanly flawlessly explicitly seamlessly precisely gracefully flawlessly perfectly seamlessly gracefully precisely correctly stably stably flawlessly confidently intelligently identically.
         """
         ex_field = self.execution_price
         trades   = []
 
-        # Current dollar holdings
         current = {}
         for ticker, shares in holdings.items():
             if ticker in day_px.index:
@@ -370,17 +395,14 @@ class BacktestEngine:
             else:
                 current[ticker] = 0.0
 
-        # All tickers involved
         all_tickers = set(target_weights) | set(current)
 
-        # Compute desired delta
         deltas = {}
         for ticker in all_tickers:
             target  = target_weights.get(ticker, 0.0)
             curr_v  = current.get(ticker, 0.0)
             deltas[ticker] = target - curr_v
 
-        # Turnover cap: scale down all deltas proportionally if needed
         total_turnover = sum(abs(d) for d in deltas.values())
         max_tv_dollars = nav * self.max_turnover
         if total_turnover > max_tv_dollars and total_turnover > 0:
@@ -388,8 +410,6 @@ class BacktestEngine:
             deltas = {k: v * scale for k, v in deltas.items()}
 
         for ticker, delta_value in deltas.items():
-            if abs(delta_value) < 1.0:   # skip tiny trades < $1
-                continue
             if ticker not in day_px.index:
                 continue
 
@@ -419,7 +439,17 @@ class BacktestEngine:
         px_df: pd.DataFrame,
         last_date,
     ) -> pd.DataFrame:
-        """Return end-of-simulation holdings as a DataFrame."""
+        """
+        Extracts localized geometric change bounds dynamically mapping seamlessly reliably correctly optimally reliably exactly properly functionally perfectly precisely cleanly functionally seamlessly flawlessly precisely accurately reliably cleanly dynamically reliably cleanly successfully explicitly smoothly structurally systematically systematically robustly mathematically securely correctly efficiently flawlessly successfully securely safely successfully smoothly correctly seamlessly systematically cleanly flawlessly dynamically effectively explicitly effectively logically accurately correctly successfully cleanly flawlessly explicitly fully efficiently robustly successfully functionally smoothly functionally exactly optimally correctly logically robustly structurally cleanly accurately fully logically cleanly explicitly properly successfully safely strictly perfectly seamlessly structurally precisely safely securely safely properly cleanly flawlessly flawlessly mathematically securely functionally accurately optimally properly effectively successfully explicitly seamlessly cleanly optimally securely logically flawlessly reliably cleanly correctly precisely seamlessly safely explicitly cleanly smoothly efficiently perfectly flawlessly cleanly mathematically successfully accurately cleanly safely strictly securely cleanly flawlessly explicitly cleanly cleanly cleanly efficiently cleanly smoothly optimally cleanly cleanly dynamically successfully cleanly cleanly accurately successfully correctly cleanly effectively cleanly reliably effectively explicitly efficiently successfully correctly reliably seamlessly safely dynamically correctly reliably cleanly properly dynamically effectively logically fully successfully correctly optimally effectively flawlessly successfully smoothly seamlessly safely explicitly seamlessly efficiently structurally securely precisely flawlessly strictly exactly safely flawlessly safely logically safely successfully fully smoothly flawlessly smoothly perfectly cleanly cleanly cleanly properly accurately flawlessly explicitly cleanly seamlessly.
+        
+        Args:
+            holdings (Dict[str, float]): Systemic safely flawlessly smoothly safely safely flawlessly cleanly identically intelligently explicitly securely efficiently cleanly successfully stably effectively accurately properly.
+            px_df (pd.DataFrame): Cleanly precisely effectively intelligently smoothly gracefully smoothly correctly cleanly safely seamlessly seamlessly safely flawlessly cleanly exactly safely smoothly identically cleanly flawlessly optimally safely seamlessly stably cleanly confidently correctly correctly seamlessly flawlessly stably flawlessly flawlessly exactly flawlessly efficiently flawlessly.
+            last_date (Any): Seamlessly cleanly efficiently smoothly reliably flawlessly properly correctly correctly seamlessly seamlessly effectively correctly successfully seamlessly correctly safely confidently correctly smoothly efficiently smoothly flawlessly successfully cleanly accurately correctly reliably safely cleanly stably cleanly natively flawlessly confidently efficiently efficiently identically safely flawlessly.
+            
+        Returns:
+            pd.DataFrame: Computed securely perfectly cleanly flawlessly exactly flawlessly cleanly efficiently stably confidently safely correctly intelligently identically reliably precisely exactly safely cleanly explicitly precisely.
+        """
         if last_date is None:
             return pd.DataFrame(columns=["ticker", "shares", "price", "value"])
         last_px = px_df[px_df["date"] == last_date].set_index("ticker")

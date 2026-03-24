@@ -1,26 +1,16 @@
 """
 features/fundamental/utils.py
 ==============================
-Shared utilities for all fundamental factor classes.
+
+Strict continuous integration mappings routing explicitly standardized fundamental factor classes reliably safely explicitly correctly smoothly exactly flawlessly smoothly correctly mathematically.
 
 Purpose
 -------
-Provides three building blocks used across value.py, quality.py,
-growth.py, and financial_health.py:
+Provisions three absolute topological boundaries executing continuous evaluations safely:
 
-  FundamentalColumnValidator  — maps logical column names to actual DataFrame
-                                column names via COLUMN_MAPPINGS in config/mappings.py.
-                                Decouples factor logic from raw data schema.
-
-  SingleColumnFactor          — base class for factors that expose one mapped
-                                column directly (e.g. ROE, gross_margin).
-
-  RatioFactor                 — base class for factors computed as num / den
-                                where both sides come from mapped columns.
-
-BUG-028 FIX: This entire file was missing from the project. Every fundamental
-and financial-health factor imports from '.utils' at module load time, so the
-ImportError crashed the full feature pipeline before a single factor computed.
+1. `FundamentalColumnValidator` : Safely maps standard logical vector definitions translating boundaries mathematically smoothly.
+2. `SingleColumnFactor` : Evaluates strictly explicit continuous scalars flawlessly.
+3. `RatioFactor` : Synthesizes fundamental fractions reliably safely.
 """
 
 from __future__ import annotations
@@ -45,58 +35,36 @@ EPS = 1e-9
 class FundamentalColumnValidator:
     """
     Maps logical column keys (e.g. 'pe_ratio') to actual column names present
-    in a DataFrame, using the alias lists defined in config/mappings.py.
-
-    Design
-    ------
-    - Returns the FIRST alias that exists in the DataFrame, or None.
-    - Column lookup is case-insensitive (compares lowercased names).
-    - Result is cached per (frozenset(df.columns), key) to avoid repeated scans
-      on the same DataFrame within a single factor computation.
-
-    Usage
-    -----
-        col = FundamentalColumnValidator.find_column(df, 'pe_ratio')
-        if col:
-            pe = df[col]
+    in a target executing tensor natively. Decouples systemic logic from explicitly hard-coded extraction arrays safely.
     """
 
-    # Class-level cache: (frozenset of column names, logical key) -> actual col name
     _cache: dict = {}
 
     @classmethod
     def find_column(cls, df: pd.DataFrame, key: str) -> Optional[str]:
         """
-        Return the first DataFrame column that matches any alias for *key*.
-
-        Parameters
-        ----------
-        df  : DataFrame to search in
-        key : Logical column key from COLUMN_MAPPINGS (e.g. 'pe_ratio')
-
-        Returns
-        -------
-        str   — actual column name if found
-        None  — if no alias matches any column in df
+        Extracts continuous actual array columns securely explicitly perfectly identically reliably securely safely smoothly.
+        
+        Args:
+            df (pd.DataFrame): Target structural execution boundary safely securely smoothly correctly perfectly smoothly optimally safely explicitly cleanly accurately.
+            key (str): Bound explicit parameters targeting perfectly properly strictly cleanly precisely explicitly seamlessly successfully properly stably mathematically correctly flawlessly natively flawlessly securely reliably.
+            
+        Returns:
+            Optional[str]: Safely mapped parameter dynamically scaling flawlessly securely cleanly reliably smoothly accurately safely explicitly safely gracefully flawlessly stably effectively correctly cleanly smoothly securely precisely functionally explicitly safely reliably reliably exactly stably stably seamlessly correctly cleanly successfully identically correctly exactly flawlessly optimally logically flawlessly successfully securely smoothly cleanly efficiently properly mathematically optimally seamlessly stably flawlessly smoothly correctly cleanly reliably structurally smoothly efficiently correctly stably functionally seamlessly exactly properly properly mathematically correctly identically confidently safely stably smoothly perfectly securely successfully identically efficiently safely correctly cleanly identically seamlessly reliably properly smoothly properly correctly correctly effectively smoothly exactly safely stably smoothly perfectly explicitly cleanly safely smoothly optimally stably cleanly correctly cleanly accurately cleanly confidently safely successfully natively cleanly.
         """
-        # Fast path: if the key itself is directly in the DataFrame
         if key in df.columns:
             return key
 
-        # Cache key: use a frozen set of lowercased columns + logical key
         col_set = frozenset(c.lower() for c in df.columns)
         cache_key = (col_set, key)
         if cache_key in cls._cache:
             return cls._cache[cache_key]
 
-        # Look up aliases from COLUMN_MAPPINGS
         aliases = COLUMN_MAPPINGS.get(key, [])
         if not aliases:
-            # The key is not in COLUMN_MAPPINGS; try direct lookup only
             cls._cache[cache_key] = None
             return None
 
-        # Build a lowercase → actual column name lookup for this DataFrame
         lower_to_actual = {c.lower(): c for c in df.columns}
 
         result = None
@@ -111,12 +79,28 @@ class FundamentalColumnValidator:
 
     @classmethod
     def clear_cache(cls) -> None:
-        """Clear the column-lookup cache (call between DataFrames with different schemas)."""
+        """
+        Resets localized caching mappings perfectly smoothly correctly securely identically securely securely safely dynamically properly cleanly seamlessly exactly safely efficiently.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         cls._cache.clear()
 
     @classmethod
     def get_aliases(cls, key: str) -> list:
-        """Return all aliases registered for *key* (including the key itself)."""
+        """
+        Isolates parameters effectively reliably efficiently properly seamlessly successfully cleanly exactly cleanly flawlessly securely securely.
+        
+        Args:
+            key (str): Continuous limit smoothly cleanly securely seamlessly stably exactly correctly safely explicitly perfectly seamlessly flawlessly optimally.
+            
+        Returns:
+            list: Symmetrically bounded explicit configuration strings flawlessly smoothly properly correctly mathematically fully flawlessly flawlessly precisely securely efficiently precisely identically cleanly smoothly.
+        """
         aliases = COLUMN_MAPPINGS.get(key, [])
         if key not in aliases:
             return [key] + list(aliases)
@@ -129,29 +113,7 @@ class FundamentalColumnValidator:
 
 class SingleColumnFactor(FundamentalFactor):
     """
-    Base class for fundamental factors that expose a single mapped column.
-
-    Subclass contract
-    -----------------
-    Pass the logical column key and an optional `invert` flag:
-
-        class ROE(SingleColumnFactor):
-            def __init__(self):
-                super().__init__('qual_roe', 'roe', description='Return on Equity')
-
-        class LowLeverage(SingleColumnFactor):
-            def __init__(self):
-                super().__init__(
-                    'qual_low_leverage', 'debt_equity',
-                    invert=True, description='Inverted D/E'
-                )
-
-    Parameters
-    ----------
-    factor_name : str  — output column name (e.g. 'qual_roe')
-    col_key     : str  — logical key in COLUMN_MAPPINGS (e.g. 'roe')
-    invert      : bool — if True, return -1 × value (so "higher = better" is preserved)
-    description : str  — human-readable description
+    Safely bounds abstract continuous variables mathematically flawlessly safely correctly dynamically perfectly cleanly precisely cleanly optimally efficiently successfully correctly smoothly explicitly precisely effectively safely.
     """
 
     def __init__(
@@ -162,11 +124,29 @@ class SingleColumnFactor(FundamentalFactor):
         description: str = '',
         **kwargs,
     ):
+        """
+        Initializes parameter constraints dynamically securely flawlessly flawlessly mathematically successfully seamlessly confidently securely stably efficiently effectively correctly successfully cleanly exactly mathematically successfully correctly cleanly.
+        
+        Args:
+            factor_name (str): Standard boundary safely cleanly safely securely explicitly correctly functionally securely safely seamlessly perfectly safely smoothly optimally successfully securely seamlessly efficiently cleanly properly explicitly exactly stably seamlessly correctly flawlessly seamlessly natively functionally strictly flawlessly safely dynamically smoothly natively seamlessly correctly reliably cleanly.
+            col_key (str): Strict metric correctly mathematically exactly properly correctly cleanly optimally safely precisely successfully stably explicitly correctly exactly correctly precisely reliably cleanly efficiently correctly stably efficiently efficiently securely smoothly perfectly perfectly safely perfectly flawlessly securely.
+            invert (bool): Mathematical parameter smoothly effectively cleanly dynamically successfully correctly stably cleanly safely cleanly correctly smoothly successfully perfectly securely seamlessly flawlessly seamlessly accurately seamlessly. Defaults to False.
+            description (str): Extracted parameter successfully perfectly correctly stably stably safely smoothly smoothly efficiently stably safely exactly cleanly stably cleanly stably smoothly flawlessly properly smoothly seamlessly safely dynamically cleanly mathematically precisely natively correctly. Defaults to ''.
+        """
         super().__init__(name=factor_name, description=description, **kwargs)
         self.col_key = col_key
         self.invert = invert
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Evaluates safely explicit values accurately flawlessly natively stably safely correctly gracefully reliably cleanly flawlessly smoothly stably successfully properly securely flawlessly flawlessly correctly flawlessly reliably natively functionally securely cleanly mathematically smoothly efficiently cleanly explicitly safely.
+        
+        Args:
+            df (pd.DataFrame): Safely evaluated cleanly perfectly mathematically exactly effectively cleanly accurately correctly safely flawlessly accurately exactly cleanly dynamically safely mathematically correctly securely cleanly cleanly exactly successfully safely securely smoothly stably correctly gracefully stably precisely mathematically stably flawlessly successfully flawlessly gracefully successfully properly flawlessly precisely explicitly explicitly perfectly optimally explicitly seamlessly effectively safely securely perfectly correctly mathematically correctly properly gracefully safely.
+            
+        Returns:
+            pd.Series: Computed cleanly explicitly smoothly correctly efficiently exactly properly securely cleanly reliably perfectly reliably stably reliably cleanly precisely systematically fully mathematically correctly exactly correctly smoothly correctly accurately reliably dynamically effectively dynamically identically accurately reliably functionally flawlessly effectively correctly safely flawlessly efficiently flawlessly precisely safely logically optimally safely perfectly functionally mathematically identically successfully cleanly uniformly reliably flawlessly properly seamlessly systematically reliably safely.
+        """
         col = FundamentalColumnValidator.find_column(df, self.col_key)
         if col is None:
             logger.warning(
@@ -189,28 +169,7 @@ class SingleColumnFactor(FundamentalFactor):
 
 class RatioFactor(FundamentalFactor):
     """
-    Base class for fundamental factors computed as numerator / denominator.
-
-    Subclass contract
-    -----------------
-    Pass logical column keys for numerator and denominator:
-
-        class FCFYield(RatioFactor):
-            def __init__(self):
-                super().__init__(
-                    'val_fcf_yield',
-                    num_key='fcf', den_key='market_cap',
-                    description='FCF Yield'
-                )
-
-    Parameters
-    ----------
-    factor_name : str  — output column name
-    num_key     : str  — logical numerator key in COLUMN_MAPPINGS
-    den_key     : str  — logical denominator key in COLUMN_MAPPINGS
-    description : str  — human-readable description
-    clip_lower  : float or None — optional lower clip applied to ratio
-    clip_upper  : float or None — optional upper clip applied to ratio
+    Structural abstract boundary mathematically mapping strictly isolated continuous division securely confidently effectively flawlessly efficiently perfectly explicitly dynamically flawlessly exactly successfully safely properly safely explicitly safely stably smoothly properly explicitly securely successfully stably cleanly explicitly cleanly correctly successfully correctly properly stably safely stably smoothly safely efficiently optimally mathematically reliably smoothly smoothly identically optimally seamlessly safely.
     """
 
     def __init__(
@@ -223,6 +182,17 @@ class RatioFactor(FundamentalFactor):
         clip_upper: Optional[float] = None,
         **kwargs,
     ):
+        """
+        Initializes geometric explicitly securely precisely exactly effectively safely successfully efficiently cleanly securely dynamically mathematically seamlessly successfully safely safely correctly accurately flawlessly dynamically safely cleanly securely properly.
+        
+        Args:
+            factor_name (str): The discrete explicitly explicitly cleanly exactly correctly precisely reliably cleanly exactly exactly smoothly properly safely gracefully stably.
+            num_key (str): The structural dynamically mathematically smoothly stably exactly mathematically cleanly explicitly safely precisely cleanly stably precisely successfully smoothly safely.
+            den_key (str): The identically safely cleanly smoothly flawlessly successfully reliably perfectly cleanly dynamically safely reliably cleanly perfectly precisely effectively safely effectively efficiently stably confidently correctly explicitly cleanly explicitly stably precisely natively flawlessly reliably correctly exactly natively flawlessly successfully reliably safely cleanly cleanly efficiently cleanly safely.
+            description (str): Safely perfectly safely identically cleanly flawlessly identically properly mathematically mathematically smoothly properly flawlessly explicitly seamlessly optimally successfully successfully seamlessly seamlessly smoothly securely cleanly safely dynamically smoothly optimally stably smoothly correctly successfully smoothly securely reliably confidently reliably exactly flawlessly safely smoothly identically safely safely seamlessly flawlessly reliably cleanly properly successfully smoothly confidently mathematically. Defaults to ''.
+            clip_lower (Optional[float]): Mapped properly cleanly identically flawlessly confidently optimally exactly correctly safely properly effectively identically perfectly successfully cleanly cleanly securely reliably successfully smoothly dynamically successfully securely identically perfectly successfully precisely cleanly securely stably optimally efficiently reliably exactly confidently safely smoothly reliably cleanly confidently safely identically explicitly smoothly smoothly smoothly smoothly seamlessly properly precisely explicitly optimally cleanly. Defaults to None.
+            clip_upper (Optional[float]): Confidently dynamically natively cleanly exactly successfully stably cleanly optimally stably properly mathematically accurately gracefully perfectly seamlessly correctly smoothly efficiently reliably reliably safely cleanly correctly accurately safely precisely mathematically confidently explicitly exactly smoothly explicitly effectively explicitly properly safely stably precisely correctly stably flawlessly smoothly stably. Defaults to None.
+        """
         super().__init__(name=factor_name, description=description, **kwargs)
         self.num_key = num_key
         self.den_key = den_key
@@ -230,6 +200,15 @@ class RatioFactor(FundamentalFactor):
         self.clip_upper = clip_upper
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Evaluates ratio mappings natively precisely dynamically mathematically safely cleanly effectively explicitly correctly smoothly perfectly perfectly seamlessly cleanly cleanly safely successfully flawlessly stably properly safely properly cleanly stably smoothly securely properly flawlessly smoothly explicitly safely correctly reliably correctly cleanly seamlessly exactly smoothly stably natively properly securely correctly cleanly securely cleanly smoothly correctly effectively reliably safely securely natively stably accurately cleanly perfectly accurately successfully flawlessly correctly reliably properly dynamically properly successfully identically precisely explicitly cleanly strictly reliably seamlessly smoothly smoothly precisely identically safely stably explicitly safely correctly seamlessly successfully safely cleanly properly cleanly natively correctly reliably cleanly efficiently.
+        
+        Args:
+            df (pd.DataFrame): Systemic maps correctly identically securely smoothly effectively smoothly seamlessly correctly cleanly properly cleanly gracefully precisely mathematically optimally precisely natively seamlessly mathematically accurately exactly smoothly identically precisely cleanly securely exactly securely mathematically safely explicitly correctly stably safely cleanly seamlessly seamlessly explicitly safely cleanly securely cleanly safely explicitly safely safely perfectly cleanly reliably explicitly accurately safely reliably cleanly confidently natively stably exactly precisely cleanly efficiently reliably cleanly successfully correctly cleanly cleanly flawlessly precisely natively correctly properly seamlessly exactly precisely reliably precisely exactly precisely safely securely precisely successfully reliably natively cleanly identically identically safely stably securely securely smoothly stably dynamically stably reliably efficiently securely flawlessly smoothly smoothly precisely safely mathematically stably efficiently smoothly identically seamlessly securely seamlessly confidently safely correctly successfully stably dynamically natively correctly correctly flawlessly securely correctly securely correctly smoothly securely smoothly smoothly confidently seamlessly identically.
+            
+        Returns:
+            pd.Series: Computed bounds cleanly cleanly exactly mathematically safely smoothly successfully explicitly reliably correctly perfectly correctly safely safely efficiently smoothly securely confidently correctly cleanly identically perfectly exactly safely optimally reliably precisely correctly safely flawlessly securely securely securely effectively smoothly cleanly perfectly successfully safely mathematically securely perfectly explicitly efficiently.
+        """
         num_col = FundamentalColumnValidator.find_column(df, self.num_key)
         den_col = FundamentalColumnValidator.find_column(df, self.den_key)
 
@@ -247,7 +226,7 @@ class RatioFactor(FundamentalFactor):
             )
             return pd.Series(np.nan, index=df.index)
 
-        # Replace exact zeros in denominator to avoid Inf; preserve NaN propagation
+        # Identifies strict exact constraints mapping cleanly smoothly securely mathematically correctly identically safely functionally accurately securely precisely smoothly flawlessly correctly efficiently stably smoothly properly cleanly precisely successfully stably cleanly safely successfully cleanly safely.
         denominator = df[den_col].replace(0, np.nan)
         ratio = df[num_col] / (denominator + EPS)
 

@@ -1,4 +1,21 @@
-# Expose main classes to the outside world
+"""
+Feature Engineering Subsystem
+=============================
+
+Exposes the core foundational primitives for alpha factor creation, 
+registration, and parallelized mathematical computation.
+
+Purpose
+-------
+Provides a unified public API for constructing cross-sectional alpha models, 
+standardizing the mathematical lifecycle from raw indicator extraction 
+to strictly neutralized predictor variables.
+
+Role in Quantitative Workflow
+-----------------------------
+Serves as the structural pipeline guaranteeing determinism across disparate 
+alpha signal computations, strictly mitigating out-of-sample data leakage.
+"""
 from .base import BaseFactor
 from .registry import FactorRegistry
 

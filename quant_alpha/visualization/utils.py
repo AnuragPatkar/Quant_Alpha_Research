@@ -1,12 +1,26 @@
 """
-quant_alpha/visualization/utils.py
-=====================================
-Shared styling and formatting helpers for all visualization modules
-(plots.py, reports.py, factor_viz.py, interactive.py).
+Visualization Utilities
+=====================
 
-Kept identical to quant_alpha/backtest/utils.py — both resolve the same
-`from .utils import set_style, format_currency` relative import inside
-their respective subpackages.
+Provides shared styling and formatting heuristics for the quantitative 
+visualization and reporting suite.
+
+Purpose
+-------
+This module establishes canonical formatting rules, ensuring strict 
+aesthetic consistency across interactive dashboards, static tearsheets, 
+and factor analysis plots. 
+
+Role in Quantitative Workflow
+-----------------------------
+Acts as the foundational styling configuration for all graphical rendering 
+engines, abstracting away backend-specific boilerplate to maintain a clean 
+and professional institutional presentation layer.
+
+Mathematical Dependencies
+-------------------------
+- **Matplotlib**: Primary rendering backend for static plot generation and 
+  aesthetic configuration.
 """
 
 import matplotlib.pyplot as plt
@@ -14,7 +28,18 @@ from typing import Optional
 
 
 def set_style() -> None:
-    """Apply a clean, publication-ready matplotlib style."""
+    """
+    Applies a clean, publication-ready configuration to the Matplotlib backend.
+    
+    Attempts to establish a standardized Seaborn-derived darkgrid style. 
+    Incorporates nested failovers to guarantee visual consistency across 
+    varying execution environments and Matplotlib versions.
+    
+    Returns:
+        None: Globally mutates the current Matplotlib state map.
+    """
+    # Employs nested resolution to capture distinct internal naming conventions 
+    # established in Matplotlib >= 3.6 vs older legacy environments.
     try:
         plt.style.use("seaborn-v0_8-darkgrid")
     except OSError:
@@ -26,10 +51,20 @@ def set_style() -> None:
 
 def format_currency(x, pos: Optional[int] = None) -> str:
     """
-    Format a numeric axis tick as a dollar amount.
+    Formats absolute numeric scalars into human-readable currency strings.
 
-    Used as FuncFormatter callback:
-        ax.yaxis.set_major_formatter(FuncFormatter(format_currency))
+    Designed strictly as a callback interface for Matplotlib's `FuncFormatter` 
+    to structurally align axis ticks mapping gross portfolio wealth or 
+    capital allocation metrics.
+
+    Args:
+        x (float): The raw continuous numeric axis value to be formatted.
+        pos (Optional[int]): The axis tick position mapping passed implicitly 
+            by the Matplotlib formatting engine. Defaults to None.
+            
+    Returns:
+        str: A discrete formatted string abbreviation mapped to standard 
+            financial prefixes (e.g., $1.5M, $500K).
     """
     if abs(x) >= 1_000_000_000:
         return f"${x / 1_000_000_000:.1f}B"

@@ -1,40 +1,30 @@
 """
 Interactive Performance Dashboards
 ==================================
-Dynamic visualization suite for portfolio analysis using Plotly.
+
+Provides dynamic, interactive visualization suites for portfolio analysis 
+and trade execution attribution.
 
 Purpose
 -------
-This module provides interactive HTML-based charts that allow for zooming,
-panning, and granular inspection of portfolio performance. The primary
-component is the `plot_interactive_equity` function, which overlays discrete
-trade execution markers onto the continuous NAV time series, enabling
-visual correlation of specific trades with equity inflections.
+This module generates interactive HTML-based charts enabling granular 
+inspection of portfolio performance over discrete time horizons. It overlays 
+discrete trade execution markers onto continuous Net Asset Value (NAV) 
+time-series to visually correlate execution timing with equity inflections.
 
-Usage
------
-Intended for use in Jupyter Notebooks or reporting dashboards.
+Role in Quantitative Workflow
+-----------------------------
+Serves as an ex-post trade attribution and diagnostic tool. By visualizing 
+exact Buy/Sell coordinates against the capital curve, researchers can audit 
+execution efficiency, identify sub-optimal entries/exits (e.g., trading at 
+local maxima/minima), and assess slippage impacts interactively.
 
-.. code-block:: python
-
-    # Create interactive plot with trade annotations
-    fig = plot_interactive_equity(
-        equity_df=portfolio.get_equity_curve_df(),
-        trades_df=portfolio.get_tx_history_df()
-    )
-    fig.show()
-
-Importance
-----------
--   **Trade Attribution**: By marking Buy/Sell points directly on the curve,
-    researchers can visually inspect if trades were executed near local minima/maxima.
--   **Data Granularity**: Hover tooltips reveal precise execution prices and
-    portfolio values that static plots often obscure.
-
-Tools & Frameworks
-------------------
--   **Plotly Graph Objects**: Low-level interface for composing complex, multi-layered charts.
--   **Pandas**: Time-series alignment and vectorized data filtering.
+Mathematical Dependencies
+-------------------------
+- **Plotly Graph Objects**: Low-level interface for composing complex, 
+  multi-layered interactive vector graphics.
+- **Pandas**: Time-series alignment, vectorized temporal normalization, 
+  and $O(1)$ hash map construction for cross-sectional overlay.
 """
 
 import plotly.graph_objects as go
@@ -42,21 +32,20 @@ import pandas as pd
 
 def plot_interactive_equity(equity_df, trades_df=None):
     """
-    Generates an interactive Plotly figure displaying the portfolio Equity Curve
-    annotated with trade execution markers.
+    Generates an interactive Plotly figure mapping trade executions to capital trajectory.
     
     Args:
-        equity_df (pd.DataFrame): Time-series of portfolio NAV.
-            Must contain columns: `['date', 'total_value']`.
-        trades_df (Optional[pd.DataFrame]): Ledger of executed trades.
-            Must contain columns: `['date', 'side', 'ticker']`.
+        equity_df (pd.DataFrame): Time-series matrix of portfolio NAV. 
+            Strictly requires 'date' and 'total_value' columns.
+        trades_df (Optional[pd.DataFrame]): Ledger of discrete executed trades. 
+            Strictly requires 'date', 'side', and 'ticker' columns. Defaults to None.
             
     Returns:
-        go.Figure: Interactive Plotly chart object.
+        go.Figure: An interactive, multi-layered Plotly chart object.
     """
     fig = go.Figure()
     
-    # Layer 1: Continuous Equity Curve (NAV)
+    # Renders the primary continuous geometric wealth trajectory
     fig.add_trace(go.Scatter(
         x=equity_df['date'], 
         y=equity_df['total_value'],
@@ -66,31 +55,22 @@ def plot_interactive_equity(equity_df, trades_df=None):
         hovertemplate='$%{y:,.2f}'
     ))
     
-    # Layer 2: Discrete Trade Markers (if ledger provided)
     if trades_df is not None and not trades_df.empty:
-        # Schema Validation
+        # Validates strict dependency schema for execution overlays
         if not all(col in trades_df.columns for col in ['date', 'side', 'ticker']):
             return fig
             
-        # Vectorized Filtering: Segregate Buys and Sells for distinct styling
+        # Isolates execution directionality via vectorized string matching
         buys = trades_df[trades_df['side'].astype(str).str.lower() == 'buy']
         sells = trades_df[trades_df['side'].astype(str).str.lower() == 'sell']
         
-        # Optimization: O(1) Lookup Map Construction
-        # We need to plot trade markers at the correct Y-axis height (Equity Value).
-        # Instead of repeated DataFrame lookups (O(N*M)), we build a hash map.
-        
-        # 1. Normalize equity dates to midnight (remove time component)
+        # Constructs an O(1) temporal hash map strictly mapping execution dates to discrete NAV values, 
+        # bypassing computationally expensive O(N*M) continuous matrix lookups during rendering.
         equity_dates = pd.to_datetime(equity_df['date']).dt.normalize()
-        
-        # 2. Map Date -> Portfolio Value
         date_val_map = dict(zip(equity_dates, equity_df['total_value']))
         
         if not buys.empty:
-            # Normalize trade dates to align with the lookup map
             buy_dates = pd.to_datetime(buys['date']).dt.normalize()
-            
-            # Map trade dates to Y-values (Portfolio Value on that day)
             y_values = [date_val_map.get(d, None) for d in buy_dates]
             
             fig.add_trace(go.Scatter(

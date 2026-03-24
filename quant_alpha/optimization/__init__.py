@@ -1,24 +1,26 @@
 """
-quant_alpha/optimization/__init__.py
-======================================
-Portfolio construction layer: weight optimisation and position sizing.
+Portfolio Optimization & Construction Subsystem
+===============================================
 
-Confirmed public API (from run_backtest.py, optimize_portfolio.py,
-test_optimization.py, run_hyperopt.py):
-    from quant_alpha.optimization.allocator       import PortfolioAllocator
-    from quant_alpha.optimization.mean_variance   import MeanVarianceOptimizer
-    from quant_alpha.optimization.risk_parity     import RiskParityOptimizer
-    from quant_alpha.optimization.kelly_criterion import KellyCriterion
-    from quant_alpha.optimization.black_litterman import BlackLittermanModel
-    from quant_alpha.optimization.constraints     import PortfolioConstraints
+Provides the public API for convex portfolio optimization and position sizing.
 
-Supported allocation methods via PortfolioAllocator:
-    mean_variance  — Markowitz MVO with Ledoit-Wolf covariance
-    risk_parity    — Equal Risk Contribution (Spinu log-barrier)
-    kelly          — Multi-asset fractional Kelly Criterion (QP)
-    black_litterman — BL posterior with alpha-view blending
-    inverse_vol    — Inverse-volatility heuristic weighting
-    top_n          — Equal weight across top-N alpha tickers
+Purpose
+-------
+This module orchestrates capital allocation across generated alpha signals 
+using advanced structural optimization techniques (Markowitz Mean-Variance, 
+Risk Parity, Kelly Criterion, and Bayesian Black-Litterman inference).
+
+Role in Quantitative Workflow
+-----------------------------
+Acts as the terminal mathematical transformation in the alpha generation pipeline, 
+translating theoretical expected returns and empirical risk bounds into discrete, 
+fully-invested portfolio weights capable of live order execution.
+
+Mathematical Dependencies
+-------------------------
+- **CVXPY**: Solves linearly constrained Quadratic and Second-Order Cone Programs.
+- **SciPy**: Utilizes L-BFGS-B gradient solvers for non-linear log-barrier constraints.
+- **NumPy/Pandas**: Vectorized matrix manipulations and structural cross-sectional bounds.
 """
 
 from .allocator        import PortfolioAllocator      # noqa: F401

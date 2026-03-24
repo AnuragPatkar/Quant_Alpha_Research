@@ -42,18 +42,6 @@ Tools & Frameworks
 - **Pandas/NumPy**: Vectorized time-series analysis and covariance estimation.
 - **SciPy**: Spearman Rank Correlation for non-linear dependence measuring.
 - **Matplotlib**: Visualization of equity curves and exposure profiles.
-
-FIXES
------
-  BUG-077 (HIGH): _calculate_current_drawdown() used `== 0` float equality to
-           guard against division by zero in the drawdown denominator.
-           `cummax.iloc[-1]` is a floating-point cumulative product — exact
-           equality to 0 is almost never true for a valid equity curve, so
-           the guard silently fails, and NaN/Inf can propagate when the
-           portfolio value is extremely small (near-zero after ruin).
-           Fixed: replaced `== 0` with `< 1e-12` which correctly catches
-           any degenerate near-zero denominator regardless of floating-point
-           rounding.
 """
 
 import pandas as pd
@@ -71,8 +59,8 @@ class PerformanceTracker:
     """
     Maintains a rolling buffer of trading history to calculate online risk metrics.
 
-    Implements a sliding window approach (O(1) amortized updates) to track
-    non-stationary performance statistics.
+    Employs an optimized $O(1)$ dynamic memory sliding window framework tracking 
+    structural non-stationary out-of-sample metrics efficiently in real-time limits.
     """
 
     def __init__(
@@ -86,14 +74,16 @@ class PerformanceTracker:
         risk_free_rate: float = 0.04,
     ):
         """
+        Initializes the dynamic portfolio attribution limits tracker structure.
+        
         Args:
-            window_days (int)           : Rolling window N for rolling statistics (e.g. 60 days).
-            ic_warning_threshold (float): Signal quality floor triggering warnings.
-            ic_critical_threshold (float): Signal quality floor triggering halts.
-            dd_warning_threshold (float): Drawdown % triggering risk reduction.
-            dd_critical_threshold (float): Drawdown % triggering liquidation.
-            max_history (int)           : Buffer size for full history storage.
-            risk_free_rate (float)      : Annualized Rf for Sharpe calculation.
+            window_days (int): The evaluating discrete lookback boundary measuring sequence lengths. Defaults to 60.
+            ic_warning_threshold (float): Predictive metric baseline bounds flagging initial limits. Defaults to 0.02.
+            ic_critical_threshold (float): Terminal IC collapse vector halting pipelines entirely. Defaults to 0.01.
+            dd_warning_threshold (float): Drawdown geometric loss limit triggering internal circuit-breakers. Defaults to 0.10.
+            dd_critical_threshold (float): Maximal systemic loss boundaries executing immediate capital stops. Defaults to 0.15.
+            max_history (int): Capped total retention bounds mapped efficiently via deque objects. Defaults to 252.
+            risk_free_rate (float): Absolute annualized benchmark metric bound evaluating comparative Sharp. Defaults to 0.04.
         """
         self.window_days  = window_days
         self.ic_warning   = ic_warning_threshold
@@ -103,7 +93,6 @@ class PerformanceTracker:
         self.max_history  = max_history
         self.risk_free_rate = risk_free_rate
 
-        # State Management: Deque provides O(1) appends and auto-eviction for rolling windows.
         self.history: Deque = deque(maxlen=max_history)
 
         logger.info(
@@ -128,18 +117,17 @@ class PerformanceTracker:
         Ingests daily trading results and computes point-in-time signal quality.
 
         Args:
-            date (str)                 : Trading date (ISO-8601).
-            predictions (Dict)         : Model alpha scores.
-            actual_returns (Dict)      : Realized asset returns.
-            portfolio_return (float)   : Net strategy return Rp.
-            benchmark_return (float)   : Market index return Rb.
-            turnover (float)           : Portfolio turnover ratio.
-            transaction_costs (float)  : Slippage + Commissions.
-            long_exposure (float)      : Gross Long Exposure.
-            short_exposure (float)     : Gross Short Exposure.
-            sector_exposure (Optional) : Exposure breakdown by sector.
+            date (str): Standardized boundary mapping trading dates functionally via ISO-8601.
+            predictions (Dict): Isolated algorithmic scalar components modeling future targets.
+            actual_returns (Dict): Forward-realized empirical values returned continuously.
+            portfolio_return (float): Executed net aggregate geometric strategy growth rate ($Rp$).
+            benchmark_return (float): Scaled passive baseline target limits representing boundaries ($Rb$).
+            turnover (float): Absolute absolute scalar mapping daily target portfolio transitions. Defaults to 0.0.
+            transaction_costs (float): Extracted execution slippage plus direct transactional boundaries. Defaults to 0.0.
+            long_exposure (float): Absolute sum weight parameters scaling aggregate long cardinality. Defaults to 0.0.
+            short_exposure (float): Absolute sum weight parameters measuring systematic shorts. Defaults to 0.0.
+            sector_exposure (Optional[Dict[str, float]]): Positional limit mapping broken down identically by sectors. Defaults to None.
         """
-        # IC via Spearman Rank Correlation
         tickers = set(predictions.keys()) & set(actual_returns.keys())
 
         if len(tickers) < 2:
@@ -180,7 +168,7 @@ class PerformanceTracker:
 
         Returns
         -------
-        Dict — Comprehensive status report including Alpha, Beta, Sharpe, and Drawdown.
+        Dict: Comprehensive evaluation state report encapsulating Alpha, Beta, IC bounds, and Drawdowns.
         """
         if not self.history:
             return {'status': 'NO_DATA'}
@@ -280,11 +268,14 @@ class PerformanceTracker:
     # ------------------------------------------------------------------
 
     def _calculate_sharpe(self, returns: pd.Series) -> float:
-        r"""
-        Calculates Annualized Sharpe Ratio.
-
-        S = (mean_excess * 252) / (std_excess * sqrt(252))
-          = mean_excess * sqrt(252) / std_excess
+        """
+        Calculates formalized statistical annualized Sharpe Ratio boundaries.
+        
+        Args:
+            returns (pd.Series): The bounded historical geometric strategy variations.
+            
+        Returns:
+            float: Absolute extracted probability boundary mapping risk-adjusted capabilities.
         """
         if len(returns) < 2:
             return 0.0
@@ -300,18 +291,18 @@ class PerformanceTracker:
 
     def _calculate_current_drawdown(self, cum_returns: pd.Series) -> float:
         """
-        Calculates percentage decline from the High-Water Mark (HWM).
-
-        FIX BUG-077: Original code used `== 0` to guard the denominator.
-        Float equality is almost never true for a floating-point cumulative
-        product — the guard was effectively dead code. A near-zero HWM
-        (e.g. after a near-ruin scenario) produces Inf or NaN.
-        Fixed: use `< 1e-12` which catches any degenerate near-zero value.
+        Calculates the discrete percentage decline limits evaluated from historical maximal bounds.
+        
+        Args:
+            cum_returns (pd.Series): Cumulatively computed historical growth matrices limit.
+            
+        Returns:
+            float: Scaled absolute drawdown variance fraction enforcing numerical precision blocks.
         """
         cummax = cum_returns.cummax()
         hwm    = cummax.iloc[-1]
 
-        # FIX BUG-077: was `if cummax.iloc[-1] == 0` — float equality fails here
+        # Precludes precision zero-division errors bounding parameters below safe $1e-12$ epsilon
         if hwm < 1e-12:
             return 0.0
 
@@ -319,25 +310,38 @@ class PerformanceTracker:
         return float(abs(current_dd))
 
     def _calculate_max_drawdown(self, cum_returns: pd.Series) -> float:
-        """Calculates Maximum Drawdown (MDD) over the entire history."""
+        """
+        Computes structurally absolute Maximum Drawdown bounded over entire valid historical maps.
+        
+        Args:
+            cum_returns (pd.Series): The continuous geometric growth boundary.
+            
+        Returns:
+            float: Computed terminal worst-case loss metric isolated efficiently.
+        """
         cummax   = cum_returns.cummax()
-        # Guard against zero/near-zero HWM to avoid division by zero
         safe_max = cummax.replace(0.0, np.nan)
         drawdown = (cum_returns - cummax) / safe_max
         return float(abs(drawdown.min()))
 
     def get_history_df(self) -> pd.DataFrame:
-        """Exports the full transaction and performance log as a DataFrame."""
+        """
+        Aggregates persistent transaction buffers structurally mapped seamlessly into Pandas limits.
+        
+        Returns:
+            pd.DataFrame: Symmetrically bounded dataframe matrices encoding historical limits.
+        """
         return pd.DataFrame(list(self.history))
 
     def plot_performance(self, save_path: str = None):
         """
-        Generates a 3-panel performance report visualization.
-
-        Panels:
-        1. Rolling IC (N-day moving average) vs Warning Thresholds.
-        2. Cumulative Returns (Portfolio vs Benchmark).
-        3. Turnover & Cumulative Cost Impact.
+        Generates structurally explicit 3-panel plotting maps visually tracking continuous behaviors.
+        
+        Args:
+            save_path (str, optional): Target destination limit capturing generated bounds to local disk environments.
+            
+        Returns:
+            None: Natively routes mapped execution parameters evaluating Matplotlib backend configurations.
         """
         import matplotlib.pyplot as plt
 
@@ -351,7 +355,6 @@ class PerformanceTracker:
 
         fig, axes = plt.subplots(3, 1, figsize=(14, 15))
 
-        # Panel 1 — Rolling IC
         rolling_ic = df['ic'].rolling(window=20).mean()
         axes[0].plot(df['date'], rolling_ic, label='20-day MA')
         axes[0].axhline(y=self.ic_warning,  color='orange', linestyle='--', label='Warning')
@@ -360,7 +363,6 @@ class PerformanceTracker:
         axes[0].legend()
         axes[0].grid(True, alpha=0.3)
 
-        # Panel 2 — Cumulative returns vs Benchmark
         cum_returns = (1 + df['portfolio_return']).cumprod() - 1
         cum_bench   = (1 + df['benchmark_return']).cumprod() - 1
         axes[1].plot(df['date'], cum_returns * 100, label='Portfolio')
@@ -369,7 +371,6 @@ class PerformanceTracker:
         axes[1].legend()
         axes[1].grid(True, alpha=0.3)
 
-        # Panel 3 — Turnover & Costs
         if 'turnover' in df.columns:
             ax2 = axes[2].twinx()
             axes[2].bar(

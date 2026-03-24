@@ -51,20 +51,21 @@ logger = logging.getLogger(__name__)
 
 class AlphaDecayAnalyzer:
     """
-    Engine for analyzing the temporal structure of alpha signals.
-    Computes the term structure of the Information Coefficient (IC) and estimates signal half-life.
+    Engine structurally extracting the temporal degradation of isolated alpha vectors.
+    Computes the term structure of the Information Coefficient (IC) and explicitly 
+    bounds the empirical signal half-life metric.
     """
 
     def __init__(self, data: pd.DataFrame, factor_col: str):
         """
-        Initialize the analyzer with market and factor data.
+        Initializes the mathematical evaluator bounds scaling continuous market and factor data.
 
         Args:
             data (pd.DataFrame): Input dataset containing 'date', 'ticker', 'close', and the factor column.
             factor_col (str): The name of the column containing the alpha signal.
         """
-        # State Isolation: Defensive copy ensures immutability of the source dataset.
-        # Prevents side effects from subsequent lag generation operations.
+        # Architecturally forces rigorous state isolation bounding immutable copies 
+        # strictly averting computational overlaps originating from destructive lag generation maps.
         self.data = data.copy()
         self.factor_col = factor_col
         self.decay_results = {}
@@ -77,17 +78,15 @@ class AlphaDecayAnalyzer:
         and computes the Spearman Rank Correlation with the factor value at time $t$.
 
         Args:
-            max_horizon (int): The maximum number of days to look forward.
+            max_horizon (int): The temporal parameter dictating maximal forward evaluation drift.
 
         Returns:
             Dict[int, float]: Mapping of horizon (days) to Mean Rank IC.
         """
         logger.info(f"Calculating Alpha Decay up to {max_horizon} days...")
 
-        # Idempotency Guarantee: Work on a transient copy to ensure the method
-        # produces consistent results regardless of how many times it is called.
-        # Previous implementations suffered from column accumulation (fwd_ret_Nd)
-        # which caused shift alignment errors on subsequent runs.
+        # Asserts rigid idempotency mappings operating mathematically distinct continuous states, 
+        # aggressively discarding accumulated forward lag matrix variables systematically.
         work_df = self.data.sort_values(['ticker', 'date']).copy()
 
         self.decay_results = {}
@@ -95,20 +94,20 @@ class AlphaDecayAnalyzer:
         for h in range(1, max_horizon + 1):
             col_name = f"fwd_ret_{h}d"
 
-            # Vectorized Lag Generation: R_{t+h} / R_t - 1
+            # Extracts absolute scalar structural return bounds: R_{t+h} / R_t - 1
             work_df[col_name] = (
                 work_df.groupby('ticker')['close'].shift(-h)
                 / work_df['close'] - 1
             )
 
-            # Filter: Ensure strict alignment of factor and future return
+            # Exposes discrete mathematical intersections guaranteeing identical target mappings
             valid = work_df.dropna(subset=[self.factor_col, col_name])
 
             if valid.empty:
                 self.decay_results[h] = 0.0
                 continue
 
-            # Cross-Sectional Rank IC: Average daily Spearman correlation
+            # Evaluates structural average Cross-Sectional Rank IC natively mapped per date
             daily_ic = valid.groupby('date').apply(
                 lambda x: stats.spearmanr(
                     x[self.factor_col], x[col_name]
@@ -117,7 +116,7 @@ class AlphaDecayAnalyzer:
 
             self.decay_results[h] = daily_ic.mean()
 
-            # Memory Management: Prune temporary columns immediately to maintain O(N) memory usage.
+            # Immediately evicts extraneous memory dependencies structurally locking usage strictly down to O(N).
             work_df.drop(columns=[col_name], inplace=True)
 
         return self.decay_results
@@ -130,7 +129,8 @@ class AlphaDecayAnalyzer:
         decays to 50% of its initial strength ($|IC_h| \leq 0.5 \times |IC_1|$).
 
         Returns:
-            Optional[int]: The day $h$ where decay threshold is breached, or None if signal persists.
+            Optional[int]: The exact evaluated day $h$ wherein the specific geometric threshold boundary is strictly breached. 
+            Returns None if the continuous vector natively persists explicitly.
         """
         if not self.decay_results:
             self.calculate_decay()
@@ -150,8 +150,11 @@ class AlphaDecayAnalyzer:
         Visualizes the Alpha Decay Term Structure.
 
         Args:
-            save_path (Optional[str]): File path to save the plot image.
-                                     If None, displays interactively.
+            save_path (Optional[str]): The discrete string filepath to explicitly encode output to disk.
+                If None, forces direct graphical execution bounds interactively.
+                
+        Returns:
+            None: Emits graphical state arrays dynamically intercepting structural execution pipelines.
         """
         if not self.decay_results:
             self.calculate_decay()
