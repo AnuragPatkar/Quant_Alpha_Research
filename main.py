@@ -21,6 +21,110 @@ Dependencies
 - **Argparse**: Robust Subcommand Pattern parsing for granular execution control.
 - **Subprocess**: Child process management ensuring GIL release and memory isolation.
 - **OS/Sys**: Low-level environment configuration for BLAS/LAPACK threading limits.
+
+Available Commands
+------------------
+
+1. **pipeline** - Run full end-to-end research workflow
+   - python main.py pipeline
+   - python main.py pipeline --all
+   - python main.py pipeline --force-rebuild
+   - python main.py pipeline --parallel-models
+   - python main.py pipeline --skip-data
+
+2. **data** - Update market data
+   - python main.py data
+
+3. **validate** - Run factor validation (IC/turnover analysis)
+   - python main.py validate
+
+4. **train** - Train alpha models with walk-forward cross-validation
+   - python main.py train
+   - python main.py train --force-rebuild
+   - python main.py train --parallel-models
+   - python main.py train --all
+
+5. **predict** - Generate alpha signals for portfolio construction
+   - python main.py predict
+   - python main.py predict --last-day-only
+
+6. **monitor** - Run production health monitoring (drift/staleness detection)
+   - python main.py monitor
+   - python main.py monitor --psi-threshold 0.15
+
+7. **backtest** - Run historical simulation engine
+   - python main.py backtest
+   - python main.py backtest --method mean_variance
+   - python main.py backtest --method kelly
+   - python main.py backtest --method risk_parity
+   - python main.py backtest --top-n 50
+
+8. **optimize** - Run portfolio construction and optimization
+   - python main.py optimize
+   - python main.py optimize --capital 1000000
+   - python main.py optimize --method mean_variance
+   - python main.py optimize --method kelly
+   - python main.py optimize --method risk_parity
+   - python main.py optimize --target-vol 0.15
+   - python main.py optimize --top-n 50
+
+9. **report** - Generate executive summary report
+   - python main.py report
+   - python main.py report --output results/report.html
+
+10. **hyperopt** - Run Bayesian hyperparameter optimization
+    - python main.py hyperopt
+
+11. **deploy** - Manage model deployment lifecycle (archive/prune)
+    - python main.py deploy
+    - python main.py deploy --action check
+    - python main.py deploy --action archive
+    - python main.py deploy --action prune
+    - python main.py deploy --all
+    - python main.py deploy --keep 5
+    - python main.py deploy --dry-run
+
+12. **test** - Execute unit and integration test suite
+    - python main.py test
+    - python main.py test -v
+    - python main.py test --verbose
+
+13. **typecheck** - Run static type checking via mypy
+    - python main.py typecheck
+
+14. **clean** - Purge temporary artifacts, caches, and logs
+    - python main.py clean
+    - python main.py clean --all
+
+Example Workflows
+-----------------
+
+Full Production Pipeline:
+    python main.py pipeline --all
+
+Develop & Test New Factor:
+    python main.py train --force-rebuild
+    python main.py backtest --method mean_variance
+    python main.py report --output results/new_factor_backtest.html
+
+Quick Testing:
+    python main.py train --parallel-models
+    python main.py predict --last-day-only
+
+Model Deployment Process:
+    python main.py deploy --action check
+    python main.py deploy --action archive
+    python main.py deploy --action prune --dry-run
+    python main.py deploy --action prune
+
+Validation & Monitoring:
+    python main.py validate
+    python main.py monitor --psi-threshold 0.1
+
+Development Workflow:
+    python main.py typecheck
+    python main.py test -v
+    python main.py clean
 """
 
 import os
