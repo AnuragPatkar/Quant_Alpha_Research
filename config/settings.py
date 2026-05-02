@@ -128,7 +128,7 @@ class Config:
         self.UNIVERSE = 'sp500_full'
 
         self.BACKTEST_START_DATE = '2021-01-01'
-        self.BACKTEST_END_DATE = '2026-02-28'
+        self.BACKTEST_END_DATE = '2026-05-01'
 
         # Flag indicating active survivorship bias mitigation via point-in-time constituent masking
         self.HAS_SURVIVORSHIP_BIAS = True

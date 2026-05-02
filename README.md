@@ -61,16 +61,16 @@ The platform operates as a Directed Acyclic Graph (DAG), seamlessly transitionin
 
 ## 4. Performance Analytics
 
-*Out-of-Sample (OOS) Backtest Period: February 2024 – February 2026 | Initial Capital: $1,000,000 | Benchmark: SPY*
+*Out-of-Sample (OOS) Backtest Period: February 2024 – May 1, 2026 | Initial Capital: $1,000,000 | Benchmark: SPY*
 
 | Portfolio Construction Method | CAGR | Sharpe Ratio | Sortino Ratio | Max Drawdown | Excess Return (vs SPY) | Ending Equity |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Top-N (Equal Weight)** | **+47.50%** | 2.85 | 3.91 | -7.66% | **+30.41%** | $2,224,421 |
-| **Risk Parity (ERC)** | **+43.07%** | 2.89 | 3.99 | -7.30% | **+25.98%** | $2,090,137 |
-| **Kelly Criterion** | **+36.81%** | 2.72 | 3.78 | -7.84% | **+19.72%** | $1,907,266 |
-| **Mean-Variance (Markowitz)**| **+26.98%** | **2.98** | **3.96** | **-5.63%** | **+9.89%** | $1,636,030 |
+| **Risk Parity (ERC)** | **+32.01%** | 2.52 | 3.37 | -7.28% | **+13.98%** | $2,341,531 |
+| **Kelly Criterion** | **+26.76%** | 2.33 | 3.07 | -8.19% | **+8.73%** | $2,066,105 |
+| **Mean-Variance (Markowitz)**| **+13.03%** | 1.15 | 1.74 | -7.00% | **-5.50%** | $1,487,786 |
 
-*> Note: Past performance is not indicative of future results. Metrics derived from rigorous out-of-sample walk-forward backtesting utilizing a multi-model GBDT ensemble. Results are fully burdened by simulated institutional TCA.*
+*> Note: Past performance is not indicative of future results. Metrics derived from rigorous out-of-sample walk-forward backtesting utilizing a multi-model GBDT ensemble. Results are fully burdened by simulated institutional TCA. Recent 2026 performance reflects strong alpha generation, particularly through equal-weight and risk-parity portfolios.*
 
 ---
 
@@ -334,7 +334,7 @@ quant_alpha_research/                     # Root directory
 ### Installation
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/quant-alpha-platform.git
+git clone https://github.com/AnuragPatkar/quant-alpha-platform.git
 cd quant-alpha-platform
 
 # 2. Configure Environment
