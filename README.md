@@ -29,33 +29,33 @@ The platform operates as a Directed Acyclic Graph (DAG), seamlessly transitionin
 ## 3. Quantitative Methodology
 
 ### 3.1 Data Warehouse & Universe Construction
-*   **Survivorship Bias Mitigation**: Dynamic historical constituent tracking via exact daily S&P 500 membership masks. Bankruptcies and delistings are natively simulated.
-*   **Point-in-Time (PiT) Correctness**: Strict adherence to reporting lag horizons for fundamental and earnings data to completely eliminate look-ahead bias.
-*   **Data Quality Guards**: Automated validation pipelines for anomaly detection, liquidity filters (Median ADV thresholds), and regime shift monitoring.
+- **Survivorship Bias Mitigation**: Dynamic historical constituent tracking via exact daily S&P 500 membership masks. Bankruptcies and delistings are natively simulated.
+- **Point-in-Time (PiT) Correctness**: Strict adherence to reporting lag horizons for fundamental and earnings data to completely eliminate look-ahead bias.
+- **Data Quality Guards**: Automated validation pipelines for anomaly detection, liquidity filters (Median ADV thresholds), and regime shift monitoring.
 
 ### 3.2 Orthogonal Feature Engineering
-*   **Technical**: Momentum (Time-Series & Cross-Sectional), Mean Reversion, Volatility, Volume/Liquidity.
-*   **Fundamental**: Value (Earnings Yield, EV/EBITDA), Quality (ROE, Accruals), Growth (Revenue, EPS), Financial Health (Altman Z-Score).
-*   **Alternative/Macro**: Term Premium, VIX proxies, Sentiment Analysis, and Insider Trading Activity.
-*   **Signal Preprocessing**: Strict *per-fold* cross-sectional winsorization and dynamic sector-neutralization to isolate pure idiosyncratic alpha.
+- **Technical**: Momentum (Time-Series & Cross-Sectional), Mean Reversion, Volatility, Volume/Liquidity.
+- **Fundamental**: Value (Earnings Yield, EV/EBITDA), Quality (ROE, Accruals), Growth (Revenue, EPS), Financial Health (Altman Z-Score).
+- **Alternative/Macro**: Term Premium, VIX proxies, Sentiment Analysis, and Insider Trading Activity.
+- **Signal Preprocessing**: Strict *per-fold* cross-sectional winsorization and dynamic sector-neutralization to isolate pure idiosyncratic alpha.
 
 ### 3.3 Machine Learning & Signal Extraction
-*   **Non-Linear Ensembles**: Stacking of Gradient Boosted Decision Trees (**LightGBM**, **XGBoost**, **CatBoost**) to capture complex, non-linear feature interactions.
-*   **Walk-Forward Validation**: Expanding window cross-validation with a strict **21-trading-day embargo period** (Purged K-Fold) to prevent temporal target overlapping.
-*   **Alpha Gatekeeping**: Models must pass rigorous out-of-sample Information Coefficient ($IC$) and $t$-statistic gates ($t > 2.5$) before entering the production ensemble.
-*   **Rank-Based Alpha**: Signals are smoothed temporally via EWMA and cross-sectionally ranked to maintain market neutrality.
-*   **Custom Objectives**: Specialized loss functions (e.g., Weighted Symmetric MAE) designed to strictly penalize directional sign errors over absolute magnitude.
+- **Non-Linear Ensembles**: Stacking of Gradient Boosted Decision Trees (**LightGBM**, **XGBoost**, **CatBoost**) to capture complex, non-linear feature interactions.
+- **Walk-Forward Validation**: Expanding window cross-validation with a strict **21-trading-day embargo period** (Purged K-Fold) to prevent temporal target overlapping.
+- **Alpha Gatekeeping**: Models must pass rigorous out-of-sample Information Coefficient ($IC$) and $t$-statistic gates ($t > 2.5$) before entering the production ensemble.
+- **Rank-Based Alpha**: Signals are smoothed temporally via EWMA and cross-sectionally ranked to maintain market neutrality.
+- **Custom Objectives**: Specialized loss functions (e.g., Weighted Symmetric MAE) designed to strictly penalize directional sign errors over absolute magnitude.
 
 ### 3.4 Portfolio Optimization & Ex-Ante Risk
-*   **Risk Modeling**: Dynamic covariance matrix estimation via **Ledoit-Wolf Shrinkage** to stabilize matrix inversion.
-*   **Optimization Engines**: Configurable objective functions including Mean-Variance (Markowitz), Risk Parity (ERC), Black-Litterman, and Kelly Criterion allocators.
-*   **Volatility Targeting**: Dynamic gross exposure scaling to maintain a constant portfolio risk profile ($\sigma_{target}$).
-*   **Institutional Constraints**: Bound by maximum cardinality, sector tracking limits, Herfindahl-Hirschman Index (HHI) concentration caps, and turnover budgets.
+- **Risk Modeling**: Dynamic covariance matrix estimation via **Ledoit-Wolf Shrinkage** to stabilize matrix inversion.
+- **Optimization Engines**: Configurable objective functions including Mean-Variance (Markowitz), Risk Parity (ERC), Black-Litterman, and Kelly Criterion allocators.
+- **Volatility Targeting**: Dynamic gross exposure scaling to maintain a constant portfolio risk profile ($\sigma_{target}$).
+- **Institutional Constraints**: Bound by maximum cardinality, sector tracking limits, Herfindahl-Hirschman Index (HHI) concentration caps, and turnover budgets.
 
 ### 3.5 Transaction Cost Analysis (TCA)
-*   **Simulated Commissions**: Institutional commission schedules modeled at $10\text{ bps}$ per executed trade value.
-*   **Market Impact**: Almgren-Chriss linear impact model applied via percentage of Average Daily Volume (ADV).
-*   **Slippage**: Strict spread crossing and liquidity-adjusted slippage constraints ($5\text{ bps}$) embedded within execution.
+- **Simulated Commissions**: Institutional commission schedules modeled at $10\text{ bps}$ per executed trade value.
+- **Market Impact**: Almgren-Chriss linear impact model applied via percentage of Average Daily Volume (ADV).
+- **Slippage**: Strict spread crossing and liquidity-adjusted slippage constraints ($5\text{ bps}$) embedded within execution.
 
 ---
 
@@ -65,12 +65,12 @@ The platform operates as a Directed Acyclic Graph (DAG), seamlessly transitionin
 
 | Portfolio Construction Method | CAGR | Sharpe Ratio | Sortino Ratio | Max Drawdown | Excess Return (vs SPY) | Ending Equity |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Top-N (Equal Weight)** | **+47.50%** | 2.85 | 3.91 | -7.66% | **+30.41%** | $2,224,421 |
-| **Risk Parity (ERC)** | **+32.01%** | 2.52 | 3.37 | -7.28% | **+13.98%** | $2,341,531 |
-| **Kelly Criterion** | **+26.76%** | 2.33 | 3.07 | -8.19% | **+8.73%** | $2,066,105 |
-| **Mean-Variance (Markowitz)**| **+13.03%** | 1.15 | 1.74 | -7.00% | **-5.50%** | $1,487,786 |
+| **Top-N (Equal Weight)** | **+41.83%** | 2.74 | 3.89 | -7.90% | **+23.30%** | $3,093,174 |
+| **Risk Parity (ERC)** | **+32.90%** | 2.56 | 3.53 | -7.10% | **+14.36%** | $2,508,376 |
+| **Kelly Criterion** | **+19.72%** | 1.79 | 2.17 | -10.23% | **+1.19%** | $1,791,536 |
+| **Mean-Variance (Markowitz)**| **+16.28%** | 1.80 | 2.04 | -5.21% | **-2.26%** | $1,631,120 |
 
-*> Note: Past performance is not indicative of future results. Metrics derived from rigorous out-of-sample walk-forward backtesting utilizing a multi-model GBDT ensemble. Results are fully burdened by simulated institutional TCA. Recent 2026 performance reflects strong alpha generation, particularly through equal-weight and risk-parity portfolios.*
+*> Note: Past performance is not indicative of future results. Metrics derived from rigorous out-of-sample walk-forward backtesting utilizing a multi-model GBDT ensemble. Results are fully burdened by simulated institutional TCA.*
 
 ---
 
@@ -78,10 +78,10 @@ The platform operates as a Directed Acyclic Graph (DAG), seamlessly transitionin
 
 The platform incorporates multi-layered risk management to preserve capital and ensure stable returns:
 
-* **Dynamic Covariance Modeling**: Utilizes **Ledoit-Wolf Shrinkage** to estimate the covariance matrix $\Sigma$.
-* **Volatility Targeting**: Dynamically scales gross exposure down during volatile market regimes.
-* **Concentration Caps**: Constrains the Herfindahl-Hirschman Index (HHI) to enforce strict diversification.
-* **Systemic Kill Switch**: Monitors peak-to-trough drawdowns ($MaxDD$). If a threshold is breached (e.g., $-20\%$), the system enters a mandatory 21-day cash cooldown.
+- **Dynamic Covariance Modeling**: Utilizes **Ledoit-Wolf Shrinkage** to estimate the covariance matrix $\Sigma$.
+- **Volatility Targeting**: Dynamically scales gross exposure down during volatile market regimes.
+- **Concentration Caps**: Constrains the Herfindahl-Hirschman Index (HHI) to enforce strict diversification.
+- **Systemic Kill Switch**: Monitors peak-to-trough drawdowns ($MaxDD$). If a threshold is breached (e.g., $-20\%$), the system enters a mandatory 21-day cash cooldown.
 
 ---
 
@@ -98,7 +98,63 @@ The platform incorporates multi-layered risk management to preserve capital and 
 
 ---
 
-## 7. Repository Structure
+## 7. Latest Research Executive Summary (Snapshot)
+
+The pipeline produces a consolidated “executive summary” to surface system health, factor QA, model robustness, and strategy performance.
+
+**Generated:** 2026-05-08 17:25
+
+### 7.1 System Health & Data Integrity
+- ❌ **Price Data:** 674 tickers | Median last date: **2026-04-10** (**20 trading days old**)
+- ✅ **Fundamentals:** 678 tickers | Most recent update: **0 days ago**
+- ℹ️ **Macro/Alt Data:** 5 indicators available
+- ⚠️ **Daily Signals:** last generated **2026-05-01** (**5 trading days ago**)
+
+### 7.2 Factor Quality Assurance
+**Summary:** 18 PASS | 2 WARN | 135 FAIL (**Total: 155 factors**)
+
+Top 5 Alpha Drivers (by Mean IC):
+
+| Factor | IC Mean | t-stat | Status |
+| :--- | ---: | ---: | :--- |
+| return_252d | 0.0304 | 4.7 | PASS |
+| market_cap | 0.0288 | 9.3 | FAIL (Zero Variance) |
+| price | 0.0265 | 10.3 | FAIL (Zero Variance) |
+| val_ev_ebitda | 0.0247 | 8.6 | WARN (Sector Bias) |
+| fwd_eps | 0.0224 | 10.3 | FAIL (Zero Variance) |
+
+### 7.3 Model Robustness (Production Models)
+Found 3 production model(s).
+
+| Model | OOS IC | t-stat | AnnICIR | Tier | Trained To |
+| :--- | ---: | ---: | ---: | :--- | :--- |
+| Catboost | +0.0256 | 4.1 | 2.31 | ✅ PROD | 2026-04-23 |
+| Lightgbm | +0.0240 | 3.9 | 2.17 | ✅ PROD | 2026-04-23 |
+| Xgboost | +0.0319 | 5.0 | 2.81 | ✅ PROD | 2026-04-23 |
+
+### 7.4 Current Positioning (Latest Signal)
+- ✅ **Signal Date:** 2026-05-01 (**5 trading days old**)
+- **Net Position Value:** $995,109
+- **Long / Short:** $995,109 / $0
+- **Positions:** 44 (44 Long | 0 Short)
+- **Gross Exposure:** $995,109
+- **HHI Concentration:** 0.0277 (Diversified ✅)
+
+Top 5 Positions:
+
+| Ticker | Side | Weight | Value |
+| :--- | :--- | ---: | ---: |
+| SNDK | LONG | +4.02% | $39,171 |
+| CIEN | LONG | +3.86% | $38,541 |
+| STX | LONG | +3.86% | $38,527 |
+| HOLX | LONG | +3.82% | $38,224 |
+| GEV | LONG | +3.82% | $37,203 |
+
+> Note: This snapshot is environment-dependent and will change as data, models, and signals update.
+
+---
+
+## 8. Repository Structure
 
 ```text
 quant_alpha_research/                     # Root directory
@@ -162,18 +218,18 @@ quant_alpha_research/                     # Root directory
 │   │   │
 │   │   └── utils.py                      # Feature utilities
 │   │
-│   ├── 📁 models/                        # ML modeling layer
-│   │   ├── __init__.py
-│   │   ├── base_model.py                 # Abstract model class
-│   │   ├── lightgbm_model.py             # LightGBM wrapper
-│   │   ├── xgboost_model.py              # XGBoost wrapper
-│   │   ├── catboost_model.py             # CatBoost wrapper
-│   │   ├── ensemble.py                   # Model averaging/stacking
-│   │   ├── trainer.py                    # Walk-forward trainer
-│   │   ├── predictor.py                  # Production predictions
-│   │   ├── feature_selector.py           # Feature selection
-│   │   ├── hyperopt.py                   # Hyperparameter tuning
-│   │   └── utils.py                      # Model utilities
+│   │   ├── 📁 models/                        # ML modeling layer
+│   │   │   ├── __init__.py
+│   │   │   ├── base_model.py                 # Abstract model class
+│   │   │   ├── lightgbm_model.py             # LightGBM wrapper
+│   │   │   ├── xgboost_model.py              # XGBoost wrapper
+│   │   │   ├── catboost_model.py             # CatBoost wrapper
+│   │   │   ├── ensemble.py                   # Model averaging/stacking
+│   │   │   ├── trainer.py                    # Walk-forward trainer
+│   │   │   ├── predictor.py                  # Production predictions
+│   │   │   ├── feature_selector.py           # Feature selection
+│   │   │   ├── hyperopt.py                   # Hyperparameter tuning
+│   │   │   └── utils.py                      # Model utilities
 │   │
 │   ├── 📁 backtest/                      # Backtesting engine
 │   │   ├── __init__.py
@@ -324,12 +380,11 @@ quant_alpha_research/                     # Root directory
 
 ---
 
-## 8. Quick Start Guide
+## 9. Quick Start Guide
 
 ### Prerequisites
-*   Python 3.9+
-*   Python 3.9+ (3.11 recommended)
-*   Docker (optional, for containerized execution)
+- Python 3.9+ (3.11 recommended)
+- Docker (optional, for containerized execution)
 
 ### Installation
 ```bash
@@ -346,7 +401,7 @@ pip install -r requirements.txt
 pip install -e .[dev]
 ```
 
-### 2. Running the Full Pipeline
+### Running the Full Pipeline
 
 The most common command is `pipeline`, which runs all essential steps in sequence.
 
@@ -358,7 +413,7 @@ python main.py pipeline --all
 python main.py pipeline --all --force-rebuild
 ```
 
-### 3. Individual Workflow Commands
+### Individual Workflow Commands
 
 You can also run each step of the pipeline individually.
 
@@ -382,7 +437,7 @@ python main.py hyperopt
 python main.py report
 ```
 
-### 4. Testing
+### Testing
 
 Run the full test suite to ensure the system is healthy.
 
@@ -431,7 +486,7 @@ Refer to the `README.md` inside the `deployment/` directory for specific usage i
 A GitHub Actions workflow is defined in `.github/workflows/ci_cd.yml`. This pipeline automatically triggers on every `push` and `pull_request` to the `main` branch.
 
 **Jobs:**
-1.  **`test`**: Installs dependencies and runs the entire `pytest` suite.
-2.  **`build-docker`**: If tests pass, it builds the Docker image to ensure it's not broken.
+1. **`test`**: Installs dependencies and runs the entire `pytest` suite.
+2. **`build-docker`**: If tests pass, it builds the Docker image to ensure it's not broken.
 
 This automated process guarantees that code merged into the main branch is always tested and deployable.
